@@ -10,6 +10,84 @@ import type { Project, Question } from '../src/preload/personal'
 import { validateBackup } from '../src/main/personal-backup'
 import { readAttachment } from '../src/renderer/src/personal/attachments'
 
+test('rename preserves prompts; deletion cascades with shared images and concept children intact', () => {
+  const path = mkdtempSync(join(tmpdir(), 'fask-delete-'))
+  const store = new PersonalStore(path)
+  try {
+    const profile = store.active
+    const project = store.list<Project>('project')[0]
+    const concept = store.create('concept', '부모', project.id)
+    const child = store.create('concept', '자식', project.id)
+    store.editConcept(child, '자식', concept)
+    const image = store.saveImage('data:image/png;base64,YWJj')
+    const q: Question = {
+      id: 'delete-q',
+      projectId: project.id,
+      conversationId: 'conversation',
+      createdAt: new Date().toISOString(),
+      raw: '원래 질문',
+      refined: '',
+      sent: '전송 질문',
+      answer: '답변',
+      model: '',
+      actualModel: '',
+      status: 'completed',
+      complexity: 'simple',
+      routingReason: '',
+      conceptIds: [concept, child],
+      suggestions: [],
+      memo: '',
+      important: false,
+      attachment: image,
+      error: ''
+    }
+    store.put('question', profile, q)
+    store.db
+      .prepare('INSERT INTO runs(id,question_id,created_at,status,model) VALUES(?,?,?,?,?)')
+      .run('run', q.id, q.createdAt, 'completed', '')
+    store.rename('profile', profile, '새 이름')
+    store.rename('question', q.id, '기록 제목')
+    assert.equal(store.record<Question>('question', q.id).title, '기록 제목')
+    assert.equal(store.record<Question>('question', q.id).sent, '전송 질문')
+    store.remove('concept', concept)
+    assert.deepEqual(store.record<Question>('question', q.id).conceptIds, [child])
+    assert.equal(store.snapshot().concepts.find((c) => c.id === child)?.parentId, null)
+    const otherProfile = store.create('profile', '다른 사용자')
+    store.switchProfile(otherProfile)
+    const other = store.list<Project>('project')[0]
+    store.put('question', otherProfile, { ...q, id: 'shared', projectId: other.id, conceptIds: [] })
+    assert.throws(() => store.remove('question', q.id), /프로필/)
+    store.switchProfile(profile)
+    store.remove('project', project.id)
+    assert.equal(store.snapshot().questions.length, 0)
+    assert.equal(store.snapshot().concepts.length, 0)
+    assert.equal(store.db.prepare('SELECT id FROM runs WHERE id=?').get('run'), undefined)
+    assert.ok(store.image(image), 'other profile still references shared image')
+    store.remove('workspace', project.workspaceId)
+    assert.equal(store.snapshot().workspaces.length, 0)
+    store.remove('profile', otherProfile)
+    assert.equal(store.image(image), null)
+    store.remove('profile', profile)
+    assert.notEqual(store.active, profile)
+    assert.equal(store.snapshot().profiles.length, 1)
+    assert.equal(store.snapshot().projects.length, 1)
+    const last = store.snapshot().projects[0]
+    store.put('question', store.active, {
+      ...q,
+      id: 'last',
+      projectId: last.id,
+      conceptIds: [],
+      attachment: null
+    })
+    store.remove('question', 'last')
+    assert.equal(store.snapshot().questions.length, 0)
+    assert.equal(store.snapshot().projects.length, 1)
+  } finally {
+    store.close()
+    rmSync(path, { recursive: true, force: true })
+  }
+})
+
 test('records survive restart; profile and project scope prevent cross-links', () => {
   const path = mkdtempSync(join(tmpdir(), 'fask-store-'))
   let store = new PersonalStore(path)

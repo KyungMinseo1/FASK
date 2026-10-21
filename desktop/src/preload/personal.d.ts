@@ -56,6 +56,7 @@ export interface Concept {
   manual: boolean
 }
 export interface Question {
+  title?: string
   documents?: TextAttachment[]
   id: string
   projectId: string
@@ -78,6 +79,7 @@ export interface Question {
   error: string
 }
 export interface Snapshot {
+  recentQuestions?: Record<string, string>
   profiles: Profile[]
   activeProfileId: string
   workspaces: Workspace[]
@@ -119,7 +121,17 @@ export interface CapturePreview {
 }
 export interface PersonalApi {
   activateProject(id: string): Promise<void>
-  rename(kind: 'workspace' | 'project', id: string, name: string): Promise<void>
+  rename(
+    kind: 'profile' | 'workspace' | 'project' | 'concept' | 'question',
+    id: string,
+    name: string
+  ): Promise<void>
+  remove(
+    kind: 'profile' | 'workspace' | 'project' | 'concept' | 'question',
+    id: string
+  ): Promise<void>
+  clearRecent(projectId: string): Promise<void>
+  editOverlayRegion(): Promise<void>
   overlayRegions(drawing: boolean, regions: CaptureRect[]): Promise<void>
   shortcutInfo(): Promise<ShortcutInfo>
   onTogglePanel(cb: () => void): () => void
@@ -151,7 +163,7 @@ export interface PersonalApi {
   capturePreview(): Promise<CapturePreview>
   saveRegion(region: CaptureRegion): Promise<void>
   closeCaptureEditor(): Promise<void>
-  openOverlay(projectId: string): Promise<void>
+  openOverlay(projectId: string, questionId?: string): Promise<void>
   captureQuestion(strokes?: string): Promise<string>
   onStream(cb: (event: StreamEvent) => void): () => void
   onChanged(cb: () => void): () => void

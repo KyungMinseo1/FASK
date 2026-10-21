@@ -159,10 +159,17 @@ export class PersonalCapture {
     return source.thumbnail
   }
   async edit(id: number): Promise<void> {
-    if (this.busy || this.editor || this.overlay)
-      throw new Error('다른 캡처 창을 먼저 닫아 주세요.')
+    if (this.busy || this.editor) throw new Error('다른 캡처 창을 먼저 닫아 주세요.')
     this.busy = true
     const main = this.main()
+    const overlay = this.overlay
+    const resume = (): void => {
+      if (overlay && !overlay.isDestroyed()) {
+        overlay.show()
+        this.hitTest()
+      } else main?.show()
+    }
+    overlay?.hide()
     main?.hide()
     try {
       await sleep(180)
@@ -176,12 +183,12 @@ export class PersonalCapture {
       win.on('closed', () => {
         this.editor = null
         this.preview = null
-        main?.show()
+        resume()
         this.changed()
       })
       this.load(win, '/capture-editor')
     } catch (e) {
-      main?.show()
+      resume()
       throw e
     } finally {
       this.busy = false
@@ -243,15 +250,33 @@ export class PersonalCapture {
       if (strokes) {
         if (!strokes.startsWith('data:image/png;base64,') || strokes.length > 36_000_000)
           throw new Error('펜 이미지가 너무 큽니다.')
-        const ink = nativeImage.createFromDataURL(strokes).resize(size)
+        // Place ink by the overlay's real content bounds; Windows may offset/shrink the
+        // window (taskbar, DPI rounding), so stretching ink to the full screen misaligns it.
+        const db = screen.getAllDisplays().find((d) => d.id === id)!.bounds
+        const cb = win.getContentBounds()
+        const sx = size.width / db.width,
+          sy = size.height / db.height
+        const ox = Math.round((cb.x - db.x) * sx),
+          oy = Math.round((cb.y - db.y) * sy)
+        const inkSize = { width: Math.round(cb.width * sx), height: Math.round(cb.height * sy) }
+        const ink = nativeImage.createFromDataURL(strokes).resize(inkSize)
         const background = image.toBitmap(),
           foreground = ink.toBitmap()
-        for (let p = 0; p < background.length; p += 4) {
-          const alpha = foreground[p + 3] / 255
-          for (let channel = 0; channel < 3; channel++)
-            background[p + channel] = Math.round(
-              foreground[p + channel] * alpha + background[p + channel] * (1 - alpha)
-            )
+        for (let iy = 0; iy < inkSize.height; iy++) {
+          const by = iy + oy
+          if (by < 0 || by >= size.height) continue
+          for (let ix = 0; ix < inkSize.width; ix++) {
+            const bx = ix + ox
+            if (bx < 0 || bx >= size.width) continue
+            const f = (iy * inkSize.width + ix) * 4,
+              b = (by * size.width + bx) * 4
+            const alpha = foreground[f + 3] / 255
+            if (!alpha) continue
+            for (let channel = 0; channel < 3; channel++)
+              background[b + channel] = Math.round(
+                foreground[f + channel] * alpha + background[b + channel] * (1 - alpha)
+              )
+          }
         }
         const selected = nativeImage.createFromBitmap(background, size).crop(crop)
         return this.store.settings().retention === 'balanced'

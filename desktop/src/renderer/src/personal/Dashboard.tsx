@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import type { Concept, Question, Snapshot, ShortcutInfo } from '../../../preload/personal'
 import MindMap from '../components/MindMap/MindMap'
 import type { MindNode } from '../lib/trees'
 import Composer from './Composer'
+import MarkdownAnswer from './MarkdownAnswer'
 import Settings from './Settings'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
 import './personal.css'
+
+type ItemKind = 'profile' | 'workspace' | 'project' | 'concept' | 'question'
 
 function tree(data: Snapshot, projectId: string, questions: Question[]): MindNode {
   const concepts = data.concepts.filter((c) => c.projectId === projectId)
   const leaf = (q: Question, parent: string): MindNode => ({
     id: `q:${q.id}:${parent}`,
-    label: q.sent.slice(0, 34),
+    label: (q.title || q.sent).slice(0, 34),
     kind: 'question',
-    detail: q.sent,
+    detail: q.title || q.sent,
     children: []
   })
   const node = (c: Concept, seen: Set<string>): MindNode => ({
@@ -76,7 +79,7 @@ export default function Dashboard(): React.JSX.Element {
     [compose, setCompose] = useState(false),
     [notice, setNotice] = useState('')
   const [create, setCreate] = useState<{
-      kind: 'profile' | 'workspace' | 'project' | 'concept'
+      kind: ItemKind
       parent?: string
       id?: string
     } | null>(null),
@@ -101,7 +104,7 @@ export default function Dashboard(): React.JSX.Element {
                 : filter === 'failed'
                   ? q.status === 'failed'
                   : q.complexity === filter)) &&
-          `${q.raw} ${q.sent} ${q.answer} ${q.memo} ${(q.documents ?? []).map((d) => d.name + ' ' + d.text).join(' ')}`
+          `${q.title || ''} ${q.raw} ${q.sent} ${q.answer} ${q.memo} ${(q.documents ?? []).map((d) => d.name + ' ' + d.text).join(' ')}`
             .toLocaleLowerCase()
             .includes(query.toLocaleLowerCase())
       ),
@@ -125,10 +128,48 @@ export default function Dashboard(): React.JSX.Element {
     setCreate({ kind, parent })
     setName('')
   }
-  const beginRename = (kind: 'workspace' | 'project', id: string, current: string): void => {
+  const beginRename = (kind: ItemKind, id: string, current: string): void => {
     setCreate({ kind, id })
     setName(current)
   }
+  const [context, setContext] = useState<{
+    x: number
+    y: number
+    kind: ItemKind
+    id: string
+    name: string
+  } | null>(null)
+  const openContext = (event: MouseEvent, kind: ItemKind, id: string, label: string): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setContext({
+      x: Math.max(8, Math.min(event.clientX, innerWidth - 180)),
+      y: Math.max(8, Math.min(event.clientY, innerHeight - 120)),
+      kind,
+      id,
+      name: label
+    })
+  }
+  useEffect(() => {
+    if (!context) return
+    const dismiss = (): void => setContext(null)
+    const pointer = (e: globalThis.MouseEvent): void => {
+      if (!(e.target as HTMLElement).closest('.item-context-menu')) dismiss()
+    }
+    const key = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') dismiss()
+    }
+    window.addEventListener('click', pointer)
+    window.addEventListener('keydown', key)
+    window.addEventListener('blur', dismiss)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      window.removeEventListener('click', pointer)
+      window.removeEventListener('keydown', key)
+      window.removeEventListener('blur', dismiss)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [context])
   if (!data) return <div className="fask-loading">{error || '나의 질문 공간을 열고 있습니다…'}</div>
   return (
     <div className="fask-app">
@@ -140,6 +181,14 @@ export default function Dashboard(): React.JSX.Element {
           프로필
           <select
             aria-label="프로필"
+            onContextMenu={(e) =>
+              openContext(
+                e,
+                'profile',
+                data.activeProfileId,
+                data.profiles.find((p) => p.id === data.activeProfileId)!.name
+              )
+            }
             value={data.activeProfileId}
             onChange={(e) => {
               const id = e.target.value
@@ -169,6 +218,9 @@ export default function Dashboard(): React.JSX.Element {
         </div>
         <select
           aria-label="워크스페이스"
+          onContextMenu={(e) => {
+            if (workspace) openContext(e, 'workspace', workspace.id, workspace.name)
+          }}
           value={workspace?.id || ''}
           onChange={(e) => {
             setWorkspaceId(e.target.value)
@@ -200,6 +252,7 @@ export default function Dashboard(): React.JSX.Element {
           {projects.map((p) => (
             <button
               key={p.id}
+              onContextMenu={(e) => openContext(e, 'project', p.id, p.name)}
               className={p.id === project?.id ? 'active' : ''}
               onClick={() => {
                 setProjectId(p.id)
@@ -344,6 +397,9 @@ export default function Dashboard(): React.JSX.Element {
               <button
                 className="space-card"
                 key={item.id}
+                onContextMenu={(e) =>
+                  openContext(e, scope === 'home' ? 'workspace' : 'project', item.id, item.name)
+                }
                 onClick={() => {
                   setSelectedId('')
                   setCompose(false)
@@ -467,6 +523,15 @@ export default function Dashboard(): React.JSX.Element {
                       key={project.id}
                       root={tree(data, project.id, filtered)}
                       height={510}
+                      onContextMenu={(node, event) => {
+                        if (node.id.startsWith('q:')) {
+                          const q = questions.find((q) => q.id === node.id.split(':')[1])
+                          if (q) openContext(event, 'question', q.id, q.title || q.sent)
+                        } else if (node.id.startsWith('c:'))
+                          openContext(event, 'concept', node.id.slice(2), node.label)
+                        else if (node.id.startsWith('project:'))
+                          openContext(event, 'project', project.id, project.name)
+                      }}
                       onSelect={(node) => {
                         if (node.id.startsWith('q:')) setSelectedId(node.id.split(':')[1])
                         if (node.id.startsWith('c:')) setConceptId(node.id.slice(2))
@@ -500,6 +565,7 @@ export default function Dashboard(): React.JSX.Element {
                           )}
                         <button
                           className={`question-card ${selectedId === q.id ? 'selected' : ''}`}
+                          onContextMenu={(e) => openContext(e, 'question', q.id, q.title || q.sent)}
                           onClick={() => {
                             setSelectedId(q.id)
                             setCompose(false)
@@ -516,7 +582,7 @@ export default function Dashboard(): React.JSX.Element {
                             <time>{dateLabel(q.createdAt)}</time>
                             {q.important && <span>★</span>}
                           </div>
-                          <h3>{q.sent}</h3>
+                          <h3>{q.title || q.sent}</h3>
                           {view !== 'list' && (
                             <p>{q.answer || q.error || '아직 답변이 없습니다.'}</p>
                           )}
@@ -559,8 +625,6 @@ export default function Dashboard(): React.JSX.Element {
                   key={selected.id}
                   question={selected}
                   concepts={concepts}
-                  settings={data.settings}
-                  profileId={data.activeProfileId}
                   run={run}
                   onClose={() => setSelectedId('')}
                   onCreateConcept={async (name) => {
@@ -576,6 +640,51 @@ export default function Dashboard(): React.JSX.Element {
           </>
         )}
       </main>
+      {notice && scope !== 'project' && (
+        <div className="global-notice notice error" role="alert">
+          {notice}
+          <button onClick={() => setNotice('')}>×</button>
+        </div>
+      )}
+      {context && (
+        <div
+          className="item-context-menu"
+          role="menu"
+          aria-label="항목 메뉴"
+          style={{ left: context.x, top: context.y }}
+        >
+          <small>{context.name}</small>
+          <button
+            role="menuitem"
+            autoFocus
+            onClick={() => {
+              beginRename(context.kind, context.id, context.name)
+              setContext(null)
+            }}
+          >
+            편집 · 이름 바꾸기
+          </button>
+          <button
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              const { kind, id } = context
+              setContext(null)
+              void run(async () => {
+                await window.fask.remove(kind, id)
+                if (kind === 'profile' || kind === 'workspace' || kind === 'project') {
+                  setSearch({ scope: 'home' })
+                  setCompose(false)
+                }
+                if (id === selectedId) setSelectedId('')
+                if (id === conceptId) setConceptId('')
+              })
+            }}
+          >
+            삭제
+          </button>
+        </div>
+      )}
       {settingsOpen && <Settings settings={data.settings} onClose={() => setSettingsOpen(false)} />}
       {create && (
         <div className="modal-backdrop">
@@ -584,11 +693,12 @@ export default function Dashboard(): React.JSX.Element {
             onSubmit={(e) => {
               e.preventDefault()
               void run(async () => {
-                if (create.id && (create.kind === 'workspace' || create.kind === 'project')) {
+                if (create.id) {
                   await window.fask.rename(create.kind, create.id, name)
                   setCreate(null)
                   return
                 }
+                if (create.kind === 'question') return
                 const id = await window.fask.create(create.kind, name, create.parent)
                 if (create.kind === 'project') setProjectId(id)
                 if (create.kind === 'workspace') setWorkspaceId(id)
@@ -604,7 +714,8 @@ export default function Dashboard(): React.JSX.Element {
                   profile: '프로필',
                   workspace: '워크스페이스',
                   project: '프로젝트',
-                  concept: '개념'
+                  concept: '개념',
+                  question: '질문'
                 }[create.kind]
               }{' '}
               {create.id ? '이름 변경' : '만들기'}
@@ -636,23 +747,18 @@ export default function Dashboard(): React.JSX.Element {
 function QuestionDetail({
   question: q,
   concepts,
-  settings,
-  profileId,
   run,
   onClose,
   onCreateConcept
 }: {
   question: Question
   concepts: Concept[]
-  settings: Snapshot['settings']
-  profileId: string
   run: (fn: () => Promise<unknown>) => Promise<void>
   onClose: () => void
   onCreateConcept: (name: string) => Promise<void>
 }): React.JSX.Element {
   const [image, setImage] = useState<string | null>(null),
-    [memo, setMemo] = useState(q.memo),
-    [reply, setReply] = useState(false)
+    [memo, setMemo] = useState(q.memo)
   useEffect(() => {
     let alive = true
     if (q.attachment)
@@ -673,7 +779,7 @@ function QuestionDetail({
         <button onClick={onClose}>닫기 ×</button>
       </header>
       <div className="detail-title">
-        <h2>{q.sent}</h2>
+        <h2>{q.title || q.sent}</h2>
         <button
           className={q.important ? 'star active' : 'star'}
           aria-label="중요 표시"
@@ -709,7 +815,9 @@ function QuestionDetail({
           <pre>{d.text}</pre>
         </details>
       ))}
-      <div className="detail-answer">{q.answer || '아직 답변이 없습니다.'}</div>
+      <div className="detail-answer">
+        <MarkdownAnswer>{q.answer || '아직 답변이 없습니다.'}</MarkdownAnswer>
+      </div>
       {q.error && <p className="notice error">{q.error}</p>}
       {q.status === 'running' && (
         <button onClick={() => void run(() => window.fask.cancel(q.id))}>답변 생성 중지</button>
@@ -760,17 +868,12 @@ function QuestionDetail({
       <button onClick={() => void run(() => window.fask.updateQuestion(q.id, { memo }))}>
         메모 저장
       </button>
-      <button className="reply-button" onClick={() => setReply((s) => !s)}>
+      <button
+        className="reply-button"
+        onClick={() => void run(() => window.fask.openOverlay(q.projectId, q.id))}
+      >
         이 대화에 이어서 질문 ↗
       </button>
-      {reply && (
-        <Composer
-          projectId={q.projectId}
-          profileId={profileId}
-          settings={settings}
-          conversationId={q.conversationId}
-        />
-      )}
     </aside>
   )
 }

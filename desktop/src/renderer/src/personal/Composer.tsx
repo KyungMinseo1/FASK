@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import type { LocalSettings, TextAttachment } from '../../../preload/personal'
+import type { LocalSettings, Question, TextAttachment } from '../../../preload/personal'
 import { attachmentAccept, readAttachment } from './attachments'
 import { errorText } from './common'
+import MarkdownAnswer from './MarkdownAnswer'
 
 interface Props {
   projectId: string
   profileId: string
   settings: LocalSettings
   conversationId?: string
+  recentQuestion?: Question
   onCapture?: () => Promise<string>
+  /** Overlay has pen strokes: capture defaults on while ink exists, off otherwise. */
+  hasInk?: boolean
   onSaved?: (id: string) => void
 }
 export default function Composer({
@@ -16,7 +20,9 @@ export default function Composer({
   profileId,
   settings,
   conversationId,
+  recentQuestion,
   onCapture,
+  hasInk = false,
   onSaved
 }: Props): React.JSX.Element {
   const draftKey = `fask:draft:${profileId}:${projectId}`
@@ -27,11 +33,14 @@ export default function Composer({
   const [image, setImage] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [answer, setAnswer] = useState('')
-  const [running, setRunning] = useState(false)
+    [answer, setAnswer] = useState(recentQuestion?.answer || '')
+  const [running, setRunning] = useState(recentQuestion?.status === 'running')
+  const [includeCapture, setIncludeCapture] = useState(hasInk)
+  const [capturing, setCapturing] = useState(false)
   const [documents, setDocuments] = useState<TextAttachment[]>([])
   const fileInput = useRef<HTMLInputElement>(null)
-  const hasInput = !!raw.trim() || !!image || documents.length > 0
+  const canRefine = !!raw.trim() || !!image || documents.length > 0
+  const hasInput = canRefine || (!!onCapture && includeCapture)
   const attach = async (files: File[]): Promise<void> => {
     if (running || busy) return
     setBusy(true)
@@ -45,7 +54,10 @@ export default function Composer({
         throw new Error('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.')
       setDocuments(textFiles)
       const picture = parsed.find((f) => f.image)?.image
-      if (picture) setImage(picture)
+      if (picture) {
+        setImage(picture)
+        setIncludeCapture(false)
+      }
       setRefined('')
     } catch (e) {
       setError(errorText(e))
@@ -53,18 +65,35 @@ export default function Composer({
       setBusy(false)
     }
   }
-  const request = useRef('')
+  const request = useRef(recentQuestion?.id || '')
+  const question = useRef(recentQuestion?.id || '')
+  // Ink toggles the default; an explicitly attached image wins (capture and image are exclusive).
+  const [inkSeen, setInkSeen] = useState(hasInk)
+  if (inkSeen !== hasInk) {
+    setInkSeen(hasInk)
+    setIncludeCapture(hasInk && !image)
+  }
   useEffect(() => {
     localStorage.setItem(draftKey, raw)
   }, [draftKey, raw])
   useEffect(
     () =>
       window.fask.onStream((event) => {
-        if (event.requestId !== request.current) return
+        if (event.requestId !== request.current && event.questionId !== question.current) return
         if (event.delta) setAnswer((s) => s + event.delta)
         if (event.done) {
           setRunning(false)
           setError(event.error || '')
+          // A panel reopened mid-stream may have missed tokens since the last DB checkpoint.
+          void window.fask
+            .snapshot()
+            .then((s) => {
+              if (request.current !== event.requestId && question.current !== event.questionId)
+                return
+              const saved = s.questions.find((q) => q.id === event.questionId)
+              if (saved) setAnswer(saved.answer)
+            })
+            .catch(() => {})
           if (!event.error) {
             setRaw('')
             setRefined('')
@@ -75,19 +104,6 @@ export default function Composer({
       }),
     []
   )
-  const takeCapture = async (): Promise<void> => {
-    if (!onCapture) return
-    setBusy(true)
-    try {
-      setImage(await onCapture())
-      setRefined('')
-      setError('')
-    } catch (e) {
-      setError(errorText(e))
-    } finally {
-      setBusy(false)
-    }
-  }
   const refine = async (): Promise<void> => {
     setBusy(true)
     setError('')
@@ -106,7 +122,7 @@ export default function Composer({
   }
   const send = async (saveOnly = false): Promise<void> => {
     if (!hasInput || busy || running) return
-    if (!saveOnly && settings.refine && !refined) {
+    if (!saveOnly && settings.refine && !refined && canRefine) {
       await refine()
       return
     }
@@ -115,8 +131,15 @@ export default function Composer({
     setAnswer('')
     const id = crypto.randomUUID()
     request.current = id
+    question.current = ''
     setRunning(!saveOnly)
     try {
+      let outgoingImage = image || undefined
+      if (!saveOnly && includeCapture && onCapture) {
+        setCapturing(true)
+        outgoingImage = await onCapture()
+        setCapturing(false)
+      }
       const qid = await window.fask.ask({
         requestId: id,
         profileId,
@@ -125,10 +148,11 @@ export default function Composer({
         raw,
         refined,
         model,
-        image: image || undefined,
+        image: outgoingImage,
         documents,
         saveOnly
       })
+      question.current = qid
       onSaved?.(qid)
       if (saveOnly) {
         setRaw('')
@@ -140,6 +164,7 @@ export default function Composer({
       setError(errorText(e))
       setRunning(false)
     } finally {
+      setCapturing(false)
       setBusy(false)
     }
   }
@@ -169,6 +194,21 @@ export default function Composer({
         <b>{conversationId ? '이 대화에 이어서 질문' : '새 질문'}</b>
         <span>프로젝트에 자동 저장</span>
       </div>
+      {recentQuestion && (
+        <div className="recent-question">
+          <small>최근 질문</small>
+          <p>{recentQuestion.sent}</p>
+        </div>
+      )}
+      {(answer || running) && (
+        <div className="live-answer">
+          <span className="eyebrow">{running ? '답변 작성 중' : '이번 답변'}</span>
+          <MarkdownAnswer>
+            {answer ||
+              (capturing ? '현재 화면을 캡처하고 있습니다…' : '모델 응답을 기다리고 있습니다…')}
+          </MarkdownAnswer>
+        </div>
+      )}
       <input
         ref={fileInput}
         type="file"
@@ -247,7 +287,7 @@ export default function Composer({
           {settings.routing === 'auto' ? '자동 선택' : '추천'} ·{' '}
           {recommendation || '설정에서 모델을 선택하세요'}{' '}
           <span>
-            {image
+            {image || includeCapture
               ? '이미지 난이도 미확정'
               : complex
                 ? '여러 단계의 추론'
@@ -263,11 +303,21 @@ export default function Composer({
           ＋ 파일·이미지
         </button>
         {onCapture && (
-          <button disabled={busy || running} onClick={() => void takeCapture()}>
-            ▧ 화면 캡처
-          </button>
+          <label className={`capture-toggle ${includeCapture ? 'checked' : ''}`}>
+            <input
+              type="checkbox"
+              aria-label="화면 캡처 포함"
+              checked={includeCapture}
+              disabled={busy || running}
+              onChange={(e) => {
+                setIncludeCapture(e.target.checked)
+                if (e.target.checked) setImage('')
+              }}
+            />
+            화면 캡처 포함
+          </label>
         )}
-        <button disabled={busy || running || !hasInput} onClick={() => void refine()}>
+        <button disabled={busy || running || !canRefine} onClick={() => void refine()}>
           질문 다듬기
         </button>
         <select
@@ -281,16 +331,24 @@ export default function Composer({
             <option key={m}>{m}</option>
           ))}
         </select>
-        <button disabled={busy || running || !hasInput} onClick={() => void send(true)}>
+        <button disabled={busy || running || !canRefine} onClick={() => void send(true)}>
           저장만
         </button>
         {running ? (
-          <button className="danger" onClick={() => void window.fask.cancel(request.current)}>
-            중지
+          <button
+            className="danger"
+            disabled={capturing}
+            onClick={() => void window.fask.cancel(request.current || question.current)}
+          >
+            {capturing ? '화면 캡처 중…' : '중지'}
           </button>
         ) : (
           <button className="primary" disabled={busy || !hasInput} onClick={() => void send()}>
-            {busy ? '처리 중…' : settings.refine && !refined ? '다듬고 검토' : '질문하기 ↗'}
+            {busy
+              ? '처리 중…'
+              : settings.refine && !refined && canRefine
+                ? '다듬고 검토'
+                : '질문하기 ↗'}
           </button>
         )}
       </div>
@@ -299,13 +357,14 @@ export default function Composer({
           {error}
         </p>
       )}
-      {(answer || running) && (
-        <div className="live-answer">
-          <span className="eyebrow">{running ? '답변 작성 중' : '이번 답변'}</span>
-          <div>{answer || '모델 응답을 기다리고 있습니다…'}</div>
-        </div>
-      )}
       <small className="composer-hint">
+        {onCapture && includeCapture && (
+          <>
+            질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 저장만·다듬기에서는
+            캡처하지 않습니다.
+            <br />
+          </>
+        )}
         이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Ctrl + Enter로 전송
       </small>
     </div>

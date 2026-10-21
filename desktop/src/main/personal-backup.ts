@@ -39,6 +39,11 @@ export function validateBackup(input: unknown): Backup {
   }
   for (const q of s.questions) {
     if (
+      q.title !== undefined &&
+      (typeof q.title !== 'string' || !q.title.trim() || q.title.length > 200)
+    )
+      fail()
+    if (
       q.documents !== undefined &&
       (!Array.isArray(q.documents) ||
         q.documents.length > 5 ||

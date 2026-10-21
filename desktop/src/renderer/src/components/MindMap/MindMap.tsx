@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -21,6 +21,7 @@ export interface MindMapProps {
   root: MindNode
   selectedId?: string
   onSelect?: (node: MindNode) => void
+  onContextMenu?: (node: MindNode, event: MouseEvent) => void
   height?: number | string
   /** Highlight nodes whose subtree holds student questions. */
   markQuestions?: boolean
@@ -67,6 +68,7 @@ function MindMapInner({
   root,
   selectedId,
   onSelect,
+  onContextMenu,
   markQuestions,
   onMoveNode,
   canMove,
@@ -199,6 +201,12 @@ function MindMapInner({
       edges={layout.edges}
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
+      onNodeContextMenu={(event, node) => {
+        if (onContextMenu) {
+          event.preventDefault()
+          onContextMenu(node.data.mind, event)
+        }
+      }}
       onNodesChange={onMoveNode ? onNodesChange : undefined}
       onNodeDrag={onMoveNode ? onNodeDrag : undefined}
       onNodeDragStop={onMoveNode ? onNodeDragStop : undefined}

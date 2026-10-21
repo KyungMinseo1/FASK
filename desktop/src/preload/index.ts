@@ -5,6 +5,9 @@ import type { PersonalApi, StreamEvent } from './personal'
 const fask: PersonalApi = {
   activateProject: (id) => ipcRenderer.invoke('personal:active-project', id),
   rename: (kind, id, name) => ipcRenderer.invoke('personal:rename', kind, id, name),
+  remove: (kind, id) => ipcRenderer.invoke('personal:remove', kind, id),
+  clearRecent: (id) => ipcRenderer.invoke('personal:clear-recent', id),
+  editOverlayRegion: () => ipcRenderer.invoke('personal:edit-overlay-region'),
   overlayRegions: (drawing, regions) =>
     ipcRenderer.invoke('personal:overlay-regions', drawing, regions),
   shortcutInfo: () => ipcRenderer.invoke('personal:shortcut-info'),
@@ -36,7 +39,7 @@ const fask: PersonalApi = {
   capturePreview: () => ipcRenderer.invoke('personal:preview'),
   saveRegion: (region) => ipcRenderer.invoke('personal:save-region', region),
   closeCaptureEditor: () => ipcRenderer.invoke('personal:close-editor'),
-  openOverlay: (id) => ipcRenderer.invoke('personal:open-overlay', id),
+  openOverlay: (id, questionId) => ipcRenderer.invoke('personal:open-overlay', id, questionId),
   captureQuestion: (strokes) => ipcRenderer.invoke('personal:capture', strokes),
   onStream: (cb) => {
     const listener = (_: Electron.IpcRendererEvent, event: StreamEvent): void => cb(event)

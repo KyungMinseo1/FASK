@@ -31,6 +31,8 @@ export function registerPersonal(
   close: () => void
 } {
   const store = new PersonalStore(root)
+  // Deliberately in memory: reopening an overlay restores the conversation, restarting resets it.
+  const recentQuestions = new Map<string, string>()
   const controllers = new Map<
     string,
     { controller: AbortController; profile: string; questionId: string }
@@ -160,7 +162,29 @@ export function registerPersonal(
     })
     changed()
   }
-  handle('snapshot', () => store.snapshot())
+  handle('snapshot', () => ({
+    ...store.snapshot(),
+    recentQuestions: Object.fromEntries(
+      store
+        .list<Project>('project')
+        .flatMap((p) => (recentQuestions.has(p.id) ? [[p.id, recentQuestions.get(p.id)]] : []))
+    )
+  }))
+  handle('clear-recent', (id: string) => {
+    store.record('project', id)
+    recentQuestions.delete(id)
+    changed()
+  })
+  handle('remove', (kind: string, id: string) => {
+    if (controllers.size) throw new Error('진행 중인 답변을 마치거나 중지한 뒤 삭제해 주세요.')
+    if (capture.overlay || capture.editor)
+      throw new Error('오버레이와 캡처 설정을 닫고 삭제해 주세요.')
+    store.remove(kind, id)
+    for (const [project, question] of recentQuestions)
+      if (!store.db.prepare('SELECT id FROM records WHERE id=?').get(question))
+        recentQuestions.delete(project)
+    changed()
+  })
   handle('shortcut-info', () => questionShortcutInfo())
   handle('active-project', (id: string) => {
     store.record('project', id)
@@ -313,6 +337,7 @@ export function registerPersonal(
       error: ''
     }
     store.put('question', profile, q)
+    recentQuestions.set(project.id, q.id)
     changed()
     if (input.saveOnly) return q.id
     const controller = new AbortController()
@@ -451,9 +476,19 @@ export function registerPersonal(
   })
   handle('save-region', (region) => capture.saveRegion(region))
   handle('close-editor', () => capture.editor?.close())
-  handle('open-overlay', (id: string) => {
+  handle('edit-overlay-region', () => {
+    if (capture.displayId === null) throw new Error('오버레이를 먼저 열어 주세요.')
+    return capture.edit(capture.displayId)
+  })
+  handle('open-overlay', (id: string, questionId?: string) => {
+    store.record('project', id)
+    if (questionId) {
+      if (store.record<Question>('question', questionId).projectId !== id)
+        throw new Error('프로젝트가 다른 질문입니다.')
+      recentQuestions.set(id, questionId)
+    }
     lastProjectId = id
-    capture.open(id)
+    capture.open(id, !!questionId)
   })
   handle('capture', (strokes?: string) => capture.question(strokes))
   handle('interactive', (value: boolean) => capture.interactive(!!value))
@@ -479,7 +514,7 @@ export function registerPersonal(
       filters: [{ name: 'Markdown', extensions: ['md'] }]
     })
     if (result.canceled || !result.filePath) return false
-    const text = `# ${project.name}\n\n내보낸 시각: ${new Date().toISOString()}\n\n이 문서는 과거 질문과 AI 답변의 기록입니다. AI 답변은 검증된 사실 또는 사용자 결정과 동일하지 않습니다.\n\n## 개념\n${concepts.map((c) => `- ${c.name} (${c.id})`).join('\n')}\n\n${questions.map((q) => `## ${q.sent}\n\nID: ${q.id} · ${q.createdAt} · ${q.status} · ${q.complexity}\n\n질문 원문: ${q.raw}\n\n### AI 답변\n${q.answer || '(답변 없음)'}\n\n### 사용자 메모\n${q.memo || '(없음)'}\n`).join('\n---\n\n')}`
+    const text = `# ${project.name}\n\n내보낸 시각: ${new Date().toISOString()}\n\n이 문서는 과거 질문과 AI 답변의 기록입니다. AI 답변은 검증된 사실 또는 사용자 결정과 동일하지 않습니다.\n\n## 개념\n${concepts.map((c) => `- ${c.name} (${c.id})`).join('\n')}\n\n${questions.map((q) => `## ${q.title || q.sent}\n\nID: ${q.id} · ${q.createdAt} · ${q.status} · ${q.complexity}\n\n질문 원문: ${q.raw}\n\n### AI 답변\n${q.answer || '(답변 없음)'}\n\n### 사용자 메모\n${q.memo || '(없음)'}\n`).join('\n---\n\n')}`
     writeFileSync(result.filePath, text, 'utf8')
     return true
   })

@@ -145,16 +145,89 @@ export class PersonalStore {
       this.create('project', '첫 프로젝트', workspace)
     }
   }
-  rename(kind: 'workspace' | 'project', id: string, name: string): void {
+  rename(kind: string, id: string, name: string): void {
     if (
-      !['workspace', 'project'].includes(kind) ||
+      !['profile', 'workspace', 'project', 'concept', 'question'].includes(kind) ||
       typeof name !== 'string' ||
       !name.trim() ||
       name.trim().length > 200
     )
       throw new Error('이름은 1~200자로 입력해 주세요.')
-    const record = this.record<Workspace | Project>(kind, id)
-    this.put(kind, this.active, { ...record, name: name.trim() })
+    const profile = kind === 'profile' ? '*' : this.active
+    const record = this.record<{ id: string }>(kind, id, profile)
+    this.put(kind, profile, {
+      ...record,
+      ...(kind === 'question' ? { title: name.trim() } : { name: name.trim() })
+    })
+  }
+  remove(kind: string, id: string): void {
+    if (!['profile', 'workspace', 'project', 'concept', 'question'].includes(kind))
+      throw new Error('지원하지 않는 항목입니다.')
+    const profile = kind === 'profile' ? id : this.active
+    this.record(kind, id, kind === 'profile' ? '*' : profile)
+    const projects = new Set(
+      this.list<Project>('project', profile)
+        .filter(
+          (p) =>
+            kind === 'profile' ||
+            (kind === 'workspace' && p.workspaceId === id) ||
+            (kind === 'project' && p.id === id)
+        )
+        .map((p) => p.id)
+    )
+    const questions = this.list<Question>('question', profile).filter(
+      (q) => projects.has(q.projectId) || (kind === 'question' && q.id === id)
+    )
+    const images = new Set(questions.flatMap((q) => (q.attachment ? [q.attachment] : [])))
+    this.db.exec('BEGIN')
+    try {
+      const del = this.db.prepare('DELETE FROM records WHERE id=? AND profile=?')
+      for (const q of questions) {
+        this.db.prepare('DELETE FROM runs WHERE question_id=?').run(q.id)
+        del.run(q.id, profile)
+      }
+      if (kind === 'concept') {
+        const concept = this.record<Concept>('concept', id, profile)
+        for (const q of this.list<Question>('question', profile))
+          if (q.conceptIds.includes(id))
+            this.put('question', profile, {
+              ...q,
+              conceptIds: q.conceptIds.filter((c) => c !== id)
+            })
+        for (const child of this.list<Concept>('concept', profile))
+          if (child.parentId === id)
+            this.put('concept', profile, { ...child, parentId: concept.parentId })
+      }
+      for (const c of this.list<Concept>('concept', profile))
+        if (projects.has(c.projectId)) del.run(c.id, profile)
+      for (const project of projects) del.run(project, profile)
+      del.run(id, kind === 'profile' ? '*' : profile)
+      if (kind === 'profile') {
+        this.db.prepare('DELETE FROM records WHERE profile=?').run(profile)
+        for (const key of [`settings:${profile}`, `key:${profile}`])
+          this.db.prepare('DELETE FROM preferences WHERE key=?').run(key)
+        if (this.active === profile) {
+          const next =
+            this.list<Profile>('profile', '*')[0]?.id ?? this.create('profile', '기본 프로필')
+          this.switchProfile(next)
+        }
+      }
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+    for (const image of images) {
+      if (
+        !this.db
+          .prepare(
+            "SELECT id FROM records WHERE kind='question' AND json_extract(data,'$.attachment')=?"
+          )
+          .get(image) &&
+        existsSync(this.imagePath(image))
+      )
+        unlinkSync(this.imagePath(image))
+    }
   }
   snapshot(): Snapshot {
     const questions = this.list<Question>('question').sort((a, b) =>

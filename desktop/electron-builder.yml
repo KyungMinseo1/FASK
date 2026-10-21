@@ -1,8 +1,9 @@
-appId: com.fask.personal
+appId: com.fask.app
 productName: FASK
 directories:
   buildResources: build
 files:
+  - '!tests/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

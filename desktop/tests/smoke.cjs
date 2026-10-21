@@ -34,5 +34,20 @@ console.log(
     stderr: result.stderr?.slice(-3000)
   })
 )
+if (result.status === 0) {
+  const restart = spawnSync(require('electron'), [join(__dirname, 'electron-restart.cjs')], {
+    env,
+    encoding: 'utf8',
+    timeout: 20000
+  })
+  console.log(
+    JSON.stringify({
+      restartStatus: restart.status,
+      error: restart.error?.message,
+      stderr: restart.stderr?.slice(-1000)
+    })
+  )
+  if (restart.status !== 0) process.exitCode = restart.status ?? 1
+}
 console.log(readFileSync(join(__dirname, 'smoke-result.json'), 'utf8'))
-process.exitCode = result.status ?? 1
+if (result.status !== 0) process.exitCode = result.status ?? 1

@@ -45,7 +45,9 @@ app.whenReady().then(async () => {
           last = input.messages.at(-1)
         const reply = input.messages[0]?.content.includes('JSON만 출력')
           ? '{}'
-          : `테스트 답변: ${typeof last.content === 'string' ? last.content : '이미지 질문'}`
+          : input.messages[0]?.content.includes('다듬어라')
+            ? '다듬어진 테스트 질문'
+            : `## 설명\n\n**핵심 내용**과 목록입니다.\n\n- 첫 번째\n- 두 번째\n\n\`\`\`js\nconst answer = 42\n\`\`\`\n\n| 항목 | 설명 |\n| --- | --- |\n| 캡처 | 전송 시 촬영 |\n\n[위험 링크](javascript:alert(1))\n\n<img src="https://example.invalid/track">\n\n${'긴 답변의 스크롤과 영역 크기를 확인하는 문단입니다.\n\n'.repeat(24)}테스트 답변: ${typeof last.content === 'string' ? last.content : '이미지 질문'}`
         res.setHeader('Content-Type', 'text/event-stream')
         res.write(
           `data: ${JSON.stringify({ model: 'test-fast', choices: [{ delta: { content: reply } }] })}\n\n`
@@ -104,7 +106,11 @@ app.whenReady().then(async () => {
       }
     })
     win.webContents.on('console-message', (_event, level, message) => {
-      if (level === 3) report.consoleErrors.push(message)
+      if (level === 3) {
+        report.consoleErrors.push(message)
+        report.errorPhases ??= []
+        report.errorPhases.push({ phase: report.phase, message })
+      }
     })
     win.webContents.on('preload-error', (_e, _p, error) => report.consoleErrors.push(error.message))
     const personal = registerPersonal(dataDir, () => win)
@@ -162,6 +168,32 @@ app.whenReady().then(async () => {
     assert.equal(renamed.projects.find((p) => p.id === project.id).name, '개인 연구')
     assert.equal(renamed.workspaces[0].name, '연구 워크스페이스')
     report.checks.push('workspace/project rename retains IDs and question references')
+    const context = async (selector) => {
+      await js(
+        `document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:350,clientY:220}))`
+      )
+      await wait(
+        () => js("!!document.querySelector('.item-context-menu')"),
+        'right click opens edit/delete menu'
+      )
+      assert.equal(
+        await js("document.querySelectorAll('.item-context-menu [role=menuitem]').length"),
+        2
+      )
+    }
+    await context('[aria-label="프로필"]')
+    await renameUi('.item-context-menu button', '연구 프로필')
+    await context('.question-card')
+    await renameUi('.item-context-menu button', '투명 오버레이에서 입력 처리 연구')
+    const namedQuestion = (await js('window.fask.snapshot()')).questions.find(
+      (q) => q.id === 'seed-question'
+    )
+    assert.equal(namedQuestion.title, '투명 오버레이에서 입력 처리 연구')
+    assert.equal(namedQuestion.sent, '투명 오버레이에서 다른 앱을 클릭하려면?')
+    report.checks.push(
+      'profile and timeline question context menus rename without altering prompts'
+    )
+
     await js(
       "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('투명 오버레이에서')).click()"
     )
@@ -172,6 +204,14 @@ app.whenReady().then(async () => {
     )
     await pause(400)
     await shot('graph')
+    await context(`.react-flow__node[data-id="c:${concept}"]`)
+    await renameUi('.item-context-menu button', 'Electron 입력')
+    assert.equal(
+      (await js('window.fask.snapshot()')).concepts.find((c) => c.id === concept).name,
+      'Electron 입력'
+    )
+    report.checks.push('graph node right click renames concept')
+
     await js(
       "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('설정 · AI')).click()"
     )
@@ -223,11 +263,28 @@ app.whenReady().then(async () => {
         ),
       'image and file question persisted with model answer'
     )
+    await wait(
+      () =>
+        js(
+          "!!document.querySelector('.live-answer h2')&&!!document.querySelector('.live-answer pre code')&&!!document.querySelector('.live-answer table')"
+        ),
+      'streamed answer renders Markdown heading/code/table'
+    )
+    assert.equal(
+      await js(
+        'document.querySelectorAll(\'.markdown-answer script,.markdown-answer img,.markdown-answer a[href^="javascript:"]\').length'
+      ),
+      0
+    )
+    report.checks.push('model HTML and unsafe URLs are not executed')
     const display = screen.getPrimaryDisplay()
     const background = await win.webContents.capturePage()
     // Deterministic fixture replaces desktop capture; no unrelated desktop content is saved.
-    personal.capture.screenshot = async () =>
-      background.resize({ width: display.bounds.width, height: display.bounds.height })
+    let captureCount = 0
+    personal.capture.screenshot = async () => {
+      captureCount++
+      return background.resize({ width: display.bounds.width, height: display.bounds.height })
+    }
     await personal.capture.edit(display.id)
     const editor = personal.capture.editor
     await wait(
@@ -347,11 +404,246 @@ app.whenReady().then(async () => {
       () => overlay.webContents.executeJavaScript("!!document.querySelector('.overlay-panel')"),
       'shortcut action opens question panel'
     )
+    const overlayJs = (source) => overlay.webContents.executeJavaScript(source)
+    const beforeSendCaptureCount = captureCount
+    await overlayJs('document.querySelector(\'[aria-label="화면 캡처 포함"]\').click()')
+    await pause(100)
+    assert.equal(captureCount, beforeSendCaptureCount)
+    report.checks.push('capture inclusion toggle does not take a screenshot')
+    await overlayJs(
+      "(()=>{const el=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'전송 시점 캡처 질문');el.dispatchEvent(new Event('input',{bubbles:true}));})()"
+    )
+    await overlayJs(
+      "[...document.querySelectorAll('.composer-actions button')].find(b=>b.textContent==='질문 다듬기').click()"
+    )
+    await wait(
+      () => overlayJs("!!document.querySelector('.refine-review')"),
+      'refinement completes without screen capture'
+    )
+    assert.equal(captureCount, beforeSendCaptureCount)
+    await overlayJs("document.querySelector('.composer-actions .primary').click()")
+    await wait(
+      () =>
+        js(
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.raw==='전송 시점 캡처 질문'&&q.attachment&&q.status==='completed'))"
+        ),
+      'send button captures fresh screen and transmits it'
+    )
+    assert.equal(captureCount, beforeSendCaptureCount + 1)
+    await wait(
+      () => overlayJs("!!document.querySelector('.live-answer .markdown-answer table')"),
+      'overlay renders Markdown tables'
+    )
+    assert.equal(
+      await overlayJs(
+        "(()=>{const body=document.querySelector('.overlay-panel-content');return body.scrollHeight>body.clientHeight})()"
+      ),
+      true
+    )
+    const initialPanel = await overlayJs(
+      "(()=>{const r=document.querySelector('.overlay-panel').getBoundingClientRect();const h=document.querySelector('.panel-resize-handle').getBoundingClientRect();return {width:r.width,height:r.height,west:document.querySelector('.panel-resize-handle').classList.contains('sw')||document.querySelector('.panel-resize-handle').classList.contains('nw'),north:document.querySelector('.panel-resize-handle').classList.contains('nw')||document.querySelector('.panel-resize-handle').classList.contains('ne'),x:Math.round(h.x+h.width/2),y:Math.round(h.y+h.height/2)}})()"
+    )
+    cursor = { x: bounds.x + initialPanel.x, y: bounds.y + initialPanel.y }
+    await pause(80)
+    overlay.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: initialPanel.x,
+      y: initialPanel.y,
+      button: 'left',
+      clickCount: 1
+    })
+    overlay.webContents.sendInputEvent({
+      type: 'mouseMove',
+      x: initialPanel.x + (initialPanel.west ? -40 : 40),
+      y: initialPanel.y + (initialPanel.north ? -70 : 70),
+      button: 'left'
+    })
+    overlay.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: initialPanel.x + (initialPanel.west ? -40 : 40),
+      y: initialPanel.y + (initialPanel.north ? -70 : 70),
+      button: 'left',
+      clickCount: 1
+    })
+    await wait(
+      () =>
+        overlayJs(
+          `document.querySelector('.overlay-panel').getBoundingClientRect().height>${initialPanel.height + 30}`
+        ),
+      'question panel resizes with a visible drag handle'
+    )
+    const resized = await overlayJs(
+      "(()=>{const r=document.querySelector('.overlay-panel').getBoundingClientRect();return {width:r.width,height:r.height}})()"
+    )
+    assert.ok(resized.width > initialPanel.width)
+    report.checks.push('long answers scroll inside the resized question panel')
+    await overlayJs(
+      "document.querySelector('.overlay-panel-content').scrollTop=0;document.querySelector('[aria-label=\"화면 캡처 포함\"]').click()"
+    )
+    await overlayJs(
+      "(()=>{const el=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'캡처 없이 보내는 질문');el.dispatchEvent(new Event('input',{bubbles:true}));})()"
+    )
+    await overlayJs("document.querySelector('.composer-actions .primary').click()")
+    await wait(
+      () =>
+        js(
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.raw==='캡처 없이 보내는 질문'&&!q.attachment&&q.status==='completed'))"
+        ),
+      'unchecked capture sends text without screenshot'
+    )
+    assert.equal(captureCount, beforeSendCaptureCount + 1)
+    personal.quickQuestion()
+    await wait(
+      () => overlayJs("!document.querySelector('.overlay-panel')"),
+      'question panel closes after answer'
+    )
+    personal.quickQuestion()
+    await wait(
+      () =>
+        overlayJs(
+          "document.querySelector('.recent-question')?.textContent.includes('캡처 없이 보내는 질문') && !!document.querySelector('.live-answer table')"
+        ),
+      'reopening question restores most recent question and Markdown answer'
+    )
+    assert.equal(
+      await overlayJs(`document.querySelector('[aria-label="화면 캡처 포함"]').checked`),
+      false
+    )
+    const nativeDrag = async (selector, dx, dy) => {
+      const point = await overlayJs(
+        `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.left+Math.min(80,r.width/2)),y:Math.round(r.top+r.height/2)}})()`
+      )
+      cursor = { x: bounds.x + point.x, y: bounds.y + point.y }
+      await pause(80)
+      overlay.webContents.sendInputEvent({
+        type: 'mouseDown',
+        ...point,
+        button: 'left',
+        clickCount: 1
+      })
+      overlay.webContents.sendInputEvent({
+        type: 'mouseMove',
+        x: point.x + dx,
+        y: point.y + dy,
+        button: 'left'
+      })
+      overlay.webContents.sendInputEvent({
+        type: 'mouseUp',
+        x: point.x + dx,
+        y: point.y + dy,
+        button: 'left',
+        clickCount: 1
+      })
+      await pause(100)
+    }
+    for (const [right, bottom, expected] of [
+      [false, false, 'se'],
+      [true, false, 'sw'],
+      [true, true, 'nw'],
+      [false, true, 'ne']
+    ]) {
+      const r = await overlayJs(
+        "(()=>{const r=document.querySelector('.overlay-toolbar').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()"
+      )
+      await nativeDrag(
+        '.toolbar-drag-handle',
+        Math.round((right ? display.bounds.width - r.width - 8 : 8) - r.x),
+        Math.round((bottom ? display.bounds.height - r.height - 8 : 8) - r.y)
+      )
+      assert.equal(
+        await overlayJs(
+          `document.querySelector('.panel-resize-handle').classList.contains('${expected}')`
+        ),
+        true
+      )
+      const before = await overlayJs(
+        "(()=>{const r=document.querySelector('.overlay-panel').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()"
+      )
+      await nativeDrag(
+        '.panel-resize-handle',
+        expected.includes('w') ? 10 : -10,
+        expected.includes('n') ? 10 : -10
+      )
+      const after = await overlayJs(
+        "(()=>{const r=document.querySelector('.overlay-panel').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()"
+      )
+      assert.ok(Math.abs(after.width - (before.width - 10)) < 2)
+      assert.ok(Math.abs(after.height - (before.height - 10)) < 2)
+      assert.ok(
+        Math.abs(
+          (expected.includes('w') ? after.x + after.width : after.x) -
+            (expected.includes('w') ? before.x + before.width : before.x)
+        ) < 2
+      )
+      assert.ok(
+        Math.abs(
+          (expected.includes('n') ? after.y + after.height : after.y) -
+            (expected.includes('n') ? before.y + before.height : before.y)
+        ) < 2
+      )
+    }
+    report.checks.push(
+      'native toolbar drag supports all four quadrants; resize holds opposite corner fixed'
+    )
+    await nativeDrag('.overlay-panel > header', -80, 20)
+    await overlayJs(`document.querySelector('[aria-label="화면 캡처 포함"]').click()`)
+    const rememberedGeometry = await overlayJs(
+      "JSON.stringify([...document.querySelectorAll('.overlay-toolbar,.overlay-panel')].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]}))"
+    )
     screen.getCursorScreenPoint = originalCursor
     await pause(250)
     await shot('overlay', overlay)
     personal.capture.close()
     await pause(150)
+    await js(`window.fask.openOverlay(${JSON.stringify(project.id)}, 'seed-question')`)
+    const resumed = personal.capture.overlay
+    const resumedJs = (source) => resumed.webContents.executeJavaScript(source)
+    await wait(
+      () => resumedJs("!!document.querySelector('.recent-question')"),
+      'dashboard continuation opens overlay question panel'
+    )
+    assert.equal(
+      await resumedJs(
+        "document.querySelector('.recent-question').textContent.includes('투명 오버레이에서 다른 앱을 클릭하려면?')"
+      ),
+      true
+    )
+    assert.equal(
+      await resumedJs(`document.querySelector('[aria-label="화면 캡처 포함"]').checked`),
+      true
+    )
+    assert.equal(
+      await resumedJs(
+        "JSON.stringify([...document.querySelectorAll('.overlay-toolbar,.overlay-panel')].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]}))"
+      ),
+      rememberedGeometry
+    )
+    report.checks.push(
+      'dashboard round trip restores panel position, size, toolbar position and capture selection'
+    )
+    await resumedJs(
+      "[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes('캡처 영역')).click()"
+    )
+    await wait(() => !!personal.capture.editor, 'toolbar opens capture area editor')
+    const overlayEditor = personal.capture.editor
+    await wait(
+      () => overlayEditor.webContents.executeJavaScript("!!document.querySelector('.capture-box')"),
+      'capture editor loads from overlay'
+    )
+    await overlayEditor.webContents.executeJavaScript(
+      "setTimeout(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('취소')).click(),50);true"
+    )
+    await wait(
+      () => !personal.capture.editor && resumed.isVisible() && !win.isVisible(),
+      'closing capture editor restores overlay instead of dashboard'
+    )
+    assert.equal(
+      await resumedJs(
+        "[...document.querySelectorAll('.overlay-toolbar button')].some(b=>b.textContent.includes('나가기'))"
+      ),
+      false
+    )
+    personal.capture.close()
     await js(
       `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', profileId, projectId: project.id, raw: '캡처 기록', image, model: 'test-fast', saveOnly: true })})`
     )
@@ -359,17 +651,96 @@ app.whenReady().then(async () => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: backupPath })
     assert.equal(await js('window.fask.backup()'), true)
     const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
-    assert.equal(backup.snapshot.questions.length, 4)
+    assert.equal(backup.snapshot.questions.length, 6)
     assert.ok(Object.keys(backup.images).length === 2)
     assert.equal(backup.snapshot.settings.hasKey, false)
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [backupPath] })
     assert.equal(await js('window.fask.restore()'), true)
     const restored = await js('window.fask.snapshot()')
     assert.notEqual(restored.activeProfileId, profileId)
-    assert.equal(restored.questions.length, 4)
+    assert.equal(restored.questions.length, 6)
     assert.equal(restored.profiles.length, 2)
     assert.ok(restored.storageBytes > 0)
     report.checks.push('backup restores questions and capture into a separate profile')
+    await context('[aria-label="프로필"]')
+    await js("document.querySelector('.item-context-menu .danger').click()")
+    await wait(
+      () =>
+        js(
+          `window.fask.snapshot().then(s=>s.activeProfileId===${JSON.stringify(profileId)}&&s.profiles.length===1)`
+        ),
+      'profile context delete removes restored copy and returns to original'
+    )
+    await js(
+      `location.hash='/personal?scope=project&workspace=${project.workspaceId}&project=${project.id}'`
+    )
+    await wait(
+      () => js("!!document.querySelector('.view-bar')"),
+      'original project reopens after profile deletion'
+    )
+    await js(
+      "[...document.querySelectorAll('.segmented button')].find(b=>b.textContent==='목록').click()"
+    )
+    await wait(
+      () => js("!!document.querySelector('.question-list.compact .question-card')"),
+      'list view opens'
+    )
+    const deletingId = (await js('window.fask.snapshot()')).questions[0].id
+    await context('.question-card')
+    await js("document.querySelector('.item-context-menu .danger').click()")
+    await wait(
+      () =>
+        js(
+          `window.fask.snapshot().then(s=>!s.questions.some(q=>q.id===${JSON.stringify(deletingId)}))`
+        ),
+      'list context menu deletes question itself'
+    )
+    await js(
+      "[...document.querySelectorAll('.segmented button')].find(b=>b.textContent==='개념 그래프').click()"
+    )
+    await wait(
+      () => js(`!!document.querySelector('.react-flow__node[data-id="c:${concept}"]')`),
+      'graph opens for concept deletion'
+    )
+    await context(`.react-flow__node[data-id="c:${concept}"]`)
+    await js("document.querySelector('.item-context-menu .danger').click()")
+    await wait(
+      () =>
+        js(
+          `window.fask.snapshot().then(s=>!s.concepts.some(c=>c.id===${JSON.stringify(concept)})&&s.questions.every(q=>!q.conceptIds.includes(${JSON.stringify(concept)})))`
+        ),
+      'graph concept deletion detaches questions without deleting them'
+    )
+    await context('.fask-sidebar nav button')
+    await js("document.querySelector('.item-context-menu .danger').click()")
+    await wait(
+      () =>
+        js(
+          `window.fask.snapshot().then(s=>!s.projects.some(p=>p.id===${JSON.stringify(project.id)})&&s.questions.length===0)`
+        ),
+      'project context deletion cascades through its questions'
+    )
+    await context('[aria-label="워크스페이스"]')
+    await js("document.querySelector('.item-context-menu .danger').click()")
+    await wait(
+      () => js('window.fask.snapshot().then(s=>s.workspaces.length===0)'),
+      'workspace context menu deletes workspace'
+    )
+
+    const restartWorkspace = await js("window.fask.create('workspace','재시작 검증')")
+    const restartProject = await js(
+      `window.fask.create('project','재시작 검증',${JSON.stringify(restartWorkspace)})`
+    )
+    await js(
+      `window.fask.ask(${JSON.stringify({ requestId: 'restart-question', profileId, projectId: restartProject, raw: '앱 종료 전에 저장한 질문', model: '', saveOnly: true })})`
+    )
+    report.restart = {
+      dataDir,
+      userData: app.getPath('userData'),
+      projectId: restartProject,
+      geometry: rememberedGeometry
+    }
+    win.webContents.session.flushStorageData()
     assert.deepEqual(report.consoleErrors, [])
     report.success = true
     writeFileSync(join(__dirname, 'smoke-result.json'), JSON.stringify(report, null, 2))
