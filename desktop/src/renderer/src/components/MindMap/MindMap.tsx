@@ -6,6 +6,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useNodesInitialized,
   type NodeChange,
   type NodeMouseHandler,
   type NodeTypes,
@@ -72,6 +73,7 @@ function MindMapInner({
   canDrop
 }: MindMapProps): React.JSX.Element {
   const { fitView } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
   // Only the root and its direct children are visible initially (max-depth = 1).
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([root.id]))
   const [openQuestions, setOpenQuestions] = useState<Set<string>>(() => new Set())
@@ -125,11 +127,12 @@ function MindMapInner({
 
   // Fit only on first render and when the expansion state changes — not on live data updates.
   useEffect(() => {
+    if (!nodesInitialized) return
     const timer = setTimeout(() => {
       void fitView({ padding: 0.15, duration: 400, maxZoom: 1.2 })
     }, 50)
     return () => clearTimeout(timer)
-  }, [expanded, fitView])
+  }, [expanded, fitView, nodesInitialized])
 
   const onNodeClick: NodeMouseHandler<MindFlowNode> = useCallback(
     (_event, node) => {
@@ -190,6 +193,8 @@ function MindMapInner({
 
   return (
     <ReactFlow
+      fitView
+      fitViewOptions={{ padding: 0.15, maxZoom: 1.2 }}
       nodes={nodes}
       edges={layout.edges}
       nodeTypes={nodeTypes}

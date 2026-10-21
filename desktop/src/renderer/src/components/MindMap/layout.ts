@@ -11,18 +11,18 @@ const QUESTION_DIAMETER = 48
 const ARC_GAP = 16
 const RING_GAP = 44
 
-export const ROOT_COLOR = '#5b7f71'
-const GROUP_COLOR = '#9a9990'
-/** Branch palette, muted to sit next to the sage brand color. */
+export const ROOT_COLOR = '#6558cc'
+const GROUP_COLOR = '#8892aa'
+/** Cool branch colors coordinated with the personal workspace theme. */
 const BRANCH_COLORS = [
-  '#c27a63',
-  '#6f8fae',
-  '#c9a24e',
-  '#9d7fa6',
-  '#4f8a8b',
-  '#8f9c5c',
-  '#c48a92',
-  '#7a8597'
+  '#7586ce',
+  '#8a73c2',
+  '#589eb4',
+  '#798cc1',
+  '#679b9a',
+  '#9d82b5',
+  '#8078bb',
+  '#7a859f'
 ]
 
 export interface MindNodeData extends Record<string, unknown> {

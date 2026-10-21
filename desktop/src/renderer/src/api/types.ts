@@ -1,4 +1,22 @@
-// Mirrors server/app/schemas.py (PLAN.md §2, §4, §5, §6). Datetimes are ISO strings with `Z`.
+// Legacy classroom REST contract, preserved with server/app/schemas.py.
+// The personal app uses preload IPC; its shared wire types are re-exported here.
+export type {
+  AskInput,
+  CapturePreview,
+  CaptureRect,
+  CaptureRegion,
+  Concept,
+  DisplayInfo,
+  LocalSettings,
+  PersonalApi,
+  Profile,
+  Project,
+  Question,
+  Snapshot,
+  StreamEvent,
+  Workspace
+} from '../../../preload/personal'
+// Legacy datetimes are ISO strings with `Z`.
 
 export type Role = 'student' | 'teacher'
 

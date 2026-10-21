@@ -1,11 +1,13 @@
 {
-  "name": "askkup",
-  "version": "1.0.3",
-  "description": "An ASKKUP Electron application with React and TypeScript",
+  "name": "fask",
+  "version": "1.0.4",
+  "description": "A personal screen-question and knowledge workspace",
   "main": "./out/main/index.js",
   "author": "pegood0217@gmail.com",
   "homepage": "https://electron-vite.org",
   "scripts": {
+    "test": "node tests/run.cjs",
+    "test:smoke": "npm run build && node tests/smoke.cjs",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

@@ -1,0 +1,90 @@
+# FASK 개인용 구현
+
+2026-10-21. 현재 데스크톱 앱의 실행 계약이며 기존 `server/`는 수업용 참고 코드로 보존한다.
+
+## 실행 구조
+
+- `App.tsx`는 개인용 대시보드, `/personal-overlay`, `/capture-editor`만 실행한다. 교사·학생 인증·수업·리콜 UI는 개인용 번들에서 사용하지 않는다.
+- main의 `personal.ts`가 SQLite, 로컬 API, 파일 대화상자, 백업을 담당한다. renderer는 `window.fask`의 제한된 preload 메서드만 사용한다.
+- OpenAI 호환 Chat Completions 스트리밍을 사용한다. 공급자 로그인과 프록시 내부 라우팅은 EasyCLIProxyAPI의 책임이다.
+- `node:sqlite`를 사용한다. 검증한 Electron 39.8.10의 Node 22.22.1에는 DatabaseSync가 포함되어 있다.
+- `fask.sqlite`는 WAL·외래 키 설정을 켜고 `schema_migrations`, `records`, `preferences`, `runs`를 보유한다. 현재 스키마 버전은 1이다.
+- 프로필은 한 DB의 profile scope로 구분한다. 이미지 파일은 내용 해시로 공유하되 접근은 현재 프로필의 질문 참조를 확인한다. 이는 OS 사용자 격리/DB 전체 암호화와 다르다.
+- 작은 원본 레코드는 JSON payload로 보관한다. 초기 검색은 현재 프로젝트의 원문·전송 문장·답변·메모에 대한 부분 문자열 검색이다. FTS와 임베딩은 아직 사용하지 않는다.
+
+## IPC 와이어 계약
+
+타입 정본은 `desktop/src/preload/personal.d.ts`이며 renderer `api/types.ts`에서도 re-export한다. 기존 서버 스키마와 REST 경로에는 변경이 없다.
+
+| IPC 채널 (`personal:` 접두사) | 입력 | 결과 |
+|---|---|---|
+| snapshot | 없음 | 현재 프로필의 Snapshot, 키 원문 제외 |
+| create | profile/workspace/project/concept, 이름, 상위 ID | 새 ID |
+| rename | workspace/project, ID, 새 이름 | 현재 프로필의 항목 이름만 변경, ID·질문 참조 보존 |
+| active-project | 프로젝트 ID | 단축키로 열 대상 프로젝트 선택 |
+| overlay-regions | drawing boolean, 도구/패널의 DIP 사각형 배열 | 메인 프로세스의 네이티브 커서 위치 판정에 사용 |
+| shortcut-info | 없음 | 등록한 accelerator 또는 null, fallback 여부 |
+| switch-profile | 프로필 ID | 완료. 요청·캡처 창이 있으면 거절 |
+| save-settings | LocalSettings, 선택적 새 접속 키 | 완료. 키 생략은 유지, 빈 문자열은 제거 |
+| models | endpoint, 선택적 키 | 모델 ID 목록 |
+| ask | AskInput | 저장한 질문 ID. 답변은 이벤트로 전달 |
+| cancel | 요청 ID 또는 질문 ID | 현재 프로필 요청 취소 |
+| refine | 원문, 선택적 이미지 | 다듬은 문장. 자동 전송하지 않음 |
+| update-question | 질문 ID, memo/important/conceptIds/suggestions | 완료 |
+| edit-concept / merge-concept | 개념 ID와 변경/대상 | 완료. 다른 프로젝트·트리 순환 거절 |
+| attachment / clear-attachment | 이미지 ID / 질문 ID | data URL / 완료 |
+| displays | 없음 | 모니터 ID·이름·DIP 크기 |
+| open-editor / preview | 모니터 ID / 없음 | 편집 창 / 고정 화면 미리보기 |
+| save-region / close-editor | CaptureRegion / 없음 | 영역 적용 / 취소 |
+| open-overlay / capture | 프로젝트 ID / 선택적 펜 PNG | 오버레이 열기 / 잘린 이미지 data URL |
+| interactive / close-overlay / dashboard | boolean / 없음 | 창 입력 상태·복귀 |
+| export | 프로젝트 ID | Markdown 저장 대화상자, 저장 여부 |
+| backup / restore | 없음 | JSON 백업/새 프로필 복원 대화상자, 성공 여부 |
+
+이벤트 `personal:stream`은 requestId, questionId, delta 또는 done/error를 전달한다. `personal:changed`는 스냅샷 재조회 신호, `personal:escape`는 펜 모드 해제, `personal:toggle-panel`은 질문 패널을 여닫는 신호이다. 오류는 IPC Promise 거절이며 UI는 접속 키·모델·한도·시간 초과 등을 표시한다.
+
+2026-10-21 UI 수정: 상위 경로는 HashRouter 검색 파라미터를 이용한 실제 내 공간/워크스페이스/프로젝트 탐색이며 뒤로가기를 지원한다. 워크스페이스·프로젝트 이름은 현재 프로필 범위를 검사한 후 수정한다.
+
+오버레이는 DOM hover 이벤트에 의존하지 않는다. ResizeObserver로 보고한 도구·패널 영역과 메인 프로세스에서 30ms 간격으로 읽는 DIP 커서 좌표를 비교해 클릭 통과 여부를 바꾼다. 펜/지우개 모드에는 전체 캔버스가 입력을 받는다. 축소된 도구의 버튼 클릭과 나머지 화면의 클릭 통과를 함께 검증한다.
+
+단축키는 `Ctrl+Shift+Space` 등록 성공 여부를 검사하고 실패 시 `Ctrl+Alt+Space`를 시도한다. 실제 등록 상태를 사이드바에 표시한다. 동작은 현재 프로젝트 오버레이 열기/질문 패널 토글이며, 펼쳐질 때 입력란에 포커스를 둔다.
+
+`AskInput.documents`와 `Question.documents`는 선택적 `{name,text}[]`이다. 구버전 레코드는 필드가 없어도 읽을 수 있다. 이미지 파일·클립보드는 PNG로 변환하고 기존 image/attachment 경로를 이용한다. 텍스트 파일은 UTF-8·개수·크기를 검사한 뒤 별도 참조 데이터로 모델에 전달하며 원문과 함께 보존한다. 상세·검색·내보내기·백업에서도 이용한다. 지원하지 않는 PDF/바이너리는 조용히 무시하지 않고 오류를 표시한다.
+
+main은 등록된 앱 창의 main frame만 허용한다. API 요청은 main에서 수행하고 외부 리디렉션을 따르지 않는다. endpoint는 localhost/127.0.0.1/::1만 허용한다. 접속 키는 Electron safeStorage로 암호화해 저장하고 백업/Markdown에는 포함하지 않는다.
+
+## 질문·그래프·기억
+
+- 원문, 선택적 다듬은 문장, 전송 문장, 답변, 복잡도, 추천 근거, 요청/응답 모델, 상태를 저장한다.
+- 전송 전에 질문과 실행 이력을 저장한다. 부분 답변을 주기적으로 기록하며 앱 재시작 시 진행 중이던 요청을 실패 상태로 복구한다.
+- 같은 대화의 완료된 이전 질문 최대 8개를 참고한다. 기억 설정을 켜면 같은 프로젝트의 중요 표시한 기록 최대 5개를 추가한다. 답변/메모는 길이를 제한해 전송한다.
+- 모델 추천은 로컬 규칙이며 빠른/깊은 추론 모델 매핑을 사용한다. 이미지 난이도는 미확정으로 표시한다. 구독의 실제 잔여 한도는 FASK가 조회하지 않으며 프록시에서 확인한다.
+- 자동 정리는 답변 후 별도 요청으로 기존 개념 ID와 새 개념 제안을 받는다. 연결 대상은 현재 프로젝트의 실제 ID인지 검증한다. 새 개념은 사용자가 클릭해야 생성한다. 작업 중 사용자 연결을 수정했으면 자동 결과가 덮어쓰지 않는다.
+- 그래프는 기존 MindMap을 재사용한 개념 트리이다. 질문 하나를 여러 개념에 연결할 수 있으며 각 개념 아래에서 같은 질문을 연다. 개념 이름·상위 위치·병합을 편집할 수 있다.
+- Markdown에는 원본 질문·AI 답변·사용자 메모를 구분한다. 외부 세션의 자동 동기화나 기존 ChatGPT/Claude 대화 조회는 제공하지 않는다.
+
+## 캡처
+
+- 설정에서 선택 모니터를 고정 미리보기로 만들고 선택 박스 안은 선명하게, 밖은 blur/dim으로 표시한다.
+- 박스 이동, 8방향 핸들, 적용/취소/초기화/전체 화면, Enter/Esc를 제공한다.
+- 모니터 ID와 정규화 사각형, 설정 당시 화면 크기를 저장한다. 모니터가 없거나 화면 크기가 바뀌면 재설정을 요구한다.
+- 실제 질문 캡처는 새 화면을 사용한다. 오버레이를 숨기고 캡처한 후 펜 캔버스 좌표를 실제 이미지 크기에 맞추어 합성하고 영역을 자른다. 선택 범위 밖 픽셀과 편집 UI는 반환하지 않는다.
+- 최소: 답변 성공 후 보관 이미지를 제거한다. 실패·저장만 한 질문은 이미지를 유지한다.
+- 균형: 영역 JPEG quality 90. 보존: 영역 PNG. 썸네일은 화면에서 원본을 축소 표시한다.
+- 이미지 제거 시 다른 질문/프로필의 참조가 있으면 파일을 유지한다. 보존 기간·용량 상한에 따른 자동 삭제는 아직 제공하지 않는다.
+
+## 후속 범위
+
+프로젝트별 설정 재정의, Responses 프로토콜 선택, FTS/임베딩 검색, 일반 관계 그래프, 읽기 전용 MCP, JEV, 기존 수업 DB 가져오기는 후속 구현이다. 현재 프로필별 설정과 Chat Completions 경로를 사용한다.
+
+실제 EasyCLIProxyAPI 계정 연결·상위 모델 이미지 지원·사용량은 사용자 endpoint에서 별도 검증해야 한다. 통합 테스트는 테스트용 프록시와 앱 화면 fixture로 실행하며 실제 공급자 인증을 사용하지 않는다.
+
+## 검증 결과
+
+- `npm run typecheck`, `npm run build`: 통과.
+- 변경된 main/preload/개인용 renderer와 MindMap의 ESLint 오류 검사: 통과.
+- `npm test`: 6개 통과. 재시작 복구·이름 변경 보존·프로필/프로젝트 범위·개념 순환 방지·이미지 공유 참조·첨부파일 형식/크기·백업 참조 검증·인증/분할 SSE/한글/연결 중단/취소를 검증한다.
+- `npm run test:smoke`: 실제 Electron에서 상위 경로/뒤로가기·이름 변경 UI·이미지 붙여넣기/Markdown 드롭·첨부 저장·OS 단축키 등록·단축키 콜백·축소 도구 네이티브 마우스 클릭·배경 클릭 통과를 기존 캡처/백업 흐름과 함께 확인한다. 단축키 하드웨어 입력 대신 등록 상태와 실제 콜백 동작을 검사하며, 커서 좌표는 테스트 fixture를 주입한다.
+- 7개 화면 이미지를 생성해 대시보드·상세·그래프·설정·첨부 입력·캡처 편집·오버레이 레이아웃을 확인했다. 테스트 결과와 화면은 `desktop/tests/`의 무시된 출력 경로에 있다.
+- Windows 폴더 배포 파일: `desktop/dist/win-unpacked/FASK.exe`. 폴더 전체가 필요하다.
+- Git 명령은 실행하지 않았다. 기존 서버 DB와 공급자 계정 설정은 수정하지 않았다.
