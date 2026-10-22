@@ -1,80 +1,174 @@
-# FASK — Personal On-Screen Questions and Knowledge Space
+<div align="center">
+
+# FASK
+
+### Ask about your screen. Keep what you learn.
+
+A personal desktop workspace for on-screen questions, AI answers, and connected knowledge.
+
+[![Windows](https://img.shields.io/badge/Windows-Desktop-0078D4)](https://github.com/KyungMinseo1/FASK/releases)
+[![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-47848F)](desktop/package.json)
+[![Local storage](https://img.shields.io/badge/Storage-Local%20SQLite-6B8E23)](#data--privacy)
+
+**[Download from Releases](https://github.com/KyungMinseo1/FASK/releases)** · [Getting started](#getting-started) · [Developer guide](#developer-guide)
 
 **English** | [한국어](README.ko.md)
 
-The desktop app is a personal, login-free edition. Questions are organized as Profile → Workspace → Project, and you ask them together with a screen region you have marked up with a pen on a transparent overlay. The legacy classroom server has been removed.
+</div>
 
-## Running the personal app
+---
+
+## Install & use
+
+> **For everyday use, install the Windows app from [Releases](https://github.com/KyungMinseo1/FASK/releases).** Source setup is only needed for development.
+
+1. Open **Releases** and choose a release with a Windows installer.
+2. Under **Assets**, download the `setup.exe` installer. The configured filename is `fask-<version>-setup.exe`.
+3. Run the installer and launch **FASK**.
+4. Follow [Getting started](#getting-started) to connect your local AI proxy.
+
+The Windows installer is the planned distribution format. If a release does not yet contain the installer, wait for it to be uploaded; GitHub's **Source code** ZIP/TAR files are not installers.
+
+**No FASK login, Node.js, Python, or separate database installation is required for the installed app.** AI answers do require a running OpenAI-compatible local proxy and a connected provider account/model.
+
+## What you can do
+
+| Capture the question | Build your knowledge |
+| --- | --- |
+| Mark your screen with a transparent pen/eraser overlay | Organize records as **Profile → Workspace → Project** |
+| Choose exactly which screen region to include | Read streamed answers with **Markdown and LaTeX** |
+| Attach an image or text/code files | Search questions, add notes, and link concepts |
+| Continue a conversation without leaving your screen | Explore a concept graph and export memory as Markdown |
+
+**Your workflow:** choose a project → mark the screen → ask → save the answer and its context.
+
+## Getting started
+
+### 1. Connect AI
+
+1. Connect your provider account in **EasyCLIProxyAPI** and start its local proxy.
+2. Open FASK **Settings · AI connection** and enter the OpenAI-compatible endpoint, for example `http://127.0.0.1:8317/v1`.
+3. If required, enter the proxy's **local access key**—not a provider API key or management key.
+4. Select **Check connection · Load models**, choose default/fast/deep-reasoning models, and save.
+
+Provider sign-in and account routing are managed by the proxy, not FASK. Local browsing and manual organization work without an AI connection.
+
+### 2. Set your capture area
+
+Choose a monitor and rectangle in **Capture area**. Move the box or resize it from its eight handles; the selected area stays sharp and the outside is dimmed.
+
+The editor and pen overlay use the same full-monitor coordinate space, including the taskbar area. The dotted pen-mode boundary represents the configured capture region.
+
+### 3. Ask from your screen
+
+Open a project, select **Ask from screen**, and mark anything relevant. Choose **Include screen capture**, then press **Ask**.
+
+- The screen is captured **when you send**, not when you toggle capture or refine a question.
+- Failed API requests keep your pen strokes and question draft. Strokes clear after successful completion.
+- Answers support bold, italic, lists, code, tables, and LaTeX in the live panel, saved details, and dashboard previews.
+
+### Shortcuts & overlay controls
+
+| Control | Action |
+| --- | --- |
+| `Ctrl+Shift+Space` | Open the current project's overlay or toggle its question panel |
+| `Ctrl+Alt+Space` | Fallback if the primary shortcut is occupied; the sidebar shows the registered key |
+| `Esc` | Exit pen mode |
+| Panel header / corner handle | Move / resize the question panel; geometry is remembered |
+| Click another app | Focus that app and close the question panel, leaving the overlay available |
+
+Moving the pointer outside an open panel does not close it. With the panel closed and pen idle, leaving the toolbar releases FASK's own keyboard focus without forcibly activating another app.
+
+<details>
+<summary><strong>Attachments, optional AI features, and navigation</strong></summary>
+
+- **Attachments:** file picker, drag and drop, and image paste. One image (PNG/JPEG/WebP/GIF), plus up to five text/Markdown/code files: 50,000 characters per file, 100,000 total. PDF and other binary documents are not supported.
+- **Optional AI:** independently enable question refinement, model recommendation/automatic selection, and concept organization. Automatic concept organization makes an additional model request and presents new concepts as suggestions. Important questions can provide context for later questions in the same project.
+- **Navigation:** use the **My space / Workspace / Project** breadcrumb and back arrow. Rename a workspace below its selector or a project with its pencil button.
+- **Knowledge views:** chronological, list, and concept graph; text search, complexity filters, notes, and concept links.
+- **Portability:** **Export memory** writes Markdown for another AI session. Settings provides JSON backup with images; restore creates a separate profile. Access keys are excluded.
+
+</details>
+
+## Data & privacy
+
+| Item | Location / behavior |
+| --- | --- |
+| Questions, answers, settings | Electron `userData/personal/fask.sqlite` |
+| Images | `userData/personal/attachments/` |
+| Default Windows folder | `%APPDATA%/fask/personal/` |
+| Profile separation | Logical scopes inside one local database, not OS-level isolation |
+| AI requests | Sent through your configured local proxy to its provider; local storage does **not** mean offline AI |
+
+Raw answers are preserved as Markdown. No separate classroom backend is needed.
+
+---
+
+## Developer guide
+
+> For modifying FASK or running from source. Ordinary users should use the **Releases installer** above.
+
+### Run from source
+
+Prerequisites: **Node.js 22.13+**, npm, and a running local AI proxy if you want model responses. SQLite is provided by Electron's built-in `node:sqlite`; no Python or database server is needed.
 
 ```powershell
-cd desktop
+git clone https://github.com/KyungMinseo1/FASK.git
+cd FASK/desktop
 npm ci
 npm run dev
 ```
 
-Use Node.js 22.13 or later. Data is stored with Electron's built-in `node:sqlite`, so no Python or separate database is required.
+The development version runs the same personal app from source. This does not replace the proxy/account configuration in [Getting started](#getting-started).
 
-1. Connect the account you want to use in EasyCLIProxyAPI and start the local proxy.
-2. In FASK, open **Settings · AI connection** and enter the OpenAI-compatible local API endpoint, e.g. `http://127.0.0.1:8317/v1`.
-3. If the proxy requires one, enter the **local access key**. Keep it separate from provider API keys or management keys.
-4. Click **Check connection · Load models** → choose default/fast/deep-reasoning models → **Save settings**.
-5. In **Capture area**, pick a monitor and a rectangle. The inside stays sharp and the outside is dimmed; the box can be moved and resized from 8 directions.
-6. In a project, click **Ask from screen**, mark the screen with the pen/eraser, and choose **Include screen capture** in the question panel. Pressing **Ask** captures the configured area at that moment and sends it with the question. Toggling the checkbox or refining the question does not take a capture.
+### Checks & Windows packaging
 
-Question refinement, model recommendation/auto-selection, and concept organization can each be turned on or off. Automatic concept organization makes an extra model request after the answer; new concepts are shown as suggestions. Questions marked important are used as context for later questions in the same project.
+Run from `desktop/`:
 
-On the overlay, Esc exits pen mode. `Ctrl+Shift+Space` opens an on-screen question for the current project, or toggles the question panel when the overlay is already open. If another app holds that key, `Ctrl+Alt+Space` is registered as a fallback and the sidebar shows the key actually in use. The question button is always highlighted in a strong color. The question panel can be moved by its header and resized from the bottom-right handle; the size is remembered. Long answers scroll inside the panel.
+| Command | Purpose |
+| --- | --- |
+| `npm test` | Unit tests |
+| `npm run typecheck` | Main/preload and renderer TypeScript checks |
+| `npm run build` | Typecheck and production build |
+| `npm run test:smoke` | Build, actual Electron UI smoke, and restart checks |
+| `npm run build:unpack` | Build an unpacked application |
+| `npm run build:win` | Build Windows distribution artifacts, including the NSIS installer |
 
-Answers are rendered as Markdown (bold, italic, headings, lists, quotes, code blocks, tables, and LaTeX math) in the live panel, saved question details, and dashboard previews. The raw answer is kept as Markdown text.
+Upload the generated `fask-<version>-setup.exe` to the GitHub release's **Assets**. Users should download that installer, not the source archive.
 
-Clicking another app closes the question panel while leaving that app focused. Merely moving the pointer outside an open panel does not close it. When the panel is closed and the pen is idle, leaving the toolbar relinquishes FASK's own keyboard focus without forcing another app to activate. Capture-area setup takes a fresh screen image with FASK windows excluded. Failed API requests preserve pen strokes and the question draft; strokes clear only after successful completion. The explicit capture-inclusion choice is remembered per profile.
+The integrated smoke uses a local test proxy and a deterministic capture fixture, not a real provider account or unrelated desktop content. Multi-monitor/DPI configurations and per-account image support still need environment-specific verification.
 
-Clicking **My space / Workspace / Project** in the breadcrumb returns to the parent list, and the left arrow goes back to the previous screen. Rename a workspace with **Rename** under the workspace selector, and a project with the **pencil button** next to its title.
+<details>
+<summary><strong>Repository structure</strong></summary>
 
-New questions on the dashboard and overlay support the **Files·Images** button, drag and drop, and image paste. You can attach 1 image (PNG/JPEG/WebP/GIF) and up to 5 text/Markdown/code files (50,000 characters per file, 100,000 total). Binary documents such as PDF are not supported yet; unsupported files produce an error message.
-
-The dashboard offers chronological/list/concept-graph views, text search, a complexity filter, notes, and concept linking. **Export memory** generates Markdown you can attach to another AI session. Backups in Settings are JSON including images; restoring creates a separate profile. Access keys are not backed up.
-
-Personal data is stored in Electron `userData/personal/fask.sqlite`, images in `userData/personal/attachments/`. The default location on Windows is `%APPDATA%/fask/personal/`. Profiles are separated logically inside the database.
-
-## File structure
-
-```
-desktop/                     Electron app (electron-vite, React, TypeScript, Tailwind)
-  src/main/                  Main process
-    index.ts                 App entry, main window
-    profile.ts               --profile flag → separate userData directory
-    personal.ts              IPC handlers (personal:*), wiring of store/API/capture
-    personal-store.ts        node:sqlite store (records, preferences, runs, migrations)
-    personal-capture.ts      Transparent overlay, capture-area editor, screen capture
+```text
+desktop/                     Electron + React + TypeScript + Tailwind
+  src/main/
+    index.ts                 App entry and main window
+    profile.ts               --profile → separate userData directory
+    personal.ts              personal:* IPC handlers and service wiring
+    personal-store.ts        Local SQLite records, settings, runs, migrations
+    personal-capture.ts      Overlay, capture-area editor, screen capture
     personal-shortcuts.ts    Global shortcut registration and fallback
     personal-backup.ts       JSON backup / restore
-    local-api.ts             OpenAI-compatible local API client (streaming, models)
-  src/preload/               window.fask bridge and its types (personal.d.ts)
+    local-api.ts             OpenAI-compatible streaming and model client
+  src/preload/               window.fask bridge and personal.d.ts contract
   src/renderer/src/
-    App.tsx                  Routes: dashboard, /personal-overlay, /capture-editor
-    personal/                Dashboard, Overlay, Composer, Settings, CaptureEditor,
-                             MarkdownAnswer, attachments, pen strokes
-    components/MindMap/      Concept graph (React Flow + d3-hierarchy)
-    lib/, api/types.ts       Tree building, question types, shared types
-  tests/                     Unit tests (npm test) and Electron smoke tests
-  build/, resources/         Icons, macOS entitlements, icon generator
-docs/                        Personal app plan and current implementation contract
+    App.tsx                  Dashboard, /personal-overlay, /capture-editor
+    personal/                Screens, composer, Markdown, attachments, pen strokes
+    components/MindMap/      React Flow + d3-hierarchy concept graph
+    lib/, api/types.ts       Tree helpers and shared types
+  tests/                     Unit and Electron smoke tests
+  build/, resources/         Icons, entitlements, icon generator
+docs/                        Personal app design and implementation contract
 graphify-out/                Code graph analysis output
 ```
 
-## Verification and packaging
+</details>
 
-```powershell
-cd desktop
-npm test
-npm run typecheck
-npm run build
-npm run test:smoke
-npm run build:unpack
-```
+### Design documents
 
-`test:smoke` uses a real Electron window and a local test proxy. The capture source is replaced with the test app's own window, so no other app's screen or real subscription account is sent. Real Windows screen-capture permissions, multi-monitor setups, and per-account image support still need to be checked in your own environment.
+- [Personal app plan](docs/PERSONAL_APP_PLAN.md) — design and planned scope (Korean)
+- [Implementation contract](docs/PERSONAL_IMPLEMENTATION.md) — current behavior, storage, and IPC (Korean)
 
-See the [personal app plan](docs/PERSONAL_APP_PLAN.md) for the design and the [personal implementation doc](docs/PERSONAL_IMPLEMENTATION.md) for current scope and the IPC contract (both in Korean). MCP, embedding search, and JEV are future scope.
-
+MCP, embedding search, and JEV are future scope, not current features.
