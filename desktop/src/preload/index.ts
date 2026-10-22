@@ -7,14 +7,21 @@ const fask: PersonalApi = {
   remove: (kind, id) => ipcRenderer.invoke('personal:remove', kind, id),
   clearRecent: (id) => ipcRenderer.invoke('personal:clear-recent', id),
   editOverlayRegion: () => ipcRenderer.invoke('personal:edit-overlay-region'),
-  overlayRegions: (drawing, regions) =>
-    ipcRenderer.invoke('personal:overlay-regions', drawing, regions),
+  overlayRegions: (drawing, regions, panelOpen) =>
+    ipcRenderer.invoke('personal:overlay-regions', drawing, regions, panelOpen),
   shortcutInfo: () => ipcRenderer.invoke('personal:shortcut-info'),
   onTogglePanel: (cb) => {
     const listener = (): void => cb()
     ipcRenderer.on('personal:toggle-panel', listener)
     return () => {
       ipcRenderer.removeListener('personal:toggle-panel', listener)
+    }
+  },
+  onOutsideClick: (cb) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('personal:outside-click', listener)
+    return () => {
+      ipcRenderer.removeListener('personal:outside-click', listener)
     }
   },
   snapshot: () => ipcRenderer.invoke('personal:snapshot'),

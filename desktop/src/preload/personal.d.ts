@@ -132,7 +132,7 @@ export interface PersonalApi {
   ): Promise<void>
   clearRecent(projectId: string): Promise<void>
   editOverlayRegion(): Promise<void>
-  overlayRegions(drawing: boolean, regions: CaptureRect[]): Promise<void>
+  overlayRegions(drawing: boolean, regions: CaptureRect[], panelOpen: boolean): Promise<void>
   shortcutInfo(): Promise<ShortcutInfo>
   onTogglePanel(cb: () => void): () => void
   snapshot(): Promise<Snapshot>
@@ -168,6 +168,7 @@ export interface PersonalApi {
   onStream(cb: (event: StreamEvent) => void): () => void
   onChanged(cb: () => void): () => void
   onEscape(cb: () => void): () => void
+  onOutsideClick(cb: () => void): () => void
   showDashboard(): Promise<void>
 }
 declare global {

@@ -14,7 +14,9 @@ export class PersonalCapture {
   private hitTimer: ReturnType<typeof setInterval> | null = null
   private regions: CaptureRect[] = []
   private drawing = false
+  private panelOpen = false
   private accepting = false
+  private releasingFocus = false
   constructor(
     private store: PersonalStore,
     private main: () => BrowserWindow | null,
@@ -28,8 +30,9 @@ export class PersonalCapture {
   private window(displayId: number): BrowserWindow {
     const display = screen.getAllDisplays().find((d) => d.id === displayId)
     if (!display) throw new Error('설정한 모니터가 없습니다. 캡처 영역을 다시 설정해 주세요.')
-    return new BrowserWindow({
+    const win = new BrowserWindow({
       ...display.bounds,
+      show: false,
       transparent: true,
       frame: false,
       resizable: false,
@@ -45,6 +48,13 @@ export class PersonalCapture {
         nodeIntegration: false
       }
     })
+    // Windows excludes these windows from desktop composition captures, including
+    // a previous editor's full-screen preview. Hiding alone can leave a stale frame.
+    if (process.platform === 'win32') win.setContentProtection(true)
+    // Both the editor and pen overlay use normalized full-monitor coordinates.
+    // A normal window is constrained to the work area on Windows.
+    win.setFullScreen(true)
+    return win
   }
   displays(): { id: number; label: string; width: number; height: number }[] {
     return screen.getAllDisplays().map((d, i) => ({
@@ -65,6 +75,8 @@ export class PersonalCapture {
     this.overlay = win
     this.displayId = id
     this.drawing = false
+    this.panelOpen = false
+    this.releasingFocus = false
     const bounds = win.getBounds()
     this.regions = [
       { x: bounds.width - 90, y: Math.max(0, bounds.height / 2 - 280), width: 85, height: 560 }
@@ -72,6 +84,22 @@ export class PersonalCapture {
     this.accepting = false
     win.setIgnoreMouseEvents(true, { forward: true })
     win.setAlwaysOnTop(true, 'screen-saver')
+    win.on('blur', () => {
+      if (this.overlay !== win) return
+      if (this.releasingFocus) {
+        this.releasingFocus = false
+        return
+      }
+      // Capturing deliberately hides our windows; that is not an outside click.
+      if (this.busy || !win.isVisible()) return
+      this.drawing = false
+      win.webContents.send('personal:outside-click')
+      this.hitTest()
+    })
+    win.once('ready-to-show', () => {
+      if (this.panelOpen) win.show()
+      else win.showInactive()
+    })
     win.on('closed', () => {
       if (this.overlay === win) {
         this.stopHitTest()
@@ -94,8 +122,9 @@ export class PersonalCapture {
     this.main()?.show()
     this.changed()
   }
-  setRegions(drawing: boolean, regions: CaptureRect[]): void {
+  setRegions(drawing: boolean, regions: CaptureRect[], panelOpen: boolean): void {
     if (
+      typeof panelOpen !== 'boolean' ||
       !Array.isArray(regions) ||
       regions.length > 8 ||
       regions.some(
@@ -103,8 +132,14 @@ export class PersonalCapture {
       )
     )
       throw new Error('잘못된 도구 영역입니다.')
+    const focusPanel = panelOpen && !this.panelOpen
     this.drawing = drawing
     this.regions = regions
+    this.panelOpen = panelOpen
+    // Focus only after the renderer has installed the opened panel's hit regions.
+    // A shortcut toggle can otherwise race a queued report for the closed panel.
+    const win = this.overlay
+    if (focusPanel && !this.busy && win && !win.isDestroyed() && win.isVisible()) win.focus()
     this.hitTest()
   }
   private stopHitTest(): void {
@@ -127,17 +162,37 @@ export class PersonalCapture {
       win.setIgnoreMouseEvents(!next, { forward: true })
       this.accepting = next
     }
+    // Relinquish our own keyboard focus after leaving an idle toolbar, but keep
+    // an open question's input focused until a real click/blur (not mouseleave).
+    if (!next && !this.panelOpen && win.isFocused()) {
+      // This blur follows a closed panel/toolbar leave, not an outside click.
+      // Do not queue a renderer close that could race the next shortcut open.
+      this.releasingFocus = true
+      win.blur()
+    }
   }
   toggleQuestionPanel(): void {
-    if (!this.overlay || this.overlay.isDestroyed()) return
+    if (this.busy || !this.overlay || this.overlay.isDestroyed()) return
     this.drawing = false
-    this.overlay.show()
-    this.overlay.focus()
+    this.overlay.showInactive()
     this.overlay.webContents.send('personal:toggle-panel')
     this.hitTest()
   }
   showDashboard(): void {
     this.close()
+  }
+  private hideCaptureWindows(): () => void {
+    const focused = BrowserWindow.getFocusedWindow()
+    const visible = BrowserWindow.getAllWindows().filter((win) => win.isVisible())
+    // Capture the desktop, never another FASK window displaying an earlier capture.
+    for (const win of visible) win.hide()
+    return () => {
+      for (const win of visible) if (!win.isDestroyed()) win.showInactive()
+      // Restore only the FASK window active before this explicit capture action.
+      // Hover hit-testing must never activate either FASK or an arbitrary other app.
+      if (focused && !focused.isDestroyed() && focused.isVisible()) focused.focus()
+      this.hitTest()
+    }
   }
   private async screenshot(id: number): Promise<Electron.NativeImage> {
     const display = screen.getAllDisplays().find((d) => d.id === id)
@@ -157,16 +212,7 @@ export class PersonalCapture {
   async edit(id: number): Promise<void> {
     if (this.busy || this.editor) throw new Error('다른 캡처 창을 먼저 닫아 주세요.')
     this.busy = true
-    const main = this.main()
-    const overlay = this.overlay
-    const resume = (): void => {
-      if (overlay && !overlay.isDestroyed()) {
-        overlay.show()
-        this.hitTest()
-      } else main?.show()
-    }
-    overlay?.hide()
-    main?.hide()
+    const resume = this.hideCaptureWindows()
     try {
       await sleep(180)
       const image = await this.screenshot(id)
@@ -175,6 +221,7 @@ export class PersonalCapture {
       this.preview = { image: image.toDataURL(), display, region: saved }
       const win = this.window(id)
       this.editor = win
+      win.once('ready-to-show', () => win.show())
       win.setAlwaysOnTop(true, 'screen-saver')
       win.on('closed', () => {
         this.editor = null
@@ -220,7 +267,7 @@ export class PersonalCapture {
       id = this.displayId
     if (!win || id === null) throw new Error('질문 오버레이를 먼저 열어 주세요.')
     this.busy = true
-    win.hide()
+    const resume = this.hideCaptureWindows()
     try {
       await sleep(180)
       const display = this.displays().find((d) => d.id === id)
@@ -285,10 +332,7 @@ export class PersonalCapture {
         : selected.toDataURL()
     } finally {
       this.busy = false
-      if (!win.isDestroyed()) {
-        win.showInactive()
-        win.setAlwaysOnTop(true, 'screen-saver')
-      }
+      resume()
     }
   }
 }

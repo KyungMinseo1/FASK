@@ -19,19 +19,28 @@ function normalizeMath(text: string): string {
 }
 
 /** Render model output as text/Markdown, never executable HTML or remote image requests. */
-export default function MarkdownAnswer({ children }: { children: string }): React.JSX.Element {
+export default function MarkdownAnswer({
+  children,
+  preview = false
+}: {
+  children: string
+  preview?: boolean
+}): React.JSX.Element {
   return (
-    <div className="markdown-answer">
+    <div className={preview ? 'markdown-answer markdown-answer-preview' : 'markdown-answer'}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}
         skipHtml
         components={{
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noreferrer noopener">
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) =>
+            preview ? (
+              <span>{children}</span>
+            ) : (
+              <a href={href} target="_blank" rel="noreferrer noopener">
+                {children}
+              </a>
+            ),
           img: ({ alt }) => (
             <span className="markdown-image-label">[이미지: {alt || '외부 이미지'}]</span>
           ),
@@ -39,7 +48,14 @@ export default function MarkdownAnswer({ children }: { children: string }): Reac
             <div className="markdown-table">
               <table>{children}</table>
             </div>
-          )
+          ),
+          ...(preview
+            ? {
+                input: ({ checked }: { checked?: boolean }) => (
+                  <span aria-label={checked ? '완료' : '미완료'}>{checked ? '☑' : '☐'}</span>
+                )
+              }
+            : {})
         }}
       >
         {normalizeMath(children)}

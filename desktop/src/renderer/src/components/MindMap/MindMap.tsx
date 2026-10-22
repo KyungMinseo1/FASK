@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -127,10 +127,12 @@ function MindMapInner({
     [baseNodes, activeDrag, activeDropId]
   )
 
+  const fittedExpansion = useRef<Set<string> | null>(null)
   // Fit only on first render and when the expansion state changes — not on live data updates.
   useEffect(() => {
-    if (!nodesInitialized) return
+    if (!nodesInitialized || fittedExpansion.current === expanded) return
     const timer = setTimeout(() => {
+      fittedExpansion.current = expanded
       void fitView({ padding: 0.15, duration: 400, maxZoom: 1.2 })
     }, 50)
     return () => clearTimeout(timer)

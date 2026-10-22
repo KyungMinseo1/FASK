@@ -133,6 +133,10 @@ export default function Overlay(): React.JSX.Element {
     window.addEventListener('keydown', key)
     window.addEventListener('resize', resize)
     const off = window.fask.onEscape(reset)
+    const offOutside = window.fask.onOutsideClick(() => {
+      reset()
+      setPanel(false)
+    })
     const offToggle = window.fask.onTogglePanel(() => {
       setMode('idle')
       setPanel((p) => !p)
@@ -143,6 +147,7 @@ export default function Overlay(): React.JSX.Element {
       window.removeEventListener('resize', resize)
       off()
       offToggle()
+      offOutside()
     }
   }, [])
   useLayoutEffect(() => {
@@ -153,7 +158,7 @@ export default function Overlay(): React.JSX.Element {
           return { x: r.x, y: r.y, width: r.width, height: r.height }
         }
       )
-      void window.fask.overlayRegions(mode !== 'idle' || panelInteraction, regions).catch(() => {})
+      void window.fask.overlayRegions(mode !== 'idle' || panelInteraction, regions, panel).catch(() => {})
     }
     let frame = 0
     const observer = new ResizeObserver(() => {
@@ -409,7 +414,7 @@ export default function Overlay(): React.JSX.Element {
                     strokes.length ? canvas.current?.toDataURL('image/png') : undefined
                   )
                 }
-                onSaved={() => {
+                onCompleted={() => {
                   setStrokes([])
                 }}
               />

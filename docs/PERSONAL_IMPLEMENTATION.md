@@ -1,6 +1,6 @@
 # FASK 개인용 구현
 
-2026-10-21. 현재 데스크톱 앱의 실행 계약이며 기존 `server/`는 수업용 참고 코드로 보존한다.
+2026-10-22. 현재 개인용 데스크톱 앱의 실행 계약이다. 기존 수업용 `server/`는 제거했으며 Python, FastAPI, 별도 서버 DB는 사용하지 않는다.
 
 ## 실행 구조
 
@@ -14,7 +14,7 @@
 
 ## IPC 와이어 계약
 
-타입 정본은 `desktop/src/preload/personal.d.ts`이며 renderer `api/types.ts`에서도 re-export한다. 기존 서버 스키마와 REST 경로에는 변경이 없다.
+타입 정본은 `desktop/src/preload/personal.d.ts`이며 renderer `api/types.ts`에서도 re-export한다. 기존 수업용 서버 스키마와 REST 경로는 제거되었으며 개인용 앱의 계약이 아니다.
 
 | IPC 채널 (`personal:` 접두사) | 입력 | 결과 |
 |---|---|---|
@@ -25,7 +25,7 @@
 | clear-recent | 프로젝트 ID | 이번 앱 실행의 해당 프로젝트 최근 대화 초기화 |
 | edit-overlay-region | 없음 | 현재 오버레이 모니터의 영역 편집. 적용·취소 후 오버레이 복귀 |
 | active-project | 프로젝트 ID | 단축키로 열 대상 프로젝트 선택 |
-| overlay-regions | drawing boolean, 도구/패널의 DIP 사각형 배열 | 메인 프로세스의 네이티브 커서 위치 판정에 사용 |
+| overlay-regions | drawing boolean, 도구/패널의 DIP 사각형 배열, panelOpen boolean | 메인 프로세스의 네이티브 커서 위치 판정과 포커스 해제에 사용 |
 | shortcut-info | 없음 | 등록한 accelerator 또는 null, fallback 여부 |
 | switch-profile | 프로필 ID | 완료. 요청·캡처 창이 있으면 거절 |
 | save-settings | LocalSettings, 선택적 새 접속 키 | 완료. 키 생략은 유지, 빈 문자열은 제거 |
@@ -40,11 +40,21 @@
 | open-editor / preview | 모니터 ID / 없음 | 편집 창 / 고정 화면 미리보기 |
 | save-region / close-editor | CaptureRegion / 없음 | 영역 적용 / 취소 |
 | open-overlay / capture | 프로젝트 ID + 선택적 질문 ID / 선택적 펜 PNG | 지정 대화의 질문 패널을 오버레이로 열기 / 잘린 이미지 data URL |
-| interactive / close-overlay / dashboard | boolean / 없음 | 창 입력 상태·복귀 |
+| dashboard | 없음 | 오버레이를 닫고 대시보드 복귀 |
 | export | 프로젝트 ID | Markdown 저장 대화상자, 저장 여부 |
 | backup / restore | 없음 | JSON 백업/새 프로필 복원 대화상자, 성공 여부 |
 
 이벤트 `personal:stream`은 requestId, questionId, delta 또는 done/error를 전달한다. `personal:changed`는 스냅샷 재조회 신호, `personal:escape`는 펜 모드 해제, `personal:toggle-panel`은 질문 패널을 여닫는 신호이다. 오류는 IPC Promise 거절이며 UI는 접속 키·모델·한도·시간 초과 등을 표시한다.
+
+2026-10-22 수정: `personal:outside-click`은 캡처를 위한 일시 숨김을 제외한 오버레이의 포커스 이탈 신호다. renderer는 펜/드래그 모드를 해제하고 질문 패널만 닫는다. 패널이 열려 있으면 단순 mouseleave로 닫지 않는다. 패널이 닫힌 유휴 상태에는 도구 밖에서 오버레이 자신의 포커스를 해제하며 임의의 외부 앱을 강제 활성화하지 않는다.
+
+화면 캡처 전 모든 보이는 FASK 창을 숨기며 Windows 오버레이·편집 창은 캡처 제외로 생성한다. 편집 미리보기나 이전 캡처가 다시 찍히는 것을 방지하고 끝나면 원래 창의 표시·포커스 상태를 복원한다. 캡처 포함 체크의 명시적 선택은 프로필별로 기억한다. 질문 저장 ID 반환만으로 펜을 지우지 않고 답변 성공 완료 후 지운다. API 실패 시 펜과 질문 초안을 유지한다.
+
+캡처 영역 편집 창과 펜 오버레이는 공통 창 생성 경로에서 OS 전체화면으로 연다. 일반 창의 작업영역 제한(작업표시줄 제외) 때문에 표시 좌표가 실제 캡처 좌표와 달라지지 않도록, 두 viewport를 모니터 전체 DIP 크기에 맞춘다. 편집 미리보기·선택 사각형·펜 모드의 점선 안내는 모두 이 전체 모니터 좌표계를 사용한다.
+
+대시보드 답변 미리보기는 원문을 자르지 않고 상세·실시간 답변과 같은 Markdown/KaTeX 파이프라인으로 렌더링한 뒤 CSS로 높이를 제한한다. 굵게·기울임·수식을 지원하며 CSP는 폰트에 한해서 `data:`를 허용한다.
+
+개념 그래프는 질문 필터와 루트 트리를 메모이즈한다. 이름 변경 대화상자 등 그래프와 무관한 UI 상태 변경으로 노드를 다시 구성하지 않으며, fitView는 최초 초기화·펼침 상태 변경에만 수행한다.
 
 2026-10-21 UI 수정: 상위 경로는 HashRouter 검색 파라미터를 이용한 실제 내 공간/워크스페이스/프로젝트 탐색이며 뒤로가기를 지원한다. 워크스페이스·프로젝트 이름은 현재 프로필 범위를 검사한 후 수정한다.
 

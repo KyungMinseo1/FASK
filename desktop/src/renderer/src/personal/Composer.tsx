@@ -14,6 +14,7 @@ interface Props {
   /** Overlay has pen strokes: capture defaults on while ink exists, off otherwise. */
   hasInk?: boolean
   onSaved?: (id: string) => void
+  onCompleted?: (id: string) => void
 }
 export default function Composer({
   projectId,
@@ -23,7 +24,8 @@ export default function Composer({
   recentQuestion,
   onCapture,
   hasInk = false,
-  onSaved
+  onSaved,
+  onCompleted
 }: Props): React.JSX.Element {
   const draftKey = `fask:draft:${profileId}:${projectId}`
   const [raw, setRaw] = useState(() => localStorage.getItem(draftKey) || ''),
@@ -35,7 +37,10 @@ export default function Composer({
     [busy, setBusy] = useState(false),
     [answer, setAnswer] = useState(recentQuestion?.answer || '')
   const [running, setRunning] = useState(recentQuestion?.status === 'running')
-  const [includeCapture, setIncludeCapture] = useState(hasInk)
+  const captureKey = `fask:capture:${profileId}`
+  const [includeCapture, setIncludeCapture] = useState(
+    () => hasInk || localStorage.getItem(captureKey) === 'true'
+  )
   const [capturing, setCapturing] = useState(false)
   const [documents, setDocuments] = useState<TextAttachment[]>([])
   const fileInput = useRef<HTMLInputElement>(null)
@@ -95,6 +100,7 @@ export default function Composer({
             })
             .catch(() => {})
           if (!event.error) {
+            onCompleted?.(event.questionId)
             setRaw('')
             setRefined('')
             setImage('')
@@ -159,6 +165,7 @@ export default function Composer({
         setRefined('')
         setImage('')
         setDocuments([])
+        onCompleted?.(qid)
       }
     } catch (e) {
       setError(errorText(e))
@@ -311,6 +318,7 @@ export default function Composer({
               disabled={busy || running}
               onChange={(e) => {
                 setIncludeCapture(e.target.checked)
+                localStorage.setItem(captureKey, String(e.target.checked))
                 if (e.target.checked) setImage('')
               }}
             />

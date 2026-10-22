@@ -91,7 +91,10 @@ export default function Dashboard(): React.JSX.Element {
   useEffect(() => {
     if (project && scope === 'project') void window.fask.activateProject(project.id).catch(() => {})
   }, [project?.id, scope])
-  const questions = data?.questions.filter((q) => q.projectId === project?.id) ?? []
+  const questions = useMemo(
+    () => data?.questions.filter((q) => q.projectId === project?.id) ?? [],
+    [data?.questions, project?.id]
+  )
   const filtered = useMemo(
     () =>
       questions.filter(
@@ -109,6 +112,10 @@ export default function Dashboard(): React.JSX.Element {
             .includes(query.toLocaleLowerCase())
       ),
     [questions, filter, query]
+  )
+  const graphRoot = useMemo(
+    () => (data && project ? tree(data, project.id, filtered) : null),
+    [data, project?.id, filtered]
   )
   const selected = questions.find((q) => q.id === selectedId)
   const concepts = data?.concepts.filter((c) => c.projectId === project?.id) ?? []
@@ -513,7 +520,7 @@ export default function Dashboard(): React.JSX.Element {
             </div>
             <div className={`knowledge-area ${selected ? 'has-detail' : ''}`}>
               <section className="records-panel">
-                {view === 'graph' && project ? (
+                {view === 'graph' && project && graphRoot ? (
                   <>
                     <div className="graph-actions">
                       <span>개념을 펼치고 질문을 연결하세요</span>
@@ -521,7 +528,7 @@ export default function Dashboard(): React.JSX.Element {
                     </div>
                     <MindMap
                       key={project.id}
-                      root={tree(data, project.id, filtered)}
+                      root={graphRoot}
                       height={510}
                       onContextMenu={(node, event) => {
                         if (node.id.startsWith('q:')) {
@@ -584,7 +591,9 @@ export default function Dashboard(): React.JSX.Element {
                           </div>
                           <h3>{q.title || q.sent}</h3>
                           {view !== 'list' && (
-                            <p>{q.answer || q.error || '아직 답변이 없습니다.'}</p>
+                            <MarkdownAnswer preview>
+                              {q.answer || q.error || '아직 답변이 없습니다.'}
+                            </MarkdownAnswer>
                           )}
                           <div className="question-footer">
                             <span>

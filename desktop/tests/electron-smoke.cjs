@@ -16,6 +16,7 @@ const checkpoint = (phase) => {
 checkpoint('starting')
 app.setPath('userData', mkdtempSync(join(tmpdir(), 'fask-smoke-ui-')))
 let server
+let failNextQuestion = false
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 async function wait(fn, label) {
   for (let i = 0; i < 80; i++) {
@@ -43,6 +44,12 @@ app.whenReady().then(async () => {
       req.on('end', () => {
         const input = JSON.parse(body),
           last = input.messages.at(-1)
+        if (failNextQuestion) {
+          failNextQuestion = false
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'smoke proxy failure' } }))
+          return
+        }
         const reply = input.messages[0]?.content.includes('JSON만 출력')
           ? '{}'
           : input.messages[0]?.content.includes('다듬어라')
@@ -50,7 +57,7 @@ app.whenReady().then(async () => {
             : `## 설명\n\n**핵심 내용**과 목록입니다.\n\n- 첫 번째\n- 두 번째\n\n\`\`\`js\nconst answer = 42\n\`\`\`\n\n| 항목 | 설명 |\n| --- | --- |\n| 캡처 | 전송 시 촬영 |\n\n[위험 링크](javascript:alert(1))\n\n<img src="https://example.invalid/track">\n\n${'긴 답변의 스크롤과 영역 크기를 확인하는 문단입니다.\n\n'.repeat(24)}테스트 답변: ${typeof last.content === 'string' ? last.content : '이미지 질문'}`
         res.setHeader('Content-Type', 'text/event-stream')
         res.write(
-          `data: ${JSON.stringify({ model: 'test-fast', choices: [{ delta: { content: reply } }] })}\n\n`
+          `data: ${JSON.stringify({ model: 'test-fast', choices: [{ delta: { content: `${reply}\n\n*기울임*과 $x^2 + 1$` } }] })}\n\n`
         )
         res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
       })
@@ -270,6 +277,16 @@ app.whenReady().then(async () => {
         ),
       'streamed answer renders Markdown heading/code/table'
     )
+    await js(`[...document.querySelectorAll('.segmented button')].find(b=>b.textContent==='날짜순').click()`)
+    await wait(
+      () => js(`!!document.querySelector('.question-card .markdown-answer strong') && !!document.querySelector('.question-card .markdown-answer em') && !!document.querySelector('.question-card .katex')`),
+      'dashboard previews render bold italic and math'
+    )
+    assert.equal(await js(`getComputedStyle(document.querySelector('.question-card .markdown-answer strong')).fontWeight`), '700')
+    assert.equal(await js(`getComputedStyle(document.querySelector('.question-card .markdown-answer em')).fontStyle`), 'italic')
+    await js(`document.querySelector('.question-card .markdown-answer strong').closest('.question-card').scrollIntoView({block:'center'})`)
+    await shot('markdown-preview')
+    await js(`document.querySelector('.view-bar').scrollIntoView({block:'start'})`)
     assert.equal(
       await js(
         'document.querySelectorAll(\'.markdown-answer script,.markdown-answer img,.markdown-answer a[href^="javascript:"]\').length'
@@ -290,6 +307,18 @@ app.whenReady().then(async () => {
     await wait(
       () => editor.webContents.executeJavaScript("!!document.querySelector('.capture-box')"),
       'capture editor sharp/blur preview loads'
+    )
+    await wait(
+      async () => {
+        const viewport = await editor.webContents.executeJavaScript('({width:innerWidth,height:innerHeight})')
+        return viewport.width === display.bounds.width && viewport.height === display.bounds.height
+      },
+      'capture editor viewport covers full monitor including taskbar area'
+    )
+    assert.deepEqual(editor.getContentBounds(), display.bounds)
+    assert.equal(
+      await editor.webContents.executeJavaScript(`(()=>{const r=document.querySelector('.capture-background').getBoundingClientRect();return r.width===innerWidth&&r.height===innerHeight})()`),
+      true
     )
     assert.equal(
       await editor.webContents.executeJavaScript(
@@ -351,6 +380,25 @@ app.whenReady().then(async () => {
       () => overlay.webContents.executeJavaScript("!!document.querySelector('.overlay-toolbar')"),
       'transparent question overlay opens'
     )
+    await wait(
+      async () => {
+        const viewport = await overlay.webContents.executeJavaScript('({width:innerWidth,height:innerHeight})')
+        return viewport.width === display.bounds.width && viewport.height === display.bounds.height
+      },
+      'pen overlay viewport covers full monitor including taskbar area'
+    )
+    assert.deepEqual(overlay.getContentBounds(), display.bounds)
+    await overlay.webContents.executeJavaScript(`[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes('펜')).click()`)
+    await wait(
+      () => overlay.webContents.executeJavaScript("!!document.querySelector('.overlay-region')"),
+      'pen mode displays saved capture boundary'
+    )
+    const boundary = await overlay.webContents.executeJavaScript(`(()=>{const r=document.querySelector('.overlay-region').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`)
+    for (const [key, scale] of [['x', display.bounds.width], ['y', display.bounds.height], ['width', display.bounds.width], ['height', display.bounds.height]]) {
+      assert.ok(Math.abs(boundary[key] - savedRegion.rect[key] * scale) < 1, key)
+    }
+    report.checks.push('pen capture boundary matches full-monitor capture coordinates')
+    overlay.webContents.send('personal:escape')
     const image = await personal.capture.question()
     const cropped = nativeImage.createFromDataURL(image).getSize()
     assert.equal(cropped.width, Math.floor(display.bounds.width * savedRegion.rect.width))
@@ -643,6 +691,32 @@ app.whenReady().then(async () => {
       ),
       false
     )
+    await resumedJs(`[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes('펜')).click()`)
+    resumed.webContents.sendInputEvent({ type: 'mouseDown', x: 180, y: 180, button: 'left', clickCount: 1 })
+    resumed.webContents.sendInputEvent({ type: 'mouseMove', x: 240, y: 220, movementX: 60, movementY: 40 })
+    resumed.webContents.sendInputEvent({ type: 'mouseUp', x: 240, y: 220, button: 'left', clickCount: 1 })
+    await pause(100)
+    const inkBefore = await resumedJs(`document.querySelector('canvas').toDataURL()`)
+    assert.equal(await resumedJs(`(()=>{const c=document.querySelector('canvas');return c.getContext('2d').getImageData(0,0,c.width,c.height).data.some((v,i)=>i%4===3&&v>0)})()`), true)
+    await resumedJs(`[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes('질문')).click()`)
+    await wait(() => resumedJs(`!!document.querySelector('.overlay-panel')`), 'question panel reopens with existing ink')
+    assert.equal(await resumedJs(`document.querySelector('[aria-label="화면 캡처 포함"]').checked`), true)
+    await resumedJs(`(()=>{const el=document.querySelector('.composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'실패한 질문은 펜을 유지');el.dispatchEvent(new Event('input',{bubbles:true}));})()`)
+    failNextQuestion = true
+    await resumedJs(`document.querySelector('.composer-actions .primary').click()`)
+    await wait(() => resumedJs(`!!document.querySelector('.composer [role="alert"]')`), 'failed API request displays error')
+    assert.equal(await resumedJs(`document.querySelector('canvas').toDataURL()`), inkBefore)
+    assert.equal(await resumedJs(`document.querySelector('.composer textarea').value`), '실패한 질문은 펜을 유지')
+    report.checks.push('failed API request preserves ink and question draft')
+    resumed.focus()
+    await pause(100)
+    const backgroundWindow = new BrowserWindow({ width: 400, height: 300 })
+    await backgroundWindow.loadURL('data:text/html,<h1>Background focus target</h1>')
+    backgroundWindow.show()
+    backgroundWindow.focus()
+    await wait(() => resumedJs(`!document.querySelector('.overlay-panel')`), 'outside application focus closes question panel')
+    assert.equal(backgroundWindow.isFocused(), true)
+    backgroundWindow.destroy()
     personal.capture.close()
     await js(
       `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', profileId, projectId: project.id, raw: '캡처 기록', image, model: 'test-fast', saveOnly: true })})`
@@ -651,14 +725,17 @@ app.whenReady().then(async () => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: backupPath })
     assert.equal(await js('window.fask.backup()'), true)
     const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
-    assert.equal(backup.snapshot.questions.length, 6)
-    assert.ok(Object.keys(backup.images).length === 2)
+    assert.equal(backup.snapshot.questions.length, 7)
+    assert.deepEqual(
+      Object.keys(backup.images).sort(),
+      [...new Set(backup.snapshot.questions.map((q) => q.attachment).filter(Boolean))].sort()
+    )
     assert.equal(backup.snapshot.settings.hasKey, false)
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [backupPath] })
     assert.equal(await js('window.fask.restore()'), true)
     const restored = await js('window.fask.snapshot()')
     assert.notEqual(restored.activeProfileId, profileId)
-    assert.equal(restored.questions.length, 6)
+    assert.equal(restored.questions.length, 7)
     assert.equal(restored.profiles.length, 2)
     assert.ok(restored.storageBytes > 0)
     report.checks.push('backup restores questions and capture into a separate profile')

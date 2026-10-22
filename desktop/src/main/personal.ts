@@ -190,7 +190,9 @@ export function registerPersonal(
     store.record('project', id)
     lastProjectId = id
   })
-  handle('overlay-regions', (drawing, regions) => capture.setRegions(drawing, regions))
+  handle('overlay-regions', (drawing, regions, panelOpen) =>
+    capture.setRegions(drawing, regions, panelOpen)
+  )
   handle('rename', (kind, id, name) => {
     store.rename(kind, id, name)
     changed()
