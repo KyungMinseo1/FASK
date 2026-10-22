@@ -94,10 +94,6 @@ export class PersonalCapture {
     this.main()?.show()
     this.changed()
   }
-  interactive(value: boolean): void {
-    this.drawing = value
-    this.hitTest()
-  }
   setRegions(drawing: boolean, regions: CaptureRect[]): void {
     if (
       !Array.isArray(regions) ||

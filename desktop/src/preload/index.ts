@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AskkupApi, OverlayParams } from './index.d'
 import type { PersonalApi, StreamEvent } from './personal'
 
 const fask: PersonalApi = {
@@ -40,6 +39,7 @@ const fask: PersonalApi = {
   saveRegion: (region) => ipcRenderer.invoke('personal:save-region', region),
   closeCaptureEditor: () => ipcRenderer.invoke('personal:close-editor'),
   openOverlay: (id, questionId) => ipcRenderer.invoke('personal:open-overlay', id, questionId),
+  showDashboard: () => ipcRenderer.invoke('personal:dashboard'),
   captureQuestion: (strokes) => ipcRenderer.invoke('personal:capture', strokes),
   onStream: (cb) => {
     const listener = (_: Electron.IpcRendererEvent, event: StreamEvent): void => cb(event)
@@ -64,26 +64,3 @@ const fask: PersonalApi = {
   }
 }
 contextBridge.exposeInMainWorld('fask', fask)
-
-const askkup: AskkupApi = {
-  openOverlay: (params: OverlayParams) => ipcRenderer.send('overlay:open', params),
-  closeOverlay: () => {
-    void ipcRenderer.invoke('personal:close-overlay')
-  },
-  setOverlayInteractive: (value: boolean) => {
-    void ipcRenderer.invoke('personal:interactive', value)
-  },
-  captureScreen: () => ipcRenderer.invoke('overlay:capture'),
-  showDashboard: () => {
-    void ipcRenderer.invoke('personal:dashboard')
-  },
-  onOverlayClosed: (cb: () => void) => {
-    const listener = (): void => cb()
-    ipcRenderer.on('overlay:closed', listener)
-    return () => {
-      ipcRenderer.removeListener('overlay:closed', listener)
-    }
-  }
-}
-
-contextBridge.exposeInMainWorld('askkup', askkup)

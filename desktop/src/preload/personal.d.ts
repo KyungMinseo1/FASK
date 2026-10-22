@@ -168,6 +168,7 @@ export interface PersonalApi {
   onStream(cb: (event: StreamEvent) => void): () => void
   onChanged(cb: () => void): () => void
   onEscape(cb: () => void): () => void
+  showDashboard(): Promise<void>
 }
 declare global {
   interface Window {

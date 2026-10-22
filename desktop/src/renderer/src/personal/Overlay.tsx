@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { eraseAt, redraw, type Stroke } from '../pages/student/overlay/strokes'
+import { eraseAt, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
@@ -323,7 +323,7 @@ export default function Overlay(): React.JSX.Element {
         >
           ？<small>질문</small>
         </button>
-        <button onClick={() => window.askkup.showDashboard()}>
+        <button onClick={() => void window.fask.showDashboard()}>
           ▦<small>대시보드</small>
         </button>
         <button

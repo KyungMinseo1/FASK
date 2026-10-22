@@ -4,7 +4,7 @@
 
 ## 실행 구조
 
-- `App.tsx`는 개인용 대시보드, `/personal-overlay`, `/capture-editor`만 실행한다. 교사·학생 인증·수업·리콜 UI는 개인용 번들에서 사용하지 않는다.
+- `App.tsx`는 개인용 대시보드, `/personal-overlay`, `/capture-editor`만 실행한다. 기존 교사·학생 인증·수업·리콜 화면과 `window.askkup` preload API는 삭제했다.
 - main의 `personal.ts`가 SQLite, 로컬 API, 파일 대화상자, 백업을 담당한다. renderer는 `window.fask`의 제한된 preload 메서드만 사용한다.
 - OpenAI 호환 Chat Completions 스트리밍을 사용한다. 공급자 로그인과 프록시 내부 라우팅은 EasyCLIProxyAPI의 책임이다.
 - `node:sqlite`를 사용한다. 검증한 Electron 39.8.10의 Node 22.22.1에는 DatabaseSync가 포함되어 있다.

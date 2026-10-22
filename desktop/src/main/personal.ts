@@ -491,8 +491,6 @@ export function registerPersonal(
     capture.open(id, !!questionId)
   })
   handle('capture', (strokes?: string) => capture.question(strokes))
-  handle('interactive', (value: boolean) => capture.interactive(!!value))
-  handle('close-overlay', () => capture.close())
   handle('dashboard', () => capture.showDashboard())
   handle('export', async (projectId: string) => {
     const project = store.record<Project>('project', projectId)
