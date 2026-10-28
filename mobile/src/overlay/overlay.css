@@ -1,13 +1,13 @@
 /* screen-q-*: desktop personal.css already owns the .overlay-* names for the Windows overlay. */
 .screen-q-body {
   margin: 0;
-  background: #fff;
+  background: var(--surface-1);
 }
 .screen-q {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
+  padding: 12px;
   font-size: 14px;
 }
 .screen-q-head,
@@ -22,7 +22,8 @@
   gap: 6px;
 }
 .screen-q-hint {
-  color: #64748b;
+  color: var(--ink-subtle);
+  font-size: 12px;
 }
 .screen-q-fatal {
   margin: 16px;

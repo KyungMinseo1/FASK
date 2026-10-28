@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
 
 /* ASKKUP palette: sage green brand + warm off-white neutrals (overrides Tailwind gray). */
 @theme {
@@ -69,6 +70,6 @@ body,
 }
 
 body {
-  font-family: 'Malgun Gothic', system-ui, sans-serif;
+  font-family: 'Pretendard Variable', Pretendard, 'Malgun Gothic', system-ui, sans-serif;
   color: var(--color-gray-800);
 }

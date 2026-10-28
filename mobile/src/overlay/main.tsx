@@ -12,7 +12,9 @@ import { createHubClient, type HubConn } from '../hub'
 import { createBridge, type Bootstrap, type Port } from './bridge'
 import OverlayPanel from './OverlayPanel'
 import { bridgeTransport } from './transport'
+import { initTheme } from '@desktop/renderer/src/personal/theme'
 
+initTheme()
 const root = createRoot(document.getElementById('root')!)
 const fatal = (message: string): void =>
   root.render(<p className="notice error screen-q-fatal">{message}</p>)

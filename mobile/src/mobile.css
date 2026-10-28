@@ -20,13 +20,17 @@
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
-  background: #f5f6fa;
-  border-bottom: 1px solid #e1e7db;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--hairline);
 }
 .fask-mobile .mobile-top h1 {
   margin: 0;
   font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -35,7 +39,7 @@
   grid-column: 1 / 3;
 }
 .fask-mobile .mobile-body {
-  padding: 14px;
+  padding: 16px;
 }
 .fask-mobile .mobile-body.project-split {
   display: grid;
@@ -48,13 +52,16 @@
   overflow: auto;
 }
 .fask-mobile .mobile-workspace h2 {
-  font-size: 13px;
-  color: var(--fask-muted);
-  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+  margin: 24px 0 8px;
 }
 .fask-mobile .space-card {
   width: 100%;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .fask-mobile .mobile-chips {
   display: flex;
@@ -64,11 +71,17 @@
 }
 .fask-mobile .mobile-chips button {
   flex: none;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  border-color: var(--hairline);
+  color: var(--ink-muted);
+  font-size: 12px;
+  padding: 2px 12px;
 }
 .fask-mobile .mobile-chips button.active {
-  background: #20283c;
-  color: #fff;
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+  color: var(--primary);
 }
 .fask-mobile .segmented {
   margin: 4px 0 12px;
@@ -85,7 +98,7 @@
   width: auto;
   max-height: none;
   overflow: visible;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 .fask-mobile .composer textarea {
   font-size: 16px;
@@ -99,34 +112,39 @@
   right: 0;
   bottom: 0;
   z-index: 20;
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, #f5f6fa 40%);
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--canvas);
+  border-top: 1px solid var(--hairline);
 }
 .fask-mobile .mobile-fab button {
   width: 100%;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
 }
 .fask-mobile .mobile-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
-  font-size: 13px;
+  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--hairline);
 }
 .fask-mobile .mobile-banner.offline {
-  background: #fff6dd;
-  color: #6b5200;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .fask-mobile .mobile-banner.blocked {
-  background: #fde8e8;
-  color: #8a1c1c;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .fask-mobile .mobile-banner.dev {
-  background: #20283c;
+  background: var(--nav-canvas);
   color: #fff;
 }
 .fask-mobile .mobile-notice {
-  margin: 10px 14px 0;
+  margin: 12px 16px 0;
   white-space: pre-line;
 }
 .fask-mobile .mobile-pair {
@@ -155,7 +173,7 @@
   margin: 0 0 20px;
 }
 .fask-mobile .mobile-connection dt {
-  color: var(--fask-muted);
+  color: var(--ink-subtle);
 }
 .fask-mobile .mobile-connection dd {
   margin: 0;

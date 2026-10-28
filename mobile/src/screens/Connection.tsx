@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
+import { readTheme, setTheme, type ThemePref } from '@desktop/renderer/src/personal/theme'
 import { useMobile } from '../context'
 
 export default function Connection(): React.JSX.Element {
   const { data, pairing, client, conn, unpair } = useMobile()
   const navigate = useNavigate()
+  const [theme, setThemeState] = useState(readTheme)
   const profile = data.profiles.find((p) => p.id === data.activeProfileId)
   return (
     <>
@@ -29,6 +32,21 @@ export default function Connection(): React.JSX.Element {
           <dt>AI 모델</dt>
           <dd>{data.settings.model || '설정되지 않음'}</dd>
         </dl>
+        <label className="mobile-field">
+          테마
+          <select
+            value={theme}
+            onChange={(e) => {
+              const v = e.target.value as ThemePref
+              setThemeState(v)
+              setTheme(v)
+            }}
+          >
+            <option value="system">시스템 설정 따르기</option>
+            <option value="light">라이트</option>
+            <option value="dark">다크</option>
+          </select>
+        </label>
         <button className="danger" onClick={() => void unpair('연결을 해제했습니다.')}>
           연결 해제
         </button>

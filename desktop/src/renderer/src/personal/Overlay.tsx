@@ -5,6 +5,9 @@ import Composer from './Composer'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
 
+const ANCHOR_W = 64,
+  ANCHOR_H = 58
+
 export default function Overlay(): React.JSX.Element {
   const [params] = useSearchParams()
   const projectId = params.get('project') || '',
@@ -39,15 +42,16 @@ export default function Overlay(): React.JSX.Element {
       y: Math.max(8, innerHeight / 2 - 240)
     })
   )
-  const [toolbarHeight, setToolbarHeight] = useState(480)
+  const edgeOf = (y: number): 'top' | 'bottom' =>
+    y + ANCHOR_H / 2 > innerHeight / 2 ? 'bottom' : 'top'
+  const [edge, setEdge] = useState<'top' | 'bottom'>(() => edgeOf(toolbar.y))
   const toolbarMoving = useRef<{
     x: number
     y: number
     left: number
     top: number
-    width: number
-    height: number
     moved: boolean
+    lastY: number
   } | null>(null)
   const collapsedKey = `fask:toolbar-collapsed:${profileId}`
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(collapsedKey) === '1')
@@ -68,7 +72,7 @@ export default function Overlay(): React.JSX.Element {
   const recent = data?.questions.find((q) => q.id === data.recentQuestions?.[projectId])
   const questionId = recent?.id
   const west = toolbar.x + 32 >= innerWidth / 2
-  const north = toolbar.y + toolbarHeight / 2 > innerHeight / 2
+  const north = edge === 'bottom'
   const corner = `${north ? 'n' : 's'}${west ? 'w' : 'e'}`
   useEffect(() => {
     localStorage.setItem(`${geometryKey}:panel`, JSON.stringify(position))
@@ -109,26 +113,14 @@ export default function Overlay(): React.JSX.Element {
     localStorage.setItem(panelSizeKey, JSON.stringify(panelSize))
   }, [panelSizeKey, panelSize])
   useLayoutEffect(() => {
-    const element = document.querySelector('.overlay-toolbar')!
-    const clamp = (): void => {
-      const rect = element.getBoundingClientRect()
-      setToolbarHeight(rect.height)
-      setToolbar((p) => ({
-        x: Math.max(8, Math.min(p.x, innerWidth - rect.width - 8)),
-        y: Math.max(8, Math.min(p.y, innerHeight - rect.height - 8))
-      }))
-    }
-    let frame = 0
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(clamp)
+    setToolbar((p) => {
+      const next = {
+        x: Math.max(8, Math.min(p.x, innerWidth - ANCHOR_W - 8)),
+        y: Math.max(8, Math.min(p.y, innerHeight - ANCHOR_H - 8))
+      }
+      setEdge(edgeOf(next.y))
+      return next
     })
-    observer.observe(element)
-    clamp()
-    return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
   }, [size])
   useEffect(() => {
     const targets = [document.body, document.documentElement, document.getElementById('root')]
@@ -191,7 +183,7 @@ export default function Overlay(): React.JSX.Element {
       cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction, collapsed, peek])
+  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction, collapsed, peek, edge])
   const paint = (list: Stroke[]): void => {
     const ctx = canvas.current?.getContext('2d')
     if (ctx) redraw(ctx, list, size.width, size.height)
@@ -260,8 +252,15 @@ export default function Overlay(): React.JSX.Element {
         </div>
       )}
       <div
-        className={`overlay-toolbar ${collapsed ? 'collapsed' : ''} ${collapsed && peek ? `peek ${north ? 'up' : 'down'}` : ''}`}
-        style={{ left: toolbar.x, top: toolbar.y, right: 'auto', transform: 'none' }}
+        className={`overlay-toolbar edge-${edge} ${west ? 'label-left' : 'label-right'} ${collapsed ? 'collapsed' : ''} ${collapsed && peek ? `peek ${north ? 'up' : 'down'}` : ''}`}
+        style={{
+          left: toolbar.x,
+          top: edge === 'top' ? toolbar.y : 'auto',
+          bottom: edge === 'bottom' ? innerHeight - toolbar.y - ANCHOR_H : 'auto',
+          right: 'auto',
+          transform: 'none',
+          ['--tools-max' as string]: `${edge === 'top' ? innerHeight - toolbar.y - ANCHOR_H - 12 : toolbar.y - 12}px`
+        }}
         onPointerEnter={() => {
           clearTimeout(peekTimer.current)
           if (collapsed && !toolbarMoving.current) setPeek(true)
@@ -278,15 +277,13 @@ export default function Overlay(): React.JSX.Element {
           title="클릭: 접기/펼치기 · 드래그: 이동"
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
-            const r = e.currentTarget.parentElement!.getBoundingClientRect()
             toolbarMoving.current = {
               x: e.clientX,
               y: e.clientY,
-              left: r.left,
-              top: r.top,
-              width: r.width,
-              height: r.height,
-              moved: false
+              left: toolbar.x,
+              top: toolbar.y,
+              moved: false,
+              lastY: toolbar.y
             }
             setPeek(false)
             setPanelInteraction(true)
@@ -298,21 +295,23 @@ export default function Overlay(): React.JSX.Element {
               dy = e.clientY - start.y
             if (!start.moved && Math.hypot(dx, dy) < 4) return
             start.moved = true
-            setToolbar({
-              x: Math.max(8, Math.min(innerWidth - start.width - 8, start.left + dx)),
-              y: Math.max(8, Math.min(innerHeight - start.height - 8, start.top + dy))
-            })
+            const nx = Math.max(8, Math.min(innerWidth - ANCHOR_W - 8, start.left + dx)),
+              ny = Math.max(8, Math.min(innerHeight - ANCHOR_H - 8, start.top + dy))
+            start.lastY = ny
+            setToolbar({ x: nx, y: ny })
           }}
           onPointerUp={() => {
             const start = toolbarMoving.current
             if (start && !start.moved) {
               setCollapsed((c) => !c)
               setPeek(false)
-            }
+            } else if (start) setEdge(edgeOf(start.lastY))
             toolbarMoving.current = null
             setPanelInteraction(false)
           }}
           onPointerCancel={() => {
+            const start = toolbarMoving.current
+            if (start?.moved) setEdge(edgeOf(start.lastY))
             toolbarMoving.current = null
             setPanelInteraction(false)
           }}

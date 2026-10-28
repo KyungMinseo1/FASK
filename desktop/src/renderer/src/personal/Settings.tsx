@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import type { DisplayInfo, HubStatus, LocalSettings } from '../../../preload/personal'
 import { errorText } from './common'
+import { readTheme, setTheme, type ThemePref } from './theme'
 
 export default function Settings({
   settings,
@@ -15,6 +16,7 @@ export default function Settings({
     [displays, setDisplays] = useState<DisplayInfo[]>([])
   const [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false)
+  const [theme, setThemeState] = useState(readTheme)
   useEffect(() => {
     void window.fask
       .displays()
@@ -225,6 +227,25 @@ export default function Settings({
               실패한 질문의 이미지는 재시도를 위해 남깁니다. 기존 이미지는 질문 상세에서 직접 제거할
               수 있습니다.
             </p>
+          </section>
+          <section>
+            <h3>화면 테마</h3>
+            <label>
+              테마
+              <select
+                value={theme}
+                onChange={(e) => {
+                  const v = e.target.value as ThemePref
+                  setThemeState(v)
+                  setTheme(v)
+                }}
+              >
+                <option value="system">시스템 설정 따르기</option>
+                <option value="light">라이트</option>
+                <option value="dark">다크</option>
+              </select>
+            </label>
+            <small>이 기기에만 적용되며 바로 바뀝니다.</small>
           </section>
           <MobileHubSection />
           <section>
