@@ -4,6 +4,7 @@ import { lastTurn } from '@desktop/shared/questions'
 import { useApi } from '@desktop/renderer/src/personal/api'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
+import ProjectPicker from '@desktop/renderer/src/personal/ProjectPicker'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import type { HubClient, HubConn } from '../hub'
 import type { Bootstrap, Bridge, OverlayState } from './bridge'
@@ -45,6 +46,8 @@ export default function OverlayPanel({
   const api = useApi() as HubClient
   const [data, setData] = useState(initial)
   const [overlay, setOverlay] = useState<OverlayState>(boot)
+  const [projectId, setProjectId] = useState(boot.projectId)
+  const [picker, setPicker] = useState(false)
   const [questionId, setQuestionId] = useState(boot.questionId)
   const [composerKey, setComposerKey] = useState(0)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -82,6 +85,7 @@ export default function OverlayPanel({
         api.reconnect()
         void refresh()
       } else if (push.event === 'sessionInvalidated') setBlocked('화면 질문이 종료되었습니다.')
+      else if (push.event === 'projectPicker') setPicker(true)
     })
     return () => {
       offChanged()
@@ -91,11 +95,23 @@ export default function OverlayPanel({
 
   // Profile switch or project deletion on the PC: never let a question land in the wrong place.
   useEffect(() => {
-    const problem = contextProblem(data, boot, questionId)
+    const problem = contextProblem(data, { profileId: boot.profileId, projectId }, questionId)
     if (!problem) return
     setBlocked(problem)
     void bridge.call('stop').catch(() => {})
-  }, [data, boot, questionId, bridge])
+  }, [data, boot.profileId, projectId, questionId, bridge])
+
+  // The Composer's autofocused input otherwise keeps the panel scrolled past the opened list.
+  const head = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!picker) return
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    const show = (): void => head.current?.scrollIntoView({ block: 'start' })
+    show()
+    // Opened from the toolbar, the hidden panel (0px tall) gets its real viewport only afterwards.
+    window.addEventListener('resize', show, { once: true })
+    return () => window.removeEventListener('resize', show)
+  }, [picker])
 
   const flushClears = (): void => {
     const queue = clearQueue.current
@@ -152,6 +168,21 @@ export default function OverlayPanel({
       .catch((e) => setNotice(errorText(e)))
     setComposerKey((k) => k + 1)
   }
+  const switchProject = async (id: string): Promise<void> => {
+    setPicker(false)
+    if (locked || id === projectId) return
+    try {
+      // Native clears the session's active question along with the project.
+      await bridge.call('setProject', { projectId: id })
+      setNotice('')
+      setProjectId(id)
+      setQuestionId(undefined)
+      setHistoryOpen(false)
+      setComposerKey((k) => k + 1)
+    } catch (e) {
+      setNotice(errorText(e))
+    }
+  }
   const stop = (): void => {
     const warn = interaction.running || interaction.unresolved
     if (warn && !confirm('PC에서 답변이 계속 진행될 수 있습니다. 화면 질문을 종료할까요?')) return
@@ -159,7 +190,7 @@ export default function OverlayPanel({
   }
 
   const question = questionId ? data.questions.find((q) => q.id === questionId) : undefined
-  const project = data.projects.find((p) => p.id === boot.projectId)
+  const project = data.projects.find((p) => p.id === projectId)
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       setNotice('')
@@ -171,8 +202,10 @@ export default function OverlayPanel({
   }
   return (
     <div className="screen-q">
-      <header className="screen-q-head">
-        <b>{project?.name ?? 'FASK'}</b>
+      <header className="screen-q-head" ref={head}>
+        <button className="screen-q-project" aria-expanded={picker} onClick={() => setPicker((v) => !v)}>
+          {project?.name ?? 'FASK'} ▾
+        </button>
         <span>
           <button disabled={locked} onClick={newConversation}>
             새 대화
@@ -183,6 +216,15 @@ export default function OverlayPanel({
           </button>
         </span>
       </header>
+      {picker && (
+        <ProjectPicker
+          workspaces={data.workspaces}
+          projects={data.projects}
+          currentId={projectId}
+          disabledReason={locked ? '답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.' : undefined}
+          onSelect={(id) => void switchProject(id)}
+        />
+      )}
       {unpaired && <p className="notice error">{unpaired}</p>}
       {conn.state === 'offline' && (
         <p className="notice">PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.</p>
@@ -211,11 +253,11 @@ export default function OverlayPanel({
           <summary>대화 기록</summary>
           <QuestionDetail
             question={question}
-            concepts={data.concepts.filter((c) => c.projectId === boot.projectId)}
+            concepts={data.concepts.filter((c) => c.projectId === projectId)}
             run={run}
             onClose={() => setHistoryOpen(false)}
             onCreateConcept={async (name) => {
-              const id = await api.create('concept', name, boot.projectId)
+              const id = await api.create('concept', name, projectId)
               await api.updateQuestion(question.id, {
                 conceptIds: [...question.conceptIds, id],
                 suggestions: question.suggestions.filter((s) => s !== name)
@@ -227,7 +269,7 @@ export default function OverlayPanel({
       {!blocked && (
         <Composer
           key={composerKey}
-          projectId={boot.projectId}
+          projectId={projectId}
           profileId={boot.profileId}
           settings={data.settings}
           questionId={questionId}

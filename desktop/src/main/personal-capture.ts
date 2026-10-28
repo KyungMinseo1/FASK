@@ -169,6 +169,8 @@ export class PersonalCapture {
       // Do not queue a renderer close that could race the next shortcut open.
       this.releasingFocus = true
       win.blur()
+      // A no-op blur (window still focused) must not swallow the next real outside click.
+      if (win.isFocused()) this.releasingFocus = false
     }
   }
   toggleQuestionPanel(): void {

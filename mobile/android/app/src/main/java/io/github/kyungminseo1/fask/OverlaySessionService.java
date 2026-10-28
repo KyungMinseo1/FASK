@@ -222,6 +222,7 @@ public final class OverlaySessionService extends Service {
                         }
                         @Override public void onStop() { stopSession("CLOSED", "화면 질문을 종료했습니다."); }
                         @Override public void onWindowFailure() { stopSession("OVERLAY_PERMISSION", "화면 질문 창을 표시할 수 없습니다."); }
+                        @Override public void onProjectPicker() { if (bridge != null) bridge.openProjectPicker(); }
                     });
                 overlay.setGeometryReady(true);
                 overlay.show();

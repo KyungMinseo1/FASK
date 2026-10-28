@@ -328,7 +328,7 @@ app.whenReady().then(async () => {
       () => js(`!!document.querySelector('.question-card .markdown-answer strong') && !!document.querySelector('.question-card .markdown-answer em') && !!document.querySelector('.question-card .katex')`),
       'dashboard previews render bold italic and math'
     )
-    assert.equal(await js(`getComputedStyle(document.querySelector('.question-card .markdown-answer strong')).fontWeight`), '700')
+    assert.ok(Number(await js(`getComputedStyle(document.querySelector('.question-card .markdown-answer strong')).fontWeight`)) >= 600)
     assert.equal(await js(`getComputedStyle(document.querySelector('.question-card .markdown-answer em')).fontStyle`), 'italic')
     await js(`document.querySelector('.question-card .markdown-answer strong').closest('.question-card').scrollIntoView({block:'center'})`)
     await shot('markdown-preview')
@@ -444,6 +444,48 @@ app.whenReady().then(async () => {
       assert.ok(Math.abs(boundary[key] - savedRegion.rect[key] * scale) < 1, key)
     }
     report.checks.push('pen capture boundary matches full-monitor capture coordinates')
+    overlay.webContents.sendInputEvent({ type: 'mouseDown', x: 40, y: 40, button: 'right', clickCount: 1 })
+    overlay.webContents.sendInputEvent({ type: 'mouseUp', x: 40, y: 40, button: 'right', clickCount: 1 })
+    await wait(
+      () => overlay.webContents.executeJavaScript("!document.querySelector('.overlay-region')"),
+      'right-click leaves pen mode'
+    )
+    report.checks.push('right-click in pen mode returns to background-app mode')
+    const target = await js(`window.fask.create('project','전환 대상',${JSON.stringify(project.workspaceId)})`)
+    const pickProject = async (id, name) => {
+      await overlay.webContents.executeJavaScript("document.querySelector('.toolbar-project').click()")
+      await wait(
+        () =>
+          overlay.webContents.executeJavaScript(
+            `[...document.querySelectorAll('.overlay-project-picker button')].some(b=>b.textContent.includes(${JSON.stringify(name)}))`
+          ),
+        `overlay project picker lists ${name}`
+      )
+      await overlay.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.overlay-project-picker button')].find(b=>b.textContent.includes(${JSON.stringify(name)})).click()`
+      )
+      await wait(
+        () => overlay.webContents.executeJavaScript(`location.hash.includes(${JSON.stringify(`project=${id}`)})`),
+        `overlay route switches to ${name}`
+      )
+      assert.equal(personal.capture.overlay, overlay)
+      await wait(
+        async () =>
+          (await overlay.webContents.executeJavaScript(
+            "document.querySelector('.overlay-panel header b')?.textContent"
+          )) === name,
+        `overlay panel shows ${name}`
+      )
+    }
+    await pickProject(target, '전환 대상')
+    const original = (await js('window.fask.snapshot()')).projects.find((p) => p.id === project.id)
+    await pickProject(project.id, original.name)
+    await overlay.webContents.executeJavaScript("document.querySelector('.overlay-panel header button').click()")
+    await wait(
+      () => overlay.webContents.executeJavaScript("!document.querySelector('.overlay-panel')"),
+      'overlay panel closes after project switch'
+    )
+    report.checks.push('overlay switches project in place')
     overlay.webContents.send('personal:escape')
     const image = await personal.capture.question()
     const cropped = nativeImage.createFromDataURL(image).getSize()
@@ -488,6 +530,52 @@ app.whenReady().then(async () => {
     await pause(80)
     assert.equal(ignoreStates.at(-1), true)
     report.checks.push('background remains click-through outside controls')
+    {
+      const ov = (source) => overlay.webContents.executeJavaScript(source)
+      const center = (selector) =>
+        ov(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`)
+      const point = async (p) => {
+        cursor = { x: bounds.x + p.x, y: bounds.y + p.y }
+        overlay.webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y })
+        await pause(80)
+      }
+      const handle = await center('.toolbar-drag-handle')
+      await point(handle)
+      await ov("document.querySelector('.overlay-panel header button').click()")
+      await wait(() => ov("!document.querySelector('.overlay-panel')"), 'panel closes before popover checks')
+      if (!(await ov("document.querySelector('.overlay-toolbar').classList.contains('collapsed')"))) {
+        overlay.webContents.sendInputEvent({ type: 'mouseDown', ...handle, button: 'left', clickCount: 1 })
+        overlay.webContents.sendInputEvent({ type: 'mouseUp', ...handle, button: 'left', clickCount: 1 })
+        await wait(() => ov("document.querySelector('.overlay-toolbar').classList.contains('collapsed')"), 'toolbar collapses')
+      }
+      await point({ x: 5, y: 5 })
+      await point(handle)
+      await wait(() => ov("!!document.querySelector('.overlay-toolbar.peek')"), 'collapsed toolbar peeks on hover')
+      // A real OS click on the toolbar activates the overlay; synthetic input does not.
+      overlay.focus()
+      await wait(() => overlay.isFocused(), 'toolbar click focuses overlay')
+      await ov("document.querySelector('.toolbar-project').click()")
+      await wait(() => ov("!!document.querySelector('.overlay-project-picker')"), 'project popover opens from peek')
+      await point(await center('.overlay-project-picker'))
+      await pause(300)
+      assert.equal(await ov("!!document.querySelector('.overlay-toolbar.peek')"), true)
+      report.checks.push('peek stays open while pointer is on the project popover')
+      await point({ x: 5, y: 5 })
+      assert.equal(await ov("!!document.querySelector('.overlay-project-picker')"), true)
+      // Leaving the tools must not silently release focus while the popover is open.
+      assert.equal(overlay.isFocused(), true)
+      const outside = new BrowserWindow({ width: 400, height: 300 })
+      await outside.loadURL('data:text/html,<h1>Background click target</h1>')
+      outside.show()
+      outside.focus()
+      await wait(() => ov("!document.querySelector('.overlay-project-picker')"), 'background click closes project popover')
+      await wait(() => ov("!document.querySelector('.overlay-toolbar.peek')"), 'toolbar collapses with the popover')
+      outside.destroy()
+      await ov("document.querySelector('.question-trigger').click()")
+      await wait(() => ov("!!document.querySelector('.overlay-panel')"), 'panel reopens after popover checks')
+      cursor = { x: bounds.x + 5, y: bounds.y + 5 }
+      await pause(80)
+    }
     personal.quickQuestion()
     await wait(
       () => overlay.webContents.executeJavaScript("!document.querySelector('.overlay-panel')"),

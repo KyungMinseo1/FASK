@@ -144,6 +144,11 @@ final class OverlayWebBridge {
         push("overlayState", state());
     }
 
+    /** Asks the panel to show its project list; the panel itself was just shown. */
+    void openProjectPicker() {
+        if (!closed) push("projectPicker", new JSONObject());
+    }
+
     void close() {
         if (closed) return;
         push("sessionInvalidated", new JSONObject());
@@ -251,6 +256,18 @@ final class OverlayWebBridge {
                 String question = p.isNull("questionId") ? null : p.getString("questionId");
                 if (question != null && !question.matches("[A-Za-z0-9-]{1,100}")) throw new JSONException("questionId");
                 session.activeQuestionId = question;
+                ok(id, new JSONObject());
+                return;
+            }
+            case "setProject": {
+                String project = p.getString("projectId");
+                if (!project.matches("[A-Za-z0-9-]{1,100}")) throw new JSONException("projectId");
+                if (overlay.isInteractionLocked()) {
+                    fail(id, "BUSY", "답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.");
+                    return;
+                }
+                session.projectId = project;
+                session.activeQuestionId = null;
                 ok(id, new JSONObject());
                 return;
             }

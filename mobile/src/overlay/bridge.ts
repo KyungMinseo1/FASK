@@ -12,6 +12,7 @@ export type Op =
   | 'captureSelectedRegion'
   | 'setInteractionState'
   | 'setQuestion'
+  | 'setProject'
   | 'clearInk'
   | 'setPanelVisible'
   | 'stop'
@@ -37,6 +38,7 @@ export type Push =
   | { event: 'overlayState'; payload: OverlayState }
   | { event: 'panelShown'; payload: Record<string, never> }
   | { event: 'sessionInvalidated'; payload: Record<string, never> }
+  | { event: 'projectPicker'; payload: Record<string, never> }
 
 export class BridgeError extends Error {
   readonly code: string

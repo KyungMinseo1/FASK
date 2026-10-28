@@ -38,6 +38,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         void onOpenApp();
         void onStop();
         void onWindowFailure();
+        void onProjectPicker();
     }
 
     private static final String GEOMETRY_CHANGED = "화면 구성이 바뀌었습니다. 영역을 다시 선택해 주세요.";
@@ -196,6 +197,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         question = button("질문 · 앱 열기", this::showPanel);
         actions.addView(question, new LinearLayout.LayoutParams(0, dp(52), 1));
         actions.addView(button("종료", listener::onStop), new LinearLayout.LayoutParams(0, dp(52), 1));
+        tools.addView(button("프로젝트 바꾸기", this::showProjectPicker), new LinearLayout.LayoutParams(-1, dp(48)));
         tools.addView(actions);
 
         panel = new FrameLayout(context);
@@ -375,6 +377,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         applyLock();
         if (interactionLocked && (mode == Mode.PEN || mode == Mode.ERASER || mode == Mode.REGION)) setMode(Mode.IDLE);
     }
+    public boolean isInteractionLocked() { return interactionLocked; }
     private void applyLock() {
         boolean locked = interactionLocked || captureLocked;
         ink.setInteractionLocked(locked);
@@ -422,6 +425,11 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         panelParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         clampAll(); attach(panel, panelParams); update(panel, panelParams);
         listener.onStateChanged();
+    }
+    /** Opens the panel with its project list expanded; no signal when showPanel opened the app instead. */
+    private void showProjectPicker() {
+        showPanel();
+        if (mode == Mode.PANEL) listener.onProjectPicker();
     }
     private void hidePanelWindow() {
         hideIme();

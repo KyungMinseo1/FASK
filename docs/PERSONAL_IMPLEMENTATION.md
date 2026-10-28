@@ -25,7 +25,7 @@
 | clear-recent | 프로젝트 ID | 이번 앱 실행의 해당 프로젝트 최근 대화 초기화 |
 | edit-overlay-region | 없음 | 현재 오버레이 모니터의 영역 편집. 적용·취소 후 오버레이 복귀 |
 | active-project | 프로젝트 ID | 단축키로 열 대상 프로젝트 선택 |
-| overlay-regions | drawing boolean, 도구/패널의 DIP 사각형 배열, panelOpen boolean | 메인 프로세스의 네이티브 커서 위치 판정과 포커스 해제에 사용 |
+| overlay-regions | drawing boolean, 도구/패널의 DIP 사각형 배열, panelOpen boolean(질문 패널 또는 프로젝트 팝오버가 열림) | 메인 프로세스의 네이티브 커서 위치 판정과 포커스 해제에 사용 |
 | shortcut-info | 없음 | 등록한 accelerator 또는 null, fallback 여부 |
 | switch-profile | 프로필 ID | 완료. 요청·캡처 창이 있으면 거절 |
 | save-settings | LocalSettings, 선택적 새 접속 키 | 완료. 키 생략은 유지, 빈 문자열은 제거 |
@@ -59,6 +59,10 @@
 2026-10-21 UI 수정: 상위 경로는 HashRouter 검색 파라미터를 이용한 실제 내 공간/워크스페이스/프로젝트 탐색이며 뒤로가기를 지원한다. 워크스페이스·프로젝트 이름은 현재 프로필 범위를 검사한 후 수정한다.
 
 오버레이는 DOM hover 이벤트에 의존하지 않는다. ResizeObserver로 보고한 도구·패널 영역과 메인 프로세스에서 30ms 간격으로 읽는 DIP 커서 좌표를 비교해 클릭 통과 여부를 바꾼다. 펜/지우개 모드에는 전체 캔버스가 입력을 받는다. 축소된 도구의 버튼 클릭과 나머지 화면의 클릭 통과를 함께 검증한다.
+
+도구에는 별도 '선택' 버튼이 없다. 펜/지우개 모드에서 우클릭(그리는 도중의 우클릭 포함) 또는 Esc를 누르면 진행 중인 획을 확정하고 클릭 통과로 돌아간다. 우클릭 자체는 배경 앱에 전달되지 않고 오버레이의 기본 컨텍스트 메뉴도 막는다. 도구 맨 아래 '프로젝트' 팝오버는 워크스페이스별 프로젝트 목록을 보여 주며, 선택하면 창을 다시 만들지 않고 hash의 `project`와 `personal:active-project`만 바꾼 뒤 질문 패널을 연다. 펜 필기는 유지하고 이전 프로젝트 초안은 프로젝트별 localStorage에 남는다. 패널의 Composer가 전송 중이거나 결과 불명일 때는 목록을 비활성화한다. 답변 스트림만 진행 중이면 원래 프로젝트에 계속 저장된다.
+
+팝오버가 열린 동안에는 축소된 도구의 임시 펼침(peek)을 유지한다. 팝오버는 질문 패널처럼 overlay-regions의 panelOpen으로 보고되어 커서가 도구를 벗어나도 포커스를 놓지 않으므로, 배경을 클릭하면 blur → `personal:outside-click`으로 닫힌다. 오버레이 안의 다른 곳을 누르거나 Esc를 눌러도 닫힌다. 도구를 벗어날 때 main이 하는 포커스 해제(`win.blur()`)는 Windows의 최상위 오버레이에서 아무 효과 없이 끝날 수 있다. 이때 창이 여전히 포커스를 가지면 해제 표식을 바로 지워, 다음 실제 바깥 클릭이 무시되지 않게 한다.
 
 단축키는 `Ctrl+Shift+Space` 등록 성공 여부를 검사하고 실패 시 `Ctrl+Alt+Space`를 시도한다. 실제 등록 상태를 사이드바에 표시한다. 동작은 현재 프로젝트 오버레이 열기/질문 패널 토글이며, 펼쳐질 때 입력란에 포커스를 둔다.
 
@@ -132,10 +136,12 @@ Android JDK 21에서 testDebugUnitTest와 assembleDebug 성공. Pixel_7에 실�
 - `HubTransport<HubIdentity>`는 토큰을 JS에 전달하지 않는 서비스 panel용 계약이다. 일반 앱은 `Pairing`과 암호화 `SnapshotCache`를 계속 사용한다. 캐시를 생략한 client는 마지막 성공 snapshot만 메모리에 보관하고 close 시 버린다.
 - 프로젝트의 Android 전용 시작 버튼은 캐시가 아닌 최신 허브 snapshot으로 프로필·프로젝트·질문 소속을 확인한다. 오버레이 권한 설정에서 돌아온 것만으로 시작하지 않으며, 사용자의 다시 시작과 매 세션의 전체 화면 공유 동의가 필요하다.
 - 서비스는 process-local 세션 ID만 Intent로 받으며 pairing과 projection 동의는 디스크에 저장하지 않는다. foreground·projection·reader·토글 초기화가 완료되어야 ACTIVE로 응답한다. 잠금·권한 상실·시스템 공유 종료 후 자동 재시작하지 않는다.
-- 토글·도구(`읽기/펜/지우개/모두 지우기/영역 선택/질문/종료`)·질문 panel은 각각 TYPE_APPLICATION_OVERLAY 창이다. 전체 화면 ink 창은 펜·지우개·영역 편집 중에만 붙으므로 읽기·panel 상태에서 아래 앱 터치를 막지 않는다. 필기와 영역은 현재 회전의 디스플레이 논리 픽셀로 저장하며 회전·밀도·reader 교체 시 무효화한다.
+- 토글·도구(`읽기/펜/지우개/모두 지우기/영역 선택/프로젝트 바꾸기/질문/종료`)·질문 panel은 각각 TYPE_APPLICATION_OVERLAY 창이다. 전체 화면 ink 창은 펜·지우개·영역 편집 중에만 붙으므로 읽기·panel 상태에서 아래 앱 터치를 막지 않는다. 필기와 영역은 현재 회전의 디스플레이 논리 픽셀로 저장하며 회전·밀도·reader 교체 시 무효화한다.
+- '프로젝트 바꾸기'는 panel을 열고 `projectPicker` push로 목록을 펼친다. panel 헤더의 프로젝트 이름으로도 여닫는다. 목록을 열면 Composer의 자동 포커스를 해제하고 헤더로 스크롤한다. 숨겨진 panel WebView는 높이가 0이므로 첫 resize에서 한 번 더 스크롤한다. 선택하면 bridge `setProject`가 세션의 projectId를 바꾸고 activeQuestionId를 비운다(profile·pairing은 고정). Composer가 busy·running·unresolved이면 panel은 목록을 비활성화하고 네이티브는 `BUSY`로 거절한다. 필기는 유지한다. 전환한 프로젝트가 PC에서 삭제되면 기존 context 검사가 세션을 끝낸다.
 - 캡처는 Composer의 실제 전송에서만 일어난다. 모든 FASK 창을 숨긴 뒤 같은 reader의 새 프레임을 받아 선택 영역만 잘라 필기를 한 번 합성하고, 2048px 이하 JPEG(품질 90)로 줄인다. 전체 프레임을 JS·파일·네트워크로 보내지 않으며 좌표 불일치·영역 없음은 전체 화면 대체 없이 실패한다.
 - 질문 panel은 서비스가 소유한 WebView(`overlay.html`, `https://appassets.androidplatform.net/assets/public/`)이다. `FaskOverlayBridge` WebMessage는 해당 origin의 main frame만 받고, `/health`·허용된 `/rpc/<method>`·`/events`만 네이티브에서 pin·토큰을 붙여 호출한다. bootstrap 결과에 토큰은 없다. 401은 세션을 끝내고 취소 표식을 남겨 앱이 다음 실행·resume에서 페어링을 정리한다. PIN_MISMATCH는 페어링을 지우지 않는다.
 - Composer는 보낸 AskInput 전체(requestId·이미지 bytes·생략된 questionId 포함)를 고정한다. 응답 유실·시간 초과는 거절로 보지 않고 `같은 요청 다시 확인`으로 같은 payload를 재전송한다. 거절로 간주하는 오류는 `ask`의 recordAsk 이전 검증 문구로 한정한다. 결과가 불명인 동안 입력·편집·새 대화를 잠근다. 완료된 turn에 쓰인 ink revision과 현재 revision이 같을 때만 필기를 지운다.
 - 앱 연결 해제·새 페어링 저장 전에 화면 질문 세션을 먼저 종료한다.
 - 검증(2026-10-28): 모바일 Vitest 45개(Composer 상태 전이 6개 포함), desktop 16개·타입 검사, Android 단위 테스트, Bitmap 합성 instrumentation 3개 통과. Pixel_7 API 37에서 실제 PC 허브(격리 프로필, 로컬 테스트 모델 프록시)와 pairing-test 수동 입력으로 연결해, 브라우저 위 토글→펜→영역 선택→질문 전송→panel 실시간 답변→같은 질문의 turn 2 저장을 확인했다. PC에 저장된 첨부는 220×290 JPEG로 IN 표식과 펜선만 있고 OUT·토글·도구·panel·IME는 없었다. panel 접기/열기 후 같은 Composer 유지, 앱 프로세스 종료 후 running=false·새 동의 필요, 알림 `종료` 후 서비스·창 잔류 없음, PC 연결 초기화 후 panel의 PIN_MISMATCH 차단 표시를 확인했다. API 34 태블릿 AVD(2560×1600)에서는 normal APK의 동의→ACTIVE→런처 위 토글→Stop만 확인했다.
+- 검증(2026-10-28, 프로젝트 전환): Medium_Phone API 37 AVD에서 격리 PC 허브(두 워크스페이스)와 pairing-test APK로 토글→'프로젝트 바꾸기'→워크스페이스별 목록·✓ 표시(첫 표시에도 헤더 노출), 터치 선택 후 헤더 이름 변경·필기 유지, 전환 후 질문이 PC의 선택 프로젝트에 저장, 스트리밍 중 목록 비활성·문구 표시와 네이티브 `setProject`의 BUSY 응답, 답변 완료 후 해제, 전환한 프로젝트를 PC에서 삭제하면 세션 종료를 확인했다.
 - 미검증: 토큰만 바뀐 401 경로(PC 초기화는 인증서도 바꿔 PIN_MISMATCH가 된다), API 28/33 AVD 실행(이미지·AVD만 생성), 회전·분할 화면·3버튼 내비게이션 좌표 matrix, 태블릿에서의 캡처·질문 E2E, 실제 QR 카메라 페어링, 물리 태블릿·S Pen의 palm rejection·지연, OEM 단일 앱 공유 동작, FLAG_SECURE 화면.

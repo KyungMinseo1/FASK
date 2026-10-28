@@ -21,6 +21,15 @@
   display: flex;
   gap: 6px;
 }
+.screen-q-project {
+  border: 0;
+  background: transparent;
+  font-weight: 700;
+  font-size: inherit;
+  color: var(--ink);
+  padding: 0;
+  text-align: left;
+}
 .screen-q-hint {
   color: var(--ink-subtle);
   font-size: 12px;

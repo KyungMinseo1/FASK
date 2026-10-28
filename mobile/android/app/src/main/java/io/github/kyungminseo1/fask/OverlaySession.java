@@ -20,7 +20,8 @@ final class OverlaySession {
 
     final String id = UUID.randomUUID().toString();
     final String profileId;
-    final String projectId;
+    /** Changed only by the panel's setProject op; profile and pairing stay fixed. */
+    String projectId;
     final String questionId;
     final String[] addresses;
     final int port;

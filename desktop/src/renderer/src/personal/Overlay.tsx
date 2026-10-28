@@ -2,20 +2,30 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
+import ProjectPicker from './ProjectPicker'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
 
 const ANCHOR_W = 64,
   ANCHOR_H = 58
+/** Matches `.overlay-project-picker` max-height. */
+const PICKER_MAX_H = 360
+/** Elements that must receive clicks instead of passing them to the background app. */
+const HIT_SELECTOR = '.overlay-toolbar,.toolbar-tools,.overlay-panel,.overlay-project-picker'
 
 export default function Overlay(): React.JSX.Element {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const projectId = params.get('project') || '',
     profileId = params.get('profile') || ''
   const { data, error, refresh } = useSnapshot()
   const [notice, setNotice] = useState('')
   const [mode, setMode] = useState<'idle' | 'pen' | 'eraser'>('idle'),
     [panel, setPanel] = useState(params.get('panel') === '1')
+  const [picker, setPicker] = useState<{ top: number; left?: number; right?: number } | null>(
+    null
+  )
+  const [composerLock, setComposerLock] = useState(false)
+  const switchBlocked = panel && composerLock
   const [strokes, setStrokes] = useState<Stroke[]>([]),
     [size, setSize] = useState({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })
   const canvas = useRef<HTMLCanvasElement>(null),
@@ -133,12 +143,15 @@ export default function Overlay(): React.JSX.Element {
       moving.current = null
       toolbarMoving.current = null
       setPeek(false)
+      setPicker(null)
     }
     const key = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') reset()
     }
-    const resize = (): void =>
+    const resize = (): void => {
       setSize({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })
+      setPicker(null)
+    }
     window.addEventListener('keydown', key)
     window.addEventListener('resize', resize)
     const off = window.fask.onEscape(reset)
@@ -162,28 +175,37 @@ export default function Overlay(): React.JSX.Element {
   }, [])
   useLayoutEffect(() => {
     const update = (): void => {
-      const regions = [...document.querySelectorAll('.overlay-toolbar,.toolbar-tools,.overlay-panel')].map(
+      const regions = [...document.querySelectorAll(HIT_SELECTOR)].map(
         (el) => {
           const r = el.getBoundingClientRect()
           return { x: r.x, y: r.y, width: r.width, height: r.height }
         }
       )
-      void window.fask.overlayRegions(mode !== 'idle' || panelInteraction, regions, panel).catch(() => {})
+      // The popover holds focus like the panel, so a background click blurs and closes it.
+      void window.fask
+        .overlayRegions(mode !== 'idle' || panelInteraction, regions, panel || !!picker)
+        .catch(() => {})
     }
     let frame = 0
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(update)
     })
-    document
-      .querySelectorAll('.overlay-toolbar,.toolbar-tools,.overlay-panel')
-      .forEach((el) => observer.observe(el))
+    document.querySelectorAll(HIT_SELECTOR).forEach((el) => observer.observe(el))
     update()
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction, collapsed, peek, edge])
+  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction, collapsed, peek, edge, picker])
+  useEffect(() => {
+    if (!picker) return
+    const close = (e: Event): void => {
+      if (!(e.target as Element).closest('.overlay-project-picker,.toolbar-project')) setPicker(null)
+    }
+    window.addEventListener('pointerdown', close, true)
+    return () => window.removeEventListener('pointerdown', close, true)
+  }, [picker])
   const paint = (list: Stroke[]): void => {
     const ctx = canvas.current?.getContext('2d')
     if (ctx) redraw(ctx, list, size.width, size.height)
@@ -198,6 +220,10 @@ export default function Overlay(): React.JSX.Element {
   }, [size, strokes])
   const down = (e: PointerEvent<HTMLCanvasElement>): void => {
     if (mode === 'idle') return
+    if (e.button === 2) {
+      exitDrawing()
+      return
+    }
     e.currentTarget.setPointerCapture(e.pointerId)
     if (mode === 'pen') {
       drawing.current = { points: [{ x: e.clientX, y: e.clientY }], color: penColor }
@@ -205,6 +231,10 @@ export default function Overlay(): React.JSX.Element {
     } else setStrokes((s) => eraseAt(s, { x: e.clientX, y: e.clientY }))
   }
   const move = (e: PointerEvent<HTMLCanvasElement>): void => {
+    if (mode !== 'idle' && e.button === 2) {
+      exitDrawing()
+      return
+    }
     if (mode === 'pen' && drawing.current) {
       drawing.current.points.push({ x: e.clientX, y: e.clientY })
       paint([...strokes, drawing.current])
@@ -219,10 +249,38 @@ export default function Overlay(): React.JSX.Element {
       drawing.current = null
     }
   }
+  /** Commits any stroke in progress, then hands clicks back to the background app. */
+  const exitDrawing = (): void => {
+    up()
+    setMode('idle')
+  }
   const project = data?.projects.find((p) => p.id === projectId)
   const region = data?.settings.regions.find((r) => r.displayId === data.settings.displayId)
+  const switchProject = (id: string): void => {
+    setPicker(null)
+    if (id === projectId || switchBlocked) return
+    setNotice('')
+    void window.fask
+      .activateProject(id)
+      .then(() => {
+        setParams(
+          (prev) => {
+            const next = new URLSearchParams(prev)
+            next.set('project', id)
+            return next
+          },
+          { replace: true }
+        )
+        setMode('idle')
+        setPanel(true)
+      })
+      .catch((e) => {
+        setNotice(errorText(e))
+        setPanel(true)
+      })
+  }
   return (
-    <div className="personal-overlay">
+    <div className="personal-overlay" onContextMenu={(e) => e.preventDefault()}>
       <canvas
         ref={canvas}
         style={{
@@ -248,11 +306,11 @@ export default function Overlay(): React.JSX.Element {
             height: `${region.rect.height * 100}%`
           }}
         >
-          <span>이 영역 안쪽만 캡처 · Esc로 배경 앱 사용</span>
+          <span>이 영역 안쪽만 캡처 · 우클릭/Esc로 배경 앱 사용</span>
         </div>
       )}
       <div
-        className={`overlay-toolbar edge-${edge} ${west ? 'label-left' : 'label-right'} ${collapsed ? 'collapsed' : ''} ${collapsed && peek ? `peek ${north ? 'up' : 'down'}` : ''}`}
+        className={`overlay-toolbar edge-${edge} ${west ? 'label-left' : 'label-right'} ${collapsed ? 'collapsed' : ''} ${collapsed && (peek || picker) ? `peek ${north ? 'up' : 'down'}` : ''}`}
         style={{
           left: toolbar.x,
           top: edge === 'top' ? toolbar.y : 'auto',
@@ -322,14 +380,8 @@ export default function Overlay(): React.JSX.Element {
         </button>
         <div className="toolbar-tools">
         <button
-          title="배경 앱 조작"
-          className={mode === 'idle' ? 'active' : ''}
-          onClick={() => setMode('idle')}
-        >
-          ↖<small>선택</small>
-        </button>
-        <button
           className={mode === 'pen' ? 'active' : ''}
+          title="펜 · 우클릭/Esc로 배경 앱 조작"
           onClick={() => {
             setMode('pen')
             setPanel(false)
@@ -355,6 +407,7 @@ export default function Overlay(): React.JSX.Element {
         )}
         <button
           className={mode === 'eraser' ? 'active' : ''}
+          title="지우개 · 우클릭/Esc로 배경 앱 조작"
           onClick={() => {
             setMode('eraser')
             setPanel(false)
@@ -390,8 +443,43 @@ export default function Overlay(): React.JSX.Element {
         >
           ▣<small>캡처 영역</small>
         </button>
+        <hr />
+        <button
+          className={`toolbar-project ${picker ? 'active' : ''}`}
+          aria-expanded={!!picker}
+          title={`프로젝트 바꾸기 · 현재: ${project?.name ?? ''}`}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            setPicker((p) =>
+              p
+                ? null
+                : {
+                    top: Math.max(8, Math.min(r.top, innerHeight - 8 - PICKER_MAX_H)),
+                    ...(west ? { right: innerWidth - r.left + 8 } : { left: r.right + 8 })
+                  }
+            )
+          }}
+        >
+          ◈<small>프로젝트</small>
+        </button>
         </div>
       </div>
+      {picker && data && (
+        <div
+          className="overlay-project-picker"
+          style={{ top: picker.top, left: picker.left ?? 'auto', right: picker.right ?? 'auto' }}
+        >
+          <ProjectPicker
+            workspaces={data.workspaces}
+            projects={data.projects}
+            currentId={projectId}
+            disabledReason={
+              switchBlocked ? '질문을 보내는 중에는 프로젝트를 바꿀 수 없습니다.' : undefined
+            }
+            onSelect={switchProject}
+          />
+        </div>
+      )}
       {panel && (
         <section
           className="overlay-panel"
@@ -466,6 +554,7 @@ export default function Overlay(): React.JSX.Element {
                 onCompleted={() => {
                   setStrokes([])
                 }}
+                onInteractionState={(s) => setComposerLock(s.busy || s.unresolved)}
               />
             )}
             {questionId && (
