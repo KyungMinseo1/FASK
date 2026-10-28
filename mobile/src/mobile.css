@@ -1,0 +1,163 @@
+/* Phone/tablet layout on top of the shared desktop personal.css; scoped to .fask-mobile. */
+.fask-app.fask-mobile {
+  display: block;
+  height: auto;
+  min-height: 100vh;
+  overflow: visible;
+  font-size: 15px;
+  padding-bottom: calc(84px + env(safe-area-inset-bottom));
+}
+.fask-mobile button,
+.fask-mobile select,
+.fask-mobile input {
+  min-height: 44px;
+}
+.fask-mobile .mobile-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+  background: #f5f6fa;
+  border-bottom: 1px solid #e1e7db;
+}
+.fask-mobile .mobile-top h1 {
+  margin: 0;
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fask-mobile .mobile-top > :first-child:not(button) {
+  grid-column: 1 / 3;
+}
+.fask-mobile .mobile-body {
+  padding: 14px;
+}
+.fask-mobile .mobile-body.project-split {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.fask-mobile .project-split > .mobile-list {
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+.fask-mobile .mobile-workspace h2 {
+  font-size: 13px;
+  color: var(--fask-muted);
+  margin: 18px 0 8px;
+}
+.fask-mobile .space-card {
+  width: 100%;
+  margin-bottom: 10px;
+}
+.fask-mobile .mobile-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 0;
+}
+.fask-mobile .mobile-chips button {
+  flex: none;
+  border-radius: 999px;
+}
+.fask-mobile .mobile-chips button.active {
+  background: #20283c;
+  color: #fff;
+}
+.fask-mobile .segmented {
+  margin: 4px 0 12px;
+}
+.fask-mobile .filter-row input {
+  width: 100%;
+}
+.fask-mobile .question-card {
+  width: 100%;
+  text-align: left;
+}
+.fask-mobile .question-detail {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  margin-bottom: 14px;
+}
+.fask-mobile .composer textarea {
+  font-size: 16px;
+}
+.fask-mobile .composer-actions {
+  flex-wrap: wrap;
+}
+.fask-mobile .mobile-fab {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, #f5f6fa 40%);
+}
+.fask-mobile .mobile-fab button {
+  width: 100%;
+}
+.fask-mobile .mobile-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
+  font-size: 13px;
+}
+.fask-mobile .mobile-banner.offline {
+  background: #fff6dd;
+  color: #6b5200;
+}
+.fask-mobile .mobile-banner.blocked {
+  background: #fde8e8;
+  color: #8a1c1c;
+}
+.fask-mobile .mobile-banner.dev {
+  background: #20283c;
+  color: #fff;
+}
+.fask-mobile .mobile-notice {
+  margin: 10px 14px 0;
+  white-space: pre-line;
+}
+.fask-mobile .mobile-pair {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: calc(40px + env(safe-area-inset-top)) 20px 20px;
+  display: grid;
+  gap: 14px;
+}
+.fask-mobile .mobile-pair h1 {
+  margin: 0;
+}
+.fask-mobile .pair-link,
+.fask-mobile .mobile-field {
+  display: grid;
+  gap: 8px;
+}
+.fask-mobile .pair-link textarea {
+  min-height: 110px;
+  font-size: 14px;
+}
+.fask-mobile .mobile-connection {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 16px;
+  margin: 0 0 20px;
+}
+.fask-mobile .mobile-connection dt {
+  color: var(--fask-muted);
+}
+.fask-mobile .mobile-connection dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

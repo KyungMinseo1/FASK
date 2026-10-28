@@ -2,6 +2,9 @@
 node_modules/
 desktop/out/
 desktop/dist/
+mobile/dist/
+mobile/android/app/build/
+mobile/android/.gradle/
 
 # Environment and local files
 .env

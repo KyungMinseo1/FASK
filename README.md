@@ -38,7 +38,7 @@ The Windows installer is the planned distribution format. If a release does not 
 | Mark your screen with a transparent pen/eraser overlay | Organize records as **Profile → Workspace → Project** |
 | Choose exactly which screen region to include | Read streamed answers with **Markdown and LaTeX** |
 | Attach an image or text/code files | Search questions, add notes, and link concepts |
-| Continue a conversation without leaving your screen | Explore a concept graph and export memory as Markdown |
+| Continue a conversation without leaving your screen; follow-ups stay in one question | Explore a concept graph and export memory as Markdown |
 
 **Your workflow:** choose a project → mark the screen → ask → save the answer and its context.
 
@@ -67,6 +67,16 @@ Open a project, select **Ask from screen**, and mark anything relevant. Choose *
 - Failed API requests keep your pen strokes and question draft. Strokes clear after successful completion.
 - Answers support bold, italic, lists, code, tables, and LaTeX in the live panel, saved details, and dashboard previews.
 
+### Android companion
+
+In desktop **Settings → Mobile connection**, enable the hub and select a reachable LAN or Tailscale address. Scan its QR in the Android app. Keep the PC running; the phone uses its current profile and AI connection. Treat the QR as a password. Reset pairing to revoke existing phones.
+
+The native app pins the PC certificate, stores pairing secrets in secure storage, and encrypts its offline snapshot. Offline records remain readable; AI requests require the PC. Camera/gallery attachments and Android text/image sharing open the shared question composer.
+
+Build from `mobile/` with JDK 21 and Android SDK 36: `npm ci`, then `npm run apk`. The debug APK is `mobile/android/app/build/outputs/apk/debug/app-debug.apk`. Run `npm test` and `npm run test:android` for client/cache and native transport tests. `npm run apk:test` enables manual pairing-link entry for emulator checks; normal builds use QR scanning. Browser `npm run dev` is development-only and does not pin certificates.
+
+Android launcher icons and splash screens reuse `desktop/build/icon.png`, including adaptive and round variants. After changing the Windows artwork, run `npx electron ../mobile/generate-icons.cjs` from `desktop/`, then rebuild the APK. Android launchers choose the outer mask.
+
 ### Shortcuts & overlay controls
 
 | Control | Action |
@@ -83,10 +93,11 @@ Moving the pointer outside an open panel does not close it. With the panel close
 <summary><strong>Attachments, optional AI features, and navigation</strong></summary>
 
 - **Attachments:** file picker, drag and drop, and image paste. One image (PNG/JPEG/WebP/GIF), plus up to five text/Markdown/code files: 50,000 characters per file, 100,000 total. PDF and other binary documents are not supported.
-- **Optional AI:** independently enable question refinement, model recommendation/automatic selection, and concept organization. Automatic concept organization makes an additional model request and presents new concepts as suggestions. Important questions can provide context for later questions in the same project.
+- **Optional AI:** independently enable question refinement, model recommendation/automatic selection, concept organization, and automatic titles. A new question gets an AI title generated in parallel with its answer from the question text, image, and attached files; renaming it yourself always wins. Automatic concept organization makes an additional model request and presents new concepts as suggestions. Important questions can provide context for later questions in the same project.
+- **Conversations:** follow-up questions are stored as turns of the original question, so the dashboard, search, graph, and backups show one record per conversation. The question detail lists every turn with its own answer, attachments, and model.
 - **Navigation:** use the **My space / Workspace / Project** breadcrumb and back arrow. Rename a workspace below its selector or a project with its pencil button.
 - **Knowledge views:** chronological, list, and concept graph; text search, complexity filters, notes, and concept links.
-- **Portability:** **Export memory** writes Markdown for another AI session. Settings provides JSON backup with images; restore creates a separate profile. Access keys are excluded.
+- **Portability:** **Export memory** writes Markdown for another AI session. Settings provides JSON backup with images; restore creates a separate profile. Access keys are excluded. Backups from 1.0.x are imported with each conversation merged into one question.
 
 </details>
 
@@ -98,6 +109,7 @@ Moving the pointer outside an open panel does not close it. With the panel close
 | Images | `userData/personal/attachments/` |
 | Default Windows folder | `%APPDATA%/fask/personal/` |
 | Profile separation | Logical scopes inside one local database, not OS-level isolation |
+| 1.1.0 upgrade | Merges each 1.0.x conversation into one question on first launch; the untouched pre-upgrade database is kept as `fask-pre-1.1.0.sqlite` next to `fask.sqlite` |
 | AI requests | Sent through your configured local proxy to its provider; local storage does **not** mean offline AI |
 
 Raw answers are preserved as Markdown. No separate classroom backend is needed.
@@ -153,6 +165,7 @@ desktop/                     Electron + React + TypeScript + Tailwind
     personal-backup.ts       JSON backup / restore
     local-api.ts             OpenAI-compatible streaming and model client
   src/preload/               window.fask bridge and personal.d.ts contract
+  src/shared/questions.ts    Question/turn helpers shared by main and renderer
   src/renderer/src/
     App.tsx                  Dashboard, /personal-overlay, /capture-editor
     personal/                Screens, composer, Markdown, attachments, pen strokes
