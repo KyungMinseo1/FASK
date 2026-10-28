@@ -6,6 +6,9 @@ const { createServer } = require('node:http')
 const assert = require('node:assert/strict')
 const { PersonalStore } = require('./.smoke/store.cjs')
 const { registerPersonal } = require('./.smoke/personal.cjs')
+const { createHubCertificate } = require('./.smoke/hub.cjs')
+const { X509Certificate } = require('node:crypto')
+const { createServer: createHttpsServer } = require('node:https')
 const dir = join(__dirname, 'screenshots')
 mkdirSync(dir, { recursive: true })
 const report = { checks: [], consoleErrors: [], screenshots: [] }
@@ -18,6 +21,9 @@ app.setPath('userData', mkdtempSync(join(tmpdir(), 'fask-smoke-ui-')))
 let server
 let failNextQuestion = false
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
+// seed (+failed follow-up), 간단한 질문, image+file question (+two overlay follow-ups: the overlay
+// opens on the most recent question), 중복 방지 질문 (+느린 답변), 캡처 기록.
+const QUESTION_COUNT = 5
 async function wait(fn, label) {
   for (let i = 0; i < 80; i++) {
     if (await fn()) {
@@ -44,10 +50,31 @@ app.whenReady().then(async () => {
       req.on('end', () => {
         const input = JSON.parse(body),
           last = input.messages.at(-1)
+        // Title requests run in parallel with answers, so they never consume failNextQuestion.
+        if (input.messages[0]?.content.includes('대화 제목 생성')) {
+          res.setHeader('Content-Type', 'text/event-stream')
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '"테스트 제목"' } }] })}\n\n`)
+          res.end('data: [DONE]\n\n')
+          return
+        }
         if (failNextQuestion) {
           failNextQuestion = false
           res.writeHead(503, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: { message: 'smoke proxy failure' } }))
+          return
+        }
+        if (typeof last.content === 'string' && last.content.includes('느린 답변')) {
+          res.setHeader('Content-Type', 'text/event-stream')
+          let sent = 0
+          const timer = setInterval(() => {
+            if (res.destroyed) return clearInterval(timer)
+            res.write(`data: ${JSON.stringify({ model: 'test-fast', choices: [{ delta: { content: `조각${sent} ` } }] })}\n\n`)
+            if (++sent === 10) {
+              clearInterval(timer)
+              res.end('data: [DONE]\n\n')
+            }
+          }, 200)
+          res.on('close', () => clearInterval(timer))
           return
         }
         const reply = input.messages[0]?.content.includes('JSON만 출력')
@@ -73,30 +100,35 @@ app.whenReady().then(async () => {
       organize: false
     })
     const concept = seed.create('concept', 'Electron', project.id)
-    const base = {
+    const createdAt = new Date().toISOString()
+    seed.put('question', seed.active, {
+      id: 'seed-question',
       projectId: project.id,
-      conversationId: 'seed-conversation',
-      createdAt: new Date().toISOString(),
-      refined: '',
-      status: 'completed',
-      complexity: 'complex',
-      routingReason: '테스트 데이터',
-      actualModel: 'test-fast',
-      model: 'test-fast',
+      createdAt,
+      turns: [
+        {
+          id: 'seed-turn',
+          createdAt,
+          raw: '투명 오버레이에서 다른 앱을 클릭하려면?',
+          refined: '',
+          sent: '투명 오버레이에서 다른 앱을 클릭하려면?',
+          answer:
+            '질문 도구를 사용하지 않을 때에는 클릭이 배경 앱으로 통과하도록 설정합니다. 펜과 지우개를 사용할 때만 입력을 받습니다.',
+          model: 'test-fast',
+          actualModel: 'test-fast',
+          status: 'completed',
+          complexity: 'complex',
+          routingReason: '테스트 데이터',
+          attachment: null,
+          documents: [],
+          error: '',
+          revision: 0
+        }
+      ],
       conceptIds: [concept],
       suggestions: [],
       memo: '확인한 결정: 로컬 저장을 사용한다.',
-      important: true,
-      attachment: null,
-      error: ''
-    }
-    seed.put('question', seed.active, {
-      ...base,
-      id: 'seed-question',
-      raw: '투명 오버레이에서 다른 앱을 클릭하려면?',
-      sent: '투명 오버레이에서 다른 앱을 클릭하려면?',
-      answer:
-        '질문 도구를 사용하지 않을 때에는 클릭이 배경 앱으로 통과하도록 설정합니다. 펜과 지우개를 사용할 때만 입력을 받습니다.'
+      important: true
     })
     const profileId = seed.active
     seed.close()
@@ -196,7 +228,7 @@ app.whenReady().then(async () => {
       (q) => q.id === 'seed-question'
     )
     assert.equal(namedQuestion.title, '투명 오버레이에서 입력 처리 연구')
-    assert.equal(namedQuestion.sent, '투명 오버레이에서 다른 앱을 클릭하려면?')
+    assert.equal(namedQuestion.turns[0].sent, '투명 오버레이에서 다른 앱을 클릭하려면?')
     report.checks.push(
       'profile and timeline question context menus rename without altering prompts'
     )
@@ -230,15 +262,29 @@ app.whenReady().then(async () => {
     const models = await js(`window.fask.models('http://127.0.0.1:${server.address().port}/v1')`)
     assert.deepEqual(models, ['test-deep', 'test-fast'])
     report.checks.push('model catalog via preload/main/local HTTP')
+    {
+      // Electron ships BoringSSL, which is stricter than Node's OpenSSL about certificate DER.
+      const tls = await createHubCertificate()
+      new X509Certificate(tls.cert)
+      createHttpsServer({ cert: tls.cert, key: tls.key }).close()
+      report.checks.push('hub certificate accepted by Electron TLS')
+    }
     await js(
       `window.fask.ask(${JSON.stringify({ requestId: 'smoke-request', profileId, projectId: project.id, raw: '간단한 질문', model: 'test-fast' })})`
     )
     await wait(
       () =>
         js(
-          "window.fask.snapshot().then(s=>s.questions.some(q=>q.raw==='간단한 질문'&&q.status==='completed'))"
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.turns.some(t=>t.raw==='간단한 질문'&&t.status==='completed')))"
         ),
       'streamed answer persisted'
+    )
+    await wait(
+      () =>
+        js(
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.turns[0].raw==='간단한 질문'&&q.title==='테스트 제목'))"
+        ),
+      'AI title generated in parallel'
     )
     await js(
       "document.querySelector('.settings-modal header button').click();[...document.querySelectorAll('.view-bar button')].find(b=>b.textContent.includes('새 질문')).click()"
@@ -266,7 +312,7 @@ app.whenReady().then(async () => {
     await wait(
       () =>
         js(
-          "window.fask.snapshot().then(s=>s.questions.some(q=>q.documents?.[0]?.name==='notes.md'&&q.attachment&&q.status==='completed'))"
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.turns.some(t=>t.documents[0]?.name==='notes.md'&&t.attachment&&t.status==='completed')))"
         ),
       'image and file question persisted with model answer'
     )
@@ -473,7 +519,7 @@ app.whenReady().then(async () => {
     await wait(
       () =>
         js(
-          "window.fask.snapshot().then(s=>s.questions.some(q=>q.raw==='전송 시점 캡처 질문'&&q.attachment&&q.status==='completed'))"
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.turns.some(t=>t.raw==='전송 시점 캡처 질문'&&t.attachment&&t.status==='completed')))"
         ),
       'send button captures fresh screen and transmits it'
     )
@@ -535,11 +581,20 @@ app.whenReady().then(async () => {
     await wait(
       () =>
         js(
-          "window.fask.snapshot().then(s=>s.questions.some(q=>q.raw==='캡처 없이 보내는 질문'&&!q.attachment&&q.status==='completed'))"
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.turns.some(t=>t.raw==='캡처 없이 보내는 질문'&&!t.attachment&&t.status==='completed')))"
         ),
       'unchecked capture sends text without screenshot'
     )
     assert.equal(captureCount, beforeSendCaptureCount + 1)
+    {
+      const threads = (await js('window.fask.snapshot()')).questions.filter((q) =>
+        q.turns.some((t) => t.raw === '전송 시점 캡처 질문')
+      )
+      assert.equal(threads.length, 1)
+      const raws = threads[0].turns.map((t) => t.raw)
+      assert.deepEqual(raws.slice(-2), ['전송 시점 캡처 질문', '캡처 없이 보내는 질문'])
+      report.checks.push('overlay follow-up stays in one question')
+    }
     personal.quickQuestion()
     await wait(
       () => overlayJs("!document.querySelector('.overlay-panel')"),
@@ -718,6 +773,75 @@ app.whenReady().then(async () => {
     assert.equal(backgroundWindow.isFocused(), true)
     backgroundWindow.destroy()
     personal.capture.close()
+    {
+      const seedQuestion = (await js('window.fask.snapshot()')).questions.find(
+        (q) => q.id === 'seed-question'
+      )
+      assert.equal(seedQuestion.turns.at(-1).status, 'failed')
+      assert.equal(seedQuestion.title, '투명 오버레이에서 입력 처리 연구')
+      report.checks.push('failed follow-up stays in the seed question; user title preserved')
+    }
+    const dupInput = JSON.stringify({
+      requestId: 'dup-request',
+      profileId,
+      projectId: project.id,
+      raw: '중복 방지 질문',
+      model: 'test-fast'
+    })
+    const [dup1, dup2] = await js(
+      `Promise.all([window.fask.ask(${dupInput}), window.fask.ask(${dupInput})])`
+    )
+    assert.deepEqual(dup1, dup2)
+    const dupTurns = (s) =>
+      s.questions.flatMap((q) => q.turns).filter((t) => t.raw === '중복 방지 질문')
+    await wait(
+      async () => {
+        const turns = dupTurns(await js('window.fask.snapshot()'))
+        return turns.length === 1 && turns[0].status === 'completed'
+      },
+      'duplicate concurrent ask completes once'
+    )
+    assert.deepEqual(await js(`window.fask.ask(${dupInput})`), dup1)
+    assert.equal(dupTurns(await js('window.fask.snapshot()')).length, 1)
+    report.checks.push('ask is idempotent by requestId')
+    assert.match(
+      await js(
+        `window.fask.ask(${JSON.stringify({ requestId: 'dup-request', profileId, projectId: project.id, raw: '다른 내용', model: 'test-fast' })}).then(()=>'ok',e=>e.message)`
+      ),
+      /같은 요청 ID로 다른 내용을 보낼 수 없습니다/
+    )
+    report.checks.push('request hash conflict rejected')
+    const slow = await js(
+      `window.fask.ask(${JSON.stringify({ requestId: 'slow-request', profileId, projectId: project.id, questionId: dup1.questionId, raw: '느린 답변', model: 'test-fast' })})`
+    )
+    assert.match(
+      await js(
+        `window.fask.ask(${JSON.stringify({ requestId: 'slow-blocked', profileId, projectId: project.id, questionId: dup1.questionId, raw: '막힌 질문', model: 'test-fast' })}).then(()=>'ok',e=>e.message)`
+      ),
+      /이 질문의 이전 답변이 끝난 뒤 이어서 질문해 주세요/
+    )
+    const liveRead = `window.fask.snapshot().then(s=>window.fask.turnState(${JSON.stringify(slow.questionId)},${JSON.stringify(slow.turnId)}).then(state=>({state,turn:s.questions.find(q=>q.id===${JSON.stringify(slow.questionId)}).turns.find(t=>t.id===${JSON.stringify(slow.turnId)})})))`
+    await wait(async () => (await js(liveRead)).state.revision >= 3, 'slow answer streams deltas')
+    {
+      const { state, turn } = await js(liveRead)
+      assert.equal(state.status, 'running')
+      assert.ok(state.revision >= turn.revision)
+      assert.ok(state.answer.startsWith(turn.answer))
+    }
+    await js(`window.fask.cancel(${JSON.stringify(slow.turnId)})`)
+    await wait(
+      async () => {
+        const q = (await js('window.fask.snapshot()')).questions.find(
+          (q) => q.id === slow.questionId
+        )
+        return (
+          q.turns.length === 2 &&
+          q.turns[1].status === 'cancelled' &&
+          q.turns[0].status === 'completed'
+        )
+      },
+      'single running turn, cancel by turnId, live revision'
+    )
     await js(
       `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', profileId, projectId: project.id, raw: '캡처 기록', image, model: 'test-fast', saveOnly: true })})`
     )
@@ -725,20 +849,30 @@ app.whenReady().then(async () => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: backupPath })
     assert.equal(await js('window.fask.backup()'), true)
     const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
-    assert.equal(backup.snapshot.questions.length, 7)
+    assert.equal(backup.version, 2)
+    assert.equal(backup.snapshot.questions.length, QUESTION_COUNT)
     assert.deepEqual(
       Object.keys(backup.images).sort(),
-      [...new Set(backup.snapshot.questions.map((q) => q.attachment).filter(Boolean))].sort()
+      [
+        ...new Set(
+          backup.snapshot.questions.flatMap((q) => q.turns.map((t) => t.attachment)).filter(Boolean)
+        )
+      ].sort()
     )
     assert.equal(backup.snapshot.settings.hasKey, false)
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [backupPath] })
     assert.equal(await js('window.fask.restore()'), true)
     const restored = await js('window.fask.snapshot()')
     assert.notEqual(restored.activeProfileId, profileId)
-    assert.equal(restored.questions.length, 7)
+    assert.equal(restored.questions.length, QUESTION_COUNT)
     assert.equal(restored.profiles.length, 2)
     assert.ok(restored.storageBytes > 0)
     report.checks.push('backup restores questions and capture into a separate profile')
+    {
+      const original = new Set(backup.snapshot.questions.flatMap((q) => q.turns.map((t) => t.id)))
+      assert.ok(restored.questions.every((q) => q.turns.every((t) => !original.has(t.id))))
+      report.checks.push('restore remaps turn ids')
+    }
     await context('[aria-label="프로필"]')
     await js("document.querySelector('.item-context-menu .danger').click()")
     await wait(

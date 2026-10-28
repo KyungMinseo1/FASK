@@ -17,8 +17,10 @@ import type {
   Project,
   Question,
   Snapshot,
+  Turn,
   Workspace
 } from '../preload/personal'
+import { mergeLegacyQuestions, questionImages, type LegacyQuestion } from '../shared/questions'
 
 export const defaults: LocalSettings = {
   endpoint: 'http://127.0.0.1:8317/v1',
@@ -32,6 +34,7 @@ export const defaults: LocalSettings = {
   organize: true,
   memory: true,
   retention: 'balanced',
+  autoTitle: true,
   regions: []
 }
 export class PersonalStore {
@@ -46,6 +49,7 @@ export class PersonalStore {
       CREATE INDEX IF NOT EXISTS records_scope ON records(profile,kind);
       CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, question_id TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, error TEXT NOT NULL DEFAULT '');`)
+    this.migrateTurns()
     if (!this.list<Profile>('profile', '*').length) {
       const id = this.put('profile', '*', { id: randomUUID(), name: '기본 프로필' })
       this.pref('active', id)
@@ -56,16 +60,177 @@ export class PersonalStore {
       .prepare("SELECT id,data,profile FROM records WHERE kind='question'")
       .all()) {
       const q = JSON.parse(String(row.data)) as Question
-      if (q.status === 'running')
+      if (q.turns.some((t) => t.status === 'running'))
         this.put('question', String(row.profile), {
           ...q,
-          status: 'failed',
-          error: '앱이 종료되어 요청이 중단되었습니다.'
+          turns: q.turns.map((t) =>
+            t.status === 'running'
+              ? {
+                  ...t,
+                  status: 'failed',
+                  error: '앱이 종료되어 요청이 중단되었습니다.',
+                  revision: t.revision + 1
+                }
+              : t
+          )
         })
     }
     this.db.exec(
       "UPDATE runs SET status='failed',error='앱 재시작으로 중단' WHERE status='running'"
     )
+  }
+  /** Schema 2: one question record holds every follow-up turn; runs reference turns. */
+  private migrateTurns(): void {
+    if (this.db.prepare('SELECT version FROM schema_migrations WHERE version=2').get()) return
+    const legacy = this.db
+      .prepare(
+        "SELECT 1 FROM records WHERE kind='question' AND json_type(data,'$.turns') IS NULL LIMIT 1"
+      )
+      .get()
+    const backupPath = join(this.root, 'fask-pre-1.1.0.sqlite')
+    if (legacy && !existsSync(backupPath)) {
+      try {
+        // VACUUM cannot run inside a transaction, so the copy is taken before BEGIN.
+        this.db.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`)
+      } catch (e) {
+        this.db.close()
+        throw new Error(
+          `업그레이드 전 백업을 만들 수 없습니다: ${e instanceof Error ? e.message : String(e)}`
+        )
+      }
+    }
+    this.db.exec('BEGIN')
+    try {
+      this.db.exec(`ALTER TABLE runs ADD COLUMN turn_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE runs ADD COLUMN request_hash TEXT NOT NULL DEFAULT '';
+        UPDATE runs SET turn_id=question_id WHERE turn_id='';`)
+      const profiles = this.db
+        .prepare("SELECT DISTINCT profile FROM records WHERE kind='question'")
+        .all()
+        .map((r) => String(r.profile))
+      for (const profile of profiles) {
+        const records = this.db
+          .prepare(
+            "SELECT data FROM records WHERE kind='question' AND profile=? AND json_type(data,'$.turns') IS NULL ORDER BY rowid"
+          )
+          .all(profile)
+          .map((r) => JSON.parse(String(r.data)) as LegacyQuestion)
+        for (const question of mergeLegacyQuestions(records)) {
+          this.put('question', profile, question)
+          for (const turn of question.turns.slice(1)) {
+            this.db.prepare('DELETE FROM records WHERE id=?').run(turn.id)
+            this.db
+              .prepare('UPDATE runs SET question_id=? WHERE question_id=?')
+              .run(question.id, turn.id)
+          }
+        }
+      }
+      this.db.exec('INSERT INTO schema_migrations VALUES(2); COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      this.db.close()
+      throw e
+    }
+  }
+  findRun(
+    requestId: string
+  ): { questionId: string; turnId: string; profile: string; requestHash: string } | undefined {
+    const row = this.db
+      .prepare(
+        'SELECT r.question_id, r.turn_id, r.request_hash, q.profile FROM runs r JOIN records q ON q.id = r.question_id WHERE r.id=?'
+      )
+      .get(requestId)
+    return row
+      ? {
+          questionId: String(row.question_id),
+          turnId: String(row.turn_id),
+          profile: String(row.profile),
+          requestHash: String(row.request_hash)
+        }
+      : undefined
+  }
+  /** Saves the question/turn and its run row in one transaction; replays identical requests. */
+  recordAsk(p: {
+    requestId: string
+    requestHash: string
+    profile: string
+    projectId: string
+    questionId?: string
+    turn: Turn
+    saveOnly: boolean
+  }): { questionId: string; turnId: string; replay: boolean } {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const run = this.findRun(p.requestId)
+      if (run) {
+        if (run.profile !== p.profile) throw new Error('이미 처리한 요청입니다.')
+        if (run.requestHash !== p.requestHash)
+          throw new Error('같은 요청 ID로 다른 내용을 보낼 수 없습니다.')
+        this.db.exec('COMMIT')
+        return { questionId: run.questionId, turnId: run.turnId, replay: true }
+      }
+      let question: Question
+      if (p.questionId) {
+        const row = this.db
+          .prepare("SELECT data FROM records WHERE kind='question' AND id=? AND profile=?")
+          .get(p.questionId, p.profile)
+        const existing = row ? (JSON.parse(String(row.data)) as Question) : undefined
+        if (!existing || existing.projectId !== p.projectId)
+          throw new Error('대화를 찾을 수 없습니다.')
+        if (existing.turns.some((t) => t.status === 'running'))
+          throw new Error('이 질문의 이전 답변이 끝난 뒤 이어서 질문해 주세요.')
+        question = { ...existing, turns: [...existing.turns, p.turn] }
+      } else
+        question = {
+          id: randomUUID(),
+          projectId: p.projectId,
+          createdAt: p.turn.createdAt,
+          turns: [p.turn],
+          conceptIds: [],
+          suggestions: [],
+          memo: '',
+          important: false
+        }
+      this.put('question', p.profile, question)
+      this.db
+        .prepare(
+          'INSERT INTO runs(id,question_id,turn_id,request_hash,created_at,status,model) VALUES(?,?,?,?,?,?,?)'
+        )
+        .run(
+          p.requestId,
+          question.id,
+          p.turn.id,
+          p.requestHash,
+          p.turn.createdAt,
+          p.saveOnly ? 'saved' : 'running',
+          p.turn.model
+        )
+      this.db.exec('COMMIT')
+      return { questionId: question.id, turnId: p.turn.id, replay: false }
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+  /** Read-modify-write of one turn; callers changing answer/status pass `revision` explicitly. */
+  updateTurn(
+    questionId: string,
+    turnId: string,
+    patch: Partial<Turn>,
+    profile = this.active
+  ): Question {
+    const q = this.record<Question>('question', questionId, profile)
+    if (!q.turns.some((t) => t.id === turnId)) throw new Error('대화 항목을 찾을 수 없습니다.')
+    const next = { ...q, turns: q.turns.map((t) => (t.id === turnId ? { ...t, ...patch } : t)) }
+    this.put('question', profile, next)
+    return next
+  }
+  isImageReferenced(id: string): boolean {
+    return !!this.db
+      .prepare(
+        "SELECT 1 FROM records, json_each(records.data, '$.turns') AS t WHERE records.kind='question' AND json_extract(t.value, '$.attachment') = ? LIMIT 1"
+      )
+      .get(id)
   }
   pref(key: string, value?: string): string {
     if (value !== undefined)
@@ -178,7 +343,7 @@ export class PersonalStore {
     const questions = this.list<Question>('question', profile).filter(
       (q) => projects.has(q.projectId) || (kind === 'question' && q.id === id)
     )
-    const images = new Set(questions.flatMap((q) => (q.attachment ? [q.attachment] : [])))
+    const images = new Set(questions.flatMap(questionImages))
     this.db.exec('BEGIN')
     try {
       const del = this.db.prepare('DELETE FROM records WHERE id=? AND profile=?')
@@ -217,23 +382,15 @@ export class PersonalStore {
       this.db.exec('ROLLBACK')
       throw e
     }
-    for (const image of images) {
-      if (
-        !this.db
-          .prepare(
-            "SELECT id FROM records WHERE kind='question' AND json_extract(data,'$.attachment')=?"
-          )
-          .get(image) &&
-        existsSync(this.imagePath(image))
-      )
+    for (const image of images)
+      if (!this.isImageReferenced(image) && existsSync(this.imagePath(image)))
         unlinkSync(this.imagePath(image))
-    }
   }
   snapshot(): Snapshot {
     const questions = this.list<Question>('question').sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt)
     )
-    const paths = new Set(questions.map((q) => q.attachment).filter(Boolean) as string[])
+    const paths = new Set(questions.flatMap(questionImages))
     let storageBytes = 0
     for (const path of paths)
       if (existsSync(this.imagePath(path))) storageBytes += statSync(this.imagePath(path)).size
@@ -269,19 +426,12 @@ export class PersonalStore {
     if (!existsSync(this.imagePath(id))) return null
     return `data:image/${id.endsWith('png') ? 'png' : 'jpeg'};base64,${readFileSync(this.imagePath(id)).toString('base64')}`
   }
-  removeAttachment(questionId: string): void {
-    const q = this.record<Question>('question', questionId)
-    const id = q.attachment
-    this.put('question', this.active, { ...q, attachment: null })
-    if (
-      id &&
-      !this.db
-        .prepare(
-          "SELECT id FROM records WHERE kind='question' AND json_extract(data,'$.attachment')=?"
-        )
-        .get(id) &&
-      existsSync(this.imagePath(id))
-    )
+  removeAttachment(questionId: string, turnId: string): void {
+    const turn = this.record<Question>('question', questionId).turns.find((t) => t.id === turnId)
+    if (!turn) throw new Error('대화 항목을 찾을 수 없습니다.')
+    this.updateTurn(questionId, turnId, { attachment: null })
+    const id = turn.attachment
+    if (id && !this.isImageReferenced(id) && existsSync(this.imagePath(id)))
       unlinkSync(this.imagePath(id))
   }
   updateQuestion(id: string, patch: Partial<Question>): void {

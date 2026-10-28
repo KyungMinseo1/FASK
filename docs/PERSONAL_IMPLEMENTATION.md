@@ -1,6 +1,6 @@
 # FASK 개인용 구현
 
-2026-10-22. 현재 개인용 데스크톱 앱의 실행 계약이다. 기존 수업용 `server/`는 제거했으며 Python, FastAPI, 별도 서버 DB는 사용하지 않는다.
+2026-10-28. 개인용 데스크톱과 Android 동반 앱의 실행 계약이다. 기존 수업용 `server/`는 제거했으며 Python, FastAPI, 별도 서버 DB는 사용하지 않는다.
 
 ## 실행 구조
 
@@ -8,7 +8,7 @@
 - main의 `personal.ts`가 SQLite, 로컬 API, 파일 대화상자, 백업을 담당한다. renderer는 `window.fask`의 제한된 preload 메서드만 사용한다.
 - OpenAI 호환 Chat Completions 스트리밍을 사용한다. 공급자 로그인과 프록시 내부 라우팅은 EasyCLIProxyAPI의 책임이다.
 - `node:sqlite`를 사용한다. 검증한 Electron 39.8.10의 Node 22.22.1에는 DatabaseSync가 포함되어 있다.
-- `fask.sqlite`는 WAL·외래 키 설정을 켜고 `schema_migrations`, `records`, `preferences`, `runs`를 보유한다. 현재 스키마 버전은 1이다.
+- `fask.sqlite`는 WAL·외래 키 설정을 켜고 `schema_migrations`, `records`, `preferences`, `runs`를 보유한다. 현재 스키마 버전은 2이며 1.0.x 질문은 대화별 `Question.turns`로 마이그레이션한다.
 - 프로필은 한 DB의 profile scope로 구분한다. 이미지 파일은 내용 해시로 공유하되 접근은 현재 프로필의 질문 참조를 확인한다. 이는 OS 사용자 격리/DB 전체 암호화와 다르다.
 - 작은 원본 레코드는 JSON payload로 보관한다. 초기 검색은 현재 프로젝트의 원문·전송 문장·답변·메모에 대한 부분 문자열 검색이다. FTS와 임베딩은 아직 사용하지 않는다.
 
@@ -30,12 +30,12 @@
 | switch-profile | 프로필 ID | 완료. 요청·캡처 창이 있으면 거절 |
 | save-settings | LocalSettings, 선택적 새 접속 키 | 완료. 키 생략은 유지, 빈 문자열은 제거 |
 | models | endpoint, 선택적 키 | 모델 ID 목록 |
-| ask | AskInput | 저장한 질문 ID. 답변은 이벤트로 전달 |
-| cancel | 요청 ID 또는 질문 ID | 현재 프로필 요청 취소 |
+| ask | requestId를 포함한 AskInput | `{questionId, turnId}`. 같은 요청 ID와 같은 내용은 기존 실행을 반환하며 내용 충돌은 거절 |
+| cancel / run-state | 요청 ID 또는 turn ID / questionId, turnId | 현재 프로필 실행 취소 / revision을 포함한 TurnState |
 | refine | 원문, 선택적 이미지 | 다듬은 문장. 자동 전송하지 않음 |
 | update-question | 질문 ID, memo/important/conceptIds/suggestions | 완료 |
 | edit-concept / merge-concept | 개념 ID와 변경/대상 | 완료. 다른 프로젝트·트리 순환 거절 |
-| attachment / clear-attachment | 이미지 ID / 질문 ID | data URL / 완료 |
+| attachment / clear-attachment | 이미지 ID / questionId, turnId | data URL / 해당 turn의 첨부 제거 |
 | displays | 없음 | 모니터 ID·이름·DIP 크기 |
 | open-editor / preview | 모니터 ID / 없음 | 편집 창 / 고정 화면 미리보기 |
 | save-region / close-editor | CaptureRegion / 없음 | 영역 적용 / 취소 |
@@ -44,7 +44,7 @@
 | export | 프로젝트 ID | Markdown 저장 대화상자, 저장 여부 |
 | backup / restore | 없음 | JSON 백업/새 프로필 복원 대화상자, 성공 여부 |
 
-이벤트 `personal:stream`은 requestId, questionId, delta 또는 done/error를 전달한다. `personal:changed`는 스냅샷 재조회 신호, `personal:escape`는 펜 모드 해제, `personal:toggle-panel`은 질문 패널을 여닫는 신호이다. 오류는 IPC Promise 거절이며 UI는 접속 키·모델·한도·시간 초과 등을 표시한다.
+이벤트 `personal:stream`은 requestId, questionId, turnId, revision과 delta 또는 done/error를 전달한다. 클라이언트는 revision으로 중복·역순 이벤트를 배제하고 재연결 후 run-state로 최종 답변을 복구한다. `personal:changed`는 스냅샷 재조회 신호, `personal:escape`는 펜 모드 해제, `personal:toggle-panel`은 질문 패널을 여닫는 신호이다. 오류는 IPC Promise 거절이며 UI는 접속 키·모델·한도·시간 초과 등을 표시한다.
 
 2026-10-22 수정: `personal:outside-click`은 캡처를 위한 일시 숨김을 제외한 오버레이의 포커스 이탈 신호다. renderer는 펜/드래그 모드를 해제하고 질문 패널만 닫는다. 패널이 열려 있으면 단순 mouseleave로 닫지 않는다. 패널이 닫힌 유휴 상태에는 도구 밖에서 오버레이 자신의 포커스를 해제하며 임의의 외부 앱을 강제 활성화하지 않는다.
 
@@ -62,7 +62,7 @@
 
 단축키는 `Ctrl+Shift+Space` 등록 성공 여부를 검사하고 실패 시 `Ctrl+Alt+Space`를 시도한다. 실제 등록 상태를 사이드바에 표시한다. 동작은 현재 프로젝트 오버레이 열기/질문 패널 토글이며, 펼쳐질 때 입력란에 포커스를 둔다.
 
-`AskInput.documents`와 `Question.documents`는 선택적 `{name,text}[]`이다. 구버전 레코드는 필드가 없어도 읽을 수 있다. 이미지 파일·클립보드는 PNG로 변환하고 기존 image/attachment 경로를 이용한다. 텍스트 파일은 UTF-8·개수·크기를 검사한 뒤 별도 참조 데이터로 모델에 전달하며 원문과 함께 보존한다. 상세·검색·내보내기·백업에서도 이용한다. 지원하지 않는 PDF/바이너리는 조용히 무시하지 않고 오류를 표시한다.
+`Turn.documents`는 선택적 `{name,text}[]`이다. 이미지 파일·클립보드는 PNG로 변환하고 attachment 경로를 이용한다. 텍스트 파일은 UTF-8·개수·크기를 검사한 뒤 별도 참조 데이터로 모델에 전달하며 각 turn에 보존한다. 상세·검색·내보내기·백업에서도 이용한다. 지원하지 않는 PDF/바이너리는 조용히 무시하지 않고 오류를 표시한다.
 
 main은 등록된 앱 창의 main frame만 허용한다. API 요청은 main에서 수행하고 외부 리디렉션을 따르지 않는다. endpoint는 localhost/127.0.0.1/::1만 허용한다. 접속 키는 Electron safeStorage로 암호화해 저장하고 백업/Markdown에는 포함하지 않는다.
 
@@ -115,3 +115,27 @@ main은 등록된 앱 창의 main frame만 허용한다. API 요청은 main에�
 - 화면 캡처 포함 선택은 프로필별 localStorage에 기록해 패널/앱을 다시 열어도 유지한다. 위치·크기 역시 localStorage이며 백업의 학습 기록과는 분리한다. 나가기 버튼 자리는 캡처 영역 설정으로 대체했다. 편집하는 동안 오버레이를 숨기고 종료하면 같은 오버레이로 복귀한다.
 - 대시보드의 보라색 f 로고를 build/icon.png, icon.ico, icon.icns, resources/icon.png에 반영했다. 재생성 소스는 build/generate-icons.cjs이다.
 - Electron 통합 검증은 우클릭 이름 변경·실제 삭제, 최근 질문/답변 복원, 네 사분면 토글 드래그와 손잡이 방향·고정점, 대시보드 왕복 위치·크기·캡처 선택 복원, 오버레이에서 캡처 편집 후 복귀를 포함한다. 별도 Electron 프로세스로 완전히 재시작해 최근 대화 초기화와 저장 기록·캡처 선택·두 위치 복원을 추가 확인했다.
+
+## Android 허브와 검증 (1.1.0)
+
+`personal-hub.ts`는 사용자가 선택한 주소의 47615 포트에만 HTTPS를 연다. `/health`, `/events`, 허용된 `/rpc/<method>`를 제공한다. 토큰은 Authorization 헤더로만 전달하며 Origin·본문 크기·메서드를 제한한다. 프로필 변경과 데스크톱 파일 대화상자는 모바일에 노출하지 않는다.
+
+Android는 OkHttp 네이티브 플러그인으로 자체 서명 인증서의 SHA-256 지문을 고정 검증한다. 연결 비밀은 보안 저장소에, 스냅샷은 AES-GCM으로 암호화해 보관한다. 브라우저 개발 모드의 인증서 검증 생략은 APK에 적용되지 않는다. Electron BoringSSL이 빈 extensions 필드를 거절하므로 허브 인증서에는 BasicConstraints와 digitalSignature KeyUsage를 포함한다.
+
+검증: 데스크톱 테스트 16개와 Electron smoke/restart 통과. 브라우저에서 새 질문·후속 질문, 응답 유실 후 동일 turn 재사용, 허브 중단 중 완료된 답변의 재연결 복구(관측 176ms), 오프라인 재로드의 캐시 5개 turn 표시, 토큰 초기화 후 연결 해제를 확인했다. 태블릿 1024px와 Android 세로 411px에서 가로 넘침이 없었다.
+
+Android JDK 21에서 testDebugUnitTest와 assembleDebug 성공. Pixel_7에 실제 웹 자산을 포함한 pairing-test APK를 설치해 네이티브 TLS 연결, 질문 전송·답변 저장, 잘못된 지문의 PIN_MISMATCH, ACTION_SEND 텍스트의 작성란 전달을 확인했다. 실제 QR 카메라 스캔·사진 촬영·갤러리·이미지 공유와 물리 휴대폰/Tailscale 종단 연결은 이 검증에서 실행하지 않았다. AI 응답은 로컬 테스트 프록시를 사용했다.
+
+### Android 화면 질문 전송·세션 계약
+
+- Android 앱과 화면 질문 서비스는 독립적인 `HubHttpClient` 인스턴스로 기존 leaf 인증서 pin·Bearer·SSE handshake를 공유한다. Activity 종료가 서비스 연결을 닫지 않는다.
+- `HubTransport<HubIdentity>`는 토큰을 JS에 전달하지 않는 서비스 panel용 계약이다. 일반 앱은 `Pairing`과 암호화 `SnapshotCache`를 계속 사용한다. 캐시를 생략한 client는 마지막 성공 snapshot만 메모리에 보관하고 close 시 버린다.
+- 프로젝트의 Android 전용 시작 버튼은 캐시가 아닌 최신 허브 snapshot으로 프로필·프로젝트·질문 소속을 확인한다. 오버레이 권한 설정에서 돌아온 것만으로 시작하지 않으며, 사용자의 다시 시작과 매 세션의 전체 화면 공유 동의가 필요하다.
+- 서비스는 process-local 세션 ID만 Intent로 받으며 pairing과 projection 동의는 디스크에 저장하지 않는다. foreground·projection·reader·토글 초기화가 완료되어야 ACTIVE로 응답한다. 잠금·권한 상실·시스템 공유 종료 후 자동 재시작하지 않는다.
+- 토글·도구(`읽기/펜/지우개/모두 지우기/영역 선택/질문/종료`)·질문 panel은 각각 TYPE_APPLICATION_OVERLAY 창이다. 전체 화면 ink 창은 펜·지우개·영역 편집 중에만 붙으므로 읽기·panel 상태에서 아래 앱 터치를 막지 않는다. 필기와 영역은 현재 회전의 디스플레이 논리 픽셀로 저장하며 회전·밀도·reader 교체 시 무효화한다.
+- 캡처는 Composer의 실제 전송에서만 일어난다. 모든 FASK 창을 숨긴 뒤 같은 reader의 새 프레임을 받아 선택 영역만 잘라 필기를 한 번 합성하고, 2048px 이하 JPEG(품질 90)로 줄인다. 전체 프레임을 JS·파일·네트워크로 보내지 않으며 좌표 불일치·영역 없음은 전체 화면 대체 없이 실패한다.
+- 질문 panel은 서비스가 소유한 WebView(`overlay.html`, `https://appassets.androidplatform.net/assets/public/`)이다. `FaskOverlayBridge` WebMessage는 해당 origin의 main frame만 받고, `/health`·허용된 `/rpc/<method>`·`/events`만 네이티브에서 pin·토큰을 붙여 호출한다. bootstrap 결과에 토큰은 없다. 401은 세션을 끝내고 취소 표식을 남겨 앱이 다음 실행·resume에서 페어링을 정리한다. PIN_MISMATCH는 페어링을 지우지 않는다.
+- Composer는 보낸 AskInput 전체(requestId·이미지 bytes·생략된 questionId 포함)를 고정한다. 응답 유실·시간 초과는 거절로 보지 않고 `같은 요청 다시 확인`으로 같은 payload를 재전송한다. 거절로 간주하는 오류는 `ask`의 recordAsk 이전 검증 문구로 한정한다. 결과가 불명인 동안 입력·편집·새 대화를 잠근다. 완료된 turn에 쓰인 ink revision과 현재 revision이 같을 때만 필기를 지운다.
+- 앱 연결 해제·새 페어링 저장 전에 화면 질문 세션을 먼저 종료한다.
+- 검증(2026-10-28): 모바일 Vitest 45개(Composer 상태 전이 6개 포함), desktop 16개·타입 검사, Android 단위 테스트, Bitmap 합성 instrumentation 3개 통과. Pixel_7 API 37에서 실제 PC 허브(격리 프로필, 로컬 테스트 모델 프록시)와 pairing-test 수동 입력으로 연결해, 브라우저 위 토글→펜→영역 선택→질문 전송→panel 실시간 답변→같은 질문의 turn 2 저장을 확인했다. PC에 저장된 첨부는 220×290 JPEG로 IN 표식과 펜선만 있고 OUT·토글·도구·panel·IME는 없었다. panel 접기/열기 후 같은 Composer 유지, 앱 프로세스 종료 후 running=false·새 동의 필요, 알림 `종료` 후 서비스·창 잔류 없음, PC 연결 초기화 후 panel의 PIN_MISMATCH 차단 표시를 확인했다. API 34 태블릿 AVD(2560×1600)에서는 normal APK의 동의→ACTIVE→런처 위 토글→Stop만 확인했다.
+- 미검증: 토큰만 바뀐 401 경로(PC 초기화는 인증서도 바꿔 PIN_MISMATCH가 된다), API 28/33 AVD 실행(이미지·AVD만 생성), 회전·분할 화면·3버튼 내비게이션 좌표 matrix, 태블릿에서의 캡처·질문 E2E, 실제 QR 카메라 페어링, 물리 태블릿·S Pen의 palm rejection·지연, OEM 단일 앱 공유 동작, FLAG_SECURE 화면.

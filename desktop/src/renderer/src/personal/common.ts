@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Snapshot } from '../../../preload/personal'
+import { useApi } from './api'
 
 export function errorText(error: unknown): string {
   return error instanceof Error
@@ -11,23 +12,34 @@ export function useSnapshot(): {
   refresh: () => Promise<void>
   error: string
 } {
+  const api = useApi()
   const [data, setData] = useState<Snapshot | null>(null)
   const [error, setError] = useState('')
+  // A late, older snapshot must not overwrite a newer one.
+  const seq = useRef(0)
   const refresh = useCallback(async () => {
+    const my = ++seq.current
     try {
-      setData(await window.fask.snapshot())
+      const next = await api.snapshot()
+      if (my !== seq.current) return
+      setData(next)
       setError('')
     } catch (e) {
-      setError(errorText(e))
+      if (my === seq.current) setError(errorText(e))
     }
-  }, [])
+  }, [api])
   useEffect(() => {
-    void window.fask
+    const my = ++seq.current
+    void api
       .snapshot()
-      .then(setData)
-      .catch((e) => setError(errorText(e)))
-    return window.fask.onChanged(() => void refresh())
-  }, [refresh])
+      .then((next) => {
+        if (my === seq.current) setData(next)
+      })
+      .catch((e) => {
+        if (my === seq.current) setError(errorText(e))
+      })
+    return api.onChanged(() => void refresh())
+  }, [api, refresh])
   return { data, refresh, error }
 }
 export function dateLabel(value: string): string {

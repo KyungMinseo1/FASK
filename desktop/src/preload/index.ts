@@ -34,9 +34,11 @@ const fask: PersonalApi = {
   mergeConcept: (source, target) => ipcRenderer.invoke('personal:merge-concept', source, target),
   ask: (input) => ipcRenderer.invoke('personal:ask', input),
   cancel: (id) => ipcRenderer.invoke('personal:cancel', id),
+  turnState: (questionId, turnId) =>
+    ipcRenderer.invoke('personal:turn-state', questionId, turnId),
   refine: (raw, image) => ipcRenderer.invoke('personal:refine', raw, image),
   attachment: (id) => ipcRenderer.invoke('personal:attachment', id),
-  clearAttachment: (id) => ipcRenderer.invoke('personal:clear-attachment', id),
+  clearAttachment: (id, turnId) => ipcRenderer.invoke('personal:clear-attachment', id, turnId),
   exportContext: (id) => ipcRenderer.invoke('personal:export', id),
   backup: () => ipcRenderer.invoke('personal:backup'),
   restore: () => ipcRenderer.invoke('personal:restore'),
@@ -48,6 +50,10 @@ const fask: PersonalApi = {
   openOverlay: (id, questionId) => ipcRenderer.invoke('personal:open-overlay', id, questionId),
   showDashboard: () => ipcRenderer.invoke('personal:dashboard'),
   captureQuestion: (strokes) => ipcRenderer.invoke('personal:capture', strokes),
+  hubStatus: () => ipcRenderer.invoke('personal:hub-status'),
+  setHub: (enabled) => ipcRenderer.invoke('personal:hub-enable', enabled),
+  setHubAddresses: (addresses) => ipcRenderer.invoke('personal:hub-addresses', addresses),
+  resetHubPairing: () => ipcRenderer.invoke('personal:hub-reset'),
   onStream: (cb) => {
     const listener = (_: Electron.IpcRendererEvent, event: StreamEvent): void => cb(event)
     ipcRenderer.on('personal:stream', listener)

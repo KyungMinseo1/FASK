@@ -1,9 +1,9 @@
 import './profile'
-import { app, shell, BrowserWindow, globalShortcut } from 'electron'
+import { app, shell, BrowserWindow, dialog, globalShortcut } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { registerPersonal } from './personal'
+import { registerPersonal, type PersonalRuntime } from './personal'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -58,7 +58,18 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  const personal = registerPersonal(join(app.getPath('userData'), 'personal'), () => mainWindow)
+  let personal: PersonalRuntime
+  try {
+    personal = registerPersonal(join(app.getPath('userData'), 'personal'), () => mainWindow)
+  } catch (e) {
+    // The schema migration rolls back on failure and the pre-upgrade copy stays on disk.
+    dialog.showErrorBox(
+      'FASK 데이터 업그레이드 실패',
+      `${e instanceof Error ? e.message : String(e)}\n\n기존 데이터는 변경되지 않았습니다.`
+    )
+    app.quit()
+    return
+  }
   createWindow()
   personal.initializeShortcut()
   app.on('will-quit', () => globalShortcut.unregisterAll())

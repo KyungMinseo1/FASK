@@ -20,6 +20,13 @@ buildSync({
   platform: 'node',
   format: 'cjs'
 })
+buildSync({
+  entryPoints: [join(__dirname, '../src/main/personal-hub.ts')],
+  outfile: join(dir, 'hub.cjs'),
+  bundle: true,
+  platform: 'node',
+  format: 'cjs'
+})
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 const result = spawnSync(require('electron'), [join(__dirname, 'electron-smoke.cjs')], {

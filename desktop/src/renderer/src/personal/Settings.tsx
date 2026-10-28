@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { DisplayInfo, LocalSettings } from '../../../preload/personal'
+import QRCode from 'qrcode'
+import type { DisplayInfo, HubStatus, LocalSettings } from '../../../preload/personal'
 import { errorText } from './common'
 
 export default function Settings({
@@ -156,6 +157,14 @@ export default function Settings({
             <label className="check">
               <input
                 type="checkbox"
+                checked={draft.autoTitle}
+                onChange={(e) => change('autoTitle', e.target.checked)}
+              />
+              새 질문 제목 자동 생성 · 질문·이미지·첨부 기반 (추가 모델 요청)
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
                 checked={draft.memory}
                 onChange={(e) => change('memory', e.target.checked)}
               />
@@ -217,6 +226,7 @@ export default function Settings({
               수 있습니다.
             </p>
           </section>
+          <MobileHubSection />
           <section>
             <h3>백업과 복원</h3>
             <p>
@@ -260,5 +270,95 @@ export default function Settings({
         </footer>
       </section>
     </div>
+  )
+}
+
+/** Applies immediately, independent of "설정 저장". */
+function MobileHubSection(): React.JSX.Element {
+  const [status, setStatus] = useState<HubStatus | null>(null),
+    [qr, setQr] = useState(''),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false)
+  const apply = async (fn: () => Promise<HubStatus>): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      setStatus(await fn())
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  useEffect(() => {
+    void window.fask
+      .hubStatus()
+      .then(setStatus)
+      .catch((e) => setError(errorText(e)))
+  }, [])
+  const pairing = status?.pairing ?? ''
+  useEffect(() => {
+    let alive = true
+    if (pairing)
+      void QRCode.toDataURL(pairing, { margin: 1, width: 240 }).then((url) => {
+        if (alive) setQr(url)
+      })
+    return () => {
+      alive = false
+    }
+  }, [pairing])
+  return (
+    <section className="hub-settings">
+      <h3>모바일 연결</h3>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!status?.enabled}
+          disabled={busy || !status}
+          onChange={(e) => {
+            const enabled = e.target.checked
+            void apply(() => window.fask.setHub(enabled))
+          }}
+        />
+        모바일 연결 허용
+      </label>
+      {status?.enabled && (
+        <>
+          {status.addresses.map((a) => (
+            <label className="check" key={a.address}>
+              <input
+                type="checkbox"
+                checked={a.selected}
+                disabled={busy}
+                onChange={(e) => {
+                  const next = status.addresses
+                    .filter((x) => (x.address === a.address ? e.target.checked : x.selected))
+                    .map((x) => x.address)
+                  void apply(() => window.fask.setHubAddresses(next))
+                }}
+              />
+              {a.address} ·{' '}
+              {a.kind === 'tailscale'
+                ? 'Tailscale · 외부에서도 연결'
+                : a.kind === 'lan'
+                  ? '같은 Wi‑Fi'
+                  : '기타 네트워크'}{' '}
+              {a.recommended ? '권장' : '권장하지 않음'}
+              {a.error && <small className="error"> {a.error}</small>}
+            </label>
+          ))}
+          {status.error && <p className="error">{status.error}</p>}
+          {pairing && qr && <img className="hub-qr" src={qr} alt="모바일 연결 QR 코드" />}
+          <button disabled={busy} onClick={() => void apply(() => window.fask.resetHubPairing())}>
+            연결 초기화 · 모든 기기 해제
+          </button>
+        </>
+      )}
+      {error && <p className="error">{error}</p>}
+      <p>
+        QR에는 연결 키가 들어 있습니다. 다른 사람에게 보여 주지 마세요. 통신은 TLS로 암호화되며
+        Tailscale 주소를 쓰면 집 밖에서도 연결할 수 있습니다. Windows 방화벽 창이 뜨면 허용하세요.
+      </p>
+    </section>
   )
 }

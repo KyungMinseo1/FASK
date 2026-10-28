@@ -1,56 +1,25 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import type { Concept, Question, Snapshot, ShortcutInfo } from '../../../preload/personal'
+import type { Concept, ShortcutInfo } from '../../../preload/personal'
+import {
+  filterQuestions,
+  lastTurn,
+  questionComplexity,
+  questionHeading,
+  questionImages,
+  questionStatus
+} from '../../../shared/questions'
 import MindMap from '../components/MindMap/MindMap'
-import type { MindNode } from '../lib/trees'
 import Composer from './Composer'
 import MarkdownAnswer from './MarkdownAnswer'
+import QuestionDetail from './QuestionDetail'
 import Settings from './Settings'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
+import { questionTree } from './questionTree'
 import './personal.css'
 
 type ItemKind = 'profile' | 'workspace' | 'project' | 'concept' | 'question'
 
-function tree(data: Snapshot, projectId: string, questions: Question[]): MindNode {
-  const concepts = data.concepts.filter((c) => c.projectId === projectId)
-  const leaf = (q: Question, parent: string): MindNode => ({
-    id: `q:${q.id}:${parent}`,
-    label: (q.title || q.sent).slice(0, 34),
-    kind: 'question',
-    detail: q.title || q.sent,
-    children: []
-  })
-  const node = (c: Concept, seen: Set<string>): MindNode => ({
-    id: `c:${c.id}`,
-    label: c.name,
-    kind: 'concept',
-    count: questions.filter((q) => q.conceptIds.includes(c.id)).length,
-    children: seen.has(c.id)
-      ? []
-      : [
-          ...concepts
-            .filter((s) => s.parentId === c.id)
-            .map((s) => node(s, new Set([...seen, c.id]))),
-          ...questions.filter((q) => q.conceptIds.includes(c.id)).map((q) => leaf(q, c.id))
-        ]
-  })
-  return {
-    id: `project:${projectId}`,
-    label: data.projects.find((p) => p.id === projectId)?.name || '프로젝트',
-    kind: 'root',
-    children: [
-      ...concepts
-        .filter((c) => !c.parentId || !concepts.some((p) => p.id === c.parentId))
-        .map((c) => node(c, new Set())),
-      {
-        id: 'unfiled',
-        label: '미분류',
-        kind: 'group',
-        children: questions.filter((q) => !q.conceptIds.length).map((q) => leaf(q, 'unfiled'))
-      }
-    ]
-  }
-}
 export default function Dashboard(): React.JSX.Element {
   const { data, refresh, error } = useSnapshot()
   const [search, setSearch] = useSearchParams()
@@ -96,25 +65,11 @@ export default function Dashboard(): React.JSX.Element {
     [data?.questions, project?.id]
   )
   const filtered = useMemo(
-    () =>
-      questions.filter(
-        (q) =>
-          (filter === 'all' ||
-            (filter === 'important'
-              ? q.important
-              : filter === 'unfiled'
-                ? !q.conceptIds.length
-                : filter === 'failed'
-                  ? q.status === 'failed'
-                  : q.complexity === filter)) &&
-          `${q.title || ''} ${q.raw} ${q.sent} ${q.answer} ${q.memo} ${(q.documents ?? []).map((d) => d.name + ' ' + d.text).join(' ')}`
-            .toLocaleLowerCase()
-            .includes(query.toLocaleLowerCase())
-      ),
+    () => filterQuestions(questions, filter, query),
     [questions, filter, query]
   )
   const graphRoot = useMemo(
-    () => (data && project ? tree(data, project.id, filtered) : null),
+    () => (data && project ? questionTree(data, project.id, filtered) : null),
     [data, project?.id, filtered]
   )
   const selected = questions.find((q) => q.id === selectedId)
@@ -533,7 +488,7 @@ export default function Dashboard(): React.JSX.Element {
                       onContextMenu={(node, event) => {
                         if (node.id.startsWith('q:')) {
                           const q = questions.find((q) => q.id === node.id.split(':')[1])
-                          if (q) openContext(event, 'question', q.id, q.title || q.sent)
+                          if (q) openContext(event, 'question', q.id, questionHeading(q))
                         } else if (node.id.startsWith('c:'))
                           openContext(event, 'concept', node.id.slice(2), node.label)
                         else if (node.id.startsWith('project:'))
@@ -572,7 +527,7 @@ export default function Dashboard(): React.JSX.Element {
                           )}
                         <button
                           className={`question-card ${selectedId === q.id ? 'selected' : ''}`}
-                          onContextMenu={(e) => openContext(e, 'question', q.id, q.title || q.sent)}
+                          onContextMenu={(e) => openContext(e, 'question', q.id, questionHeading(q))}
                           onClick={() => {
                             setSelectedId(q.id)
                             setCompose(false)
@@ -580,19 +535,20 @@ export default function Dashboard(): React.JSX.Element {
                         >
                           <div className="question-meta">
                             <span>
-                              {q.complexity === 'complex'
+                              {questionComplexity(q) === 'complex'
                                 ? '깊이 탐구'
-                                : q.complexity === 'simple'
+                                : questionComplexity(q) === 'simple'
                                   ? '빠른 질문'
                                   : '미확정'}
                             </span>
                             <time>{dateLabel(q.createdAt)}</time>
+                            {q.turns.length > 1 && <span>대화 {q.turns.length}개</span>}
                             {q.important && <span>★</span>}
                           </div>
-                          <h3>{q.title || q.sent}</h3>
+                          <h3>{questionHeading(q)}</h3>
                           {view !== 'list' && (
                             <MarkdownAnswer preview>
-                              {q.answer || q.error || '아직 답변이 없습니다.'}
+                              {lastTurn(q).answer || lastTurn(q).error || '아직 답변이 없습니다.'}
                             </MarkdownAnswer>
                           )}
                           <div className="question-footer">
@@ -603,7 +559,7 @@ export default function Dashboard(): React.JSX.Element {
                                 .join(' · ') || '미분류'}
                             </span>
                             <small>
-                              {statuses[q.status]} {q.attachment ? '· ▧' : ''}
+                              {statuses[questionStatus(q)]} {questionImages(q).length ? '· ▧' : ''}
                             </small>
                           </div>
                         </button>
@@ -643,6 +599,9 @@ export default function Dashboard(): React.JSX.Element {
                       suggestions: selected.suggestions.filter((s) => s !== name)
                     })
                   }}
+                  onContinue={() =>
+                    void run(() => window.fask.openOverlay(selected.projectId, selected.id))
+                  }
                 />
               )}
             </div>
@@ -753,139 +712,6 @@ export default function Dashboard(): React.JSX.Element {
   )
 }
 
-function QuestionDetail({
-  question: q,
-  concepts,
-  run,
-  onClose,
-  onCreateConcept
-}: {
-  question: Question
-  concepts: Concept[]
-  run: (fn: () => Promise<unknown>) => Promise<void>
-  onClose: () => void
-  onCreateConcept: (name: string) => Promise<void>
-}): React.JSX.Element {
-  const [image, setImage] = useState<string | null>(null),
-    [memo, setMemo] = useState(q.memo)
-  useEffect(() => {
-    let alive = true
-    if (q.attachment)
-      void window.fask
-        .attachment(q.attachment)
-        .then((img) => {
-          if (alive) setImage(img)
-        })
-        .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [q.attachment])
-  return (
-    <aside className="question-detail">
-      <header>
-        <span className="eyebrow">QUESTION NOTES</span>
-        <button onClick={onClose}>닫기 ×</button>
-      </header>
-      <div className="detail-title">
-        <h2>{q.title || q.sent}</h2>
-        <button
-          className={q.important ? 'star active' : 'star'}
-          aria-label="중요 표시"
-          onClick={() =>
-            void run(() => window.fask.updateQuestion(q.id, { important: !q.important }))
-          }
-        >
-          {q.important ? '★' : '☆'}
-        </button>
-      </div>
-      <p className="detail-meta">
-        {dateLabel(q.createdAt)} · {statuses[q.status]}
-        <br />
-        {q.actualModel || q.model || '모델 미지정'}
-      </p>
-      {q.refined && (
-        <details>
-          <summary>원래 질문</summary>
-          <p>{q.raw}</p>
-        </details>
-      )}
-      {q.attachment && image && (
-        <div className="detail-capture">
-          <img src={image} alt="질문에 사용한 캡처" />
-          <button onClick={() => void run(() => window.fask.clearAttachment(q.id))}>
-            보관 이미지 제거
-          </button>
-        </div>
-      )}
-      {q.documents?.map((d, index) => (
-        <details key={`${d.name}:${index}`} className="document-detail">
-          <summary>▤ {d.name}</summary>
-          <pre>{d.text}</pre>
-        </details>
-      ))}
-      <div className="detail-answer">
-        <MarkdownAnswer>{q.answer || '아직 답변이 없습니다.'}</MarkdownAnswer>
-      </div>
-      {q.error && <p className="notice error">{q.error}</p>}
-      {q.status === 'running' && (
-        <button onClick={() => void run(() => window.fask.cancel(q.id))}>답변 생성 중지</button>
-      )}
-      <details>
-        <summary>모델 추천 근거</summary>
-        <p>{q.routingReason}</p>
-      </details>
-      <h3>연결된 개념</h3>
-      <div className="concept-checks">
-        {concepts.map((c) => (
-          <label key={c.id}>
-            <input
-              type="checkbox"
-              checked={q.conceptIds.includes(c.id)}
-              onChange={(e) =>
-                void run(() =>
-                  window.fask.updateQuestion(q.id, {
-                    conceptIds: e.target.checked
-                      ? [...q.conceptIds, c.id]
-                      : q.conceptIds.filter((id) => id !== c.id)
-                  })
-                )
-              }
-            />
-            {c.name}
-          </label>
-        ))}
-      </div>
-      {q.suggestions.length > 0 && (
-        <div className="suggestions">
-          <small>새 개념 제안 · 클릭하면 연결</small>
-          {q.suggestions.map((s) => (
-            <button key={s} onClick={() => void run(() => onCreateConcept(s))}>
-              ＋ {s}
-            </button>
-          ))}
-        </div>
-      )}
-      <label className="memo-label">
-        나의 메모
-        <textarea
-          value={memo}
-          onChange={(e) => setMemo(e.target.value)}
-          placeholder="확인한 사실, 결정, 다음 할 일…"
-        />
-      </label>
-      <button onClick={() => void run(() => window.fask.updateQuestion(q.id, { memo }))}>
-        메모 저장
-      </button>
-      <button
-        className="reply-button"
-        onClick={() => void run(() => window.fask.openOverlay(q.projectId, q.id))}
-      >
-        이 대화에 이어서 질문 ↗
-      </button>
-    </aside>
-  )
-}
 function ConceptEditor({
   concept,
   concepts,

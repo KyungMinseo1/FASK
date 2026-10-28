@@ -5,9 +5,19 @@ export interface Point {
 
 export interface Stroke {
   points: Point[]
+  color: string
 }
 
-export const STROKE_COLOR = '#ef4444'
+export const PEN_COLORS = [
+  '#ef4444',
+  '#f97316',
+  '#eab308',
+  '#22c55e',
+  '#3b82f6',
+  '#8b5cf6',
+  '#ec4899',
+  '#111827'
+] as const
 export const STROKE_WIDTH = 4
 export const ERASER_RADIUS = 12
 const CAPTURE_MAX_WIDTH = 1600
@@ -43,12 +53,13 @@ export function redraw(
   cssHeight: number
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight)
-  ctx.strokeStyle = STROKE_COLOR
-  ctx.fillStyle = STROKE_COLOR
   ctx.lineWidth = STROKE_WIDTH
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  for (const s of strokes) drawStroke(ctx, s)
+  for (const s of strokes) {
+    ctx.strokeStyle = ctx.fillStyle = s.color
+    drawStroke(ctx, s)
+  }
 }
 
 /** Removes whole strokes that have any point within ERASER_RADIUS of `p`. */

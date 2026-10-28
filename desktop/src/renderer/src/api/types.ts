@@ -2,7 +2,11 @@
 // The personal app uses preload IPC; its shared wire types are re-exported here.
 export type {
   AskInput,
+  AskResult,
   CapturePreview,
+  HubAddress,
+  HubStatus,
+  KnowledgeApi,
   CaptureRect,
   CaptureRegion,
   Concept,
@@ -14,6 +18,9 @@ export type {
   Question,
   Snapshot,
   StreamEvent,
+  Turn,
+  TurnState,
+  TurnStatus,
   Workspace
 } from '../../../preload/personal'
 // Legacy datetimes are ISO strings with `Z`.

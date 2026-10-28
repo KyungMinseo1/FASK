@@ -1,42 +1,100 @@
 import { useEffect, useRef, useState } from 'react'
-import type { LocalSettings, Question, TextAttachment } from '../../../preload/personal'
+import type {
+  AskInput,
+  LocalSettings,
+  Question,
+  TextAttachment,
+  TurnState
+} from '../../../preload/personal'
+import {
+  applyDelta,
+  lastTurn,
+  reconcileTurnState,
+  type LiveAnswer
+} from '../../../shared/questions'
 import { attachmentAccept, readAttachment } from './attachments'
 import { errorText } from './common'
 import MarkdownAnswer from './MarkdownAnswer'
+import { useApi } from './api'
+
+// personal.ts `ask` throws these before recordAsk stores anything; every other failure is
+// treated as "result unknown" (the hub wraps handler errors as HTTP 400 either way).
+const REJECTED = [
+  '요청 ID가 잘못되었습니다.',
+  '프로필이 변경되었습니다. 다시 열어 주세요.',
+  '질문이나 첨부를 추가해 주세요.',
+  '질문은 50,000자 이내로 입력해 주세요.',
+  '텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.',
+  '같은 요청 ID로 다른 내용을 보낼 수 없습니다.'
+]
 
 interface Props {
   projectId: string
   profileId: string
   settings: LocalSettings
-  conversationId?: string
+  /** Question to continue; omitted for a new question. */
+  questionId?: string
   recentQuestion?: Question
   onCapture?: () => Promise<string>
   /** Overlay has pen strokes: capture defaults on while ink exists, off otherwise. */
   hasInk?: boolean
   onSaved?: (id: string) => void
-  onCompleted?: (id: string) => void
+  onCompleted?: (id: string, result: { turnId: string; status: 'saved' | 'completed' }) => void
+  /** Called once per turn when an ask reply or matching stream identifies it. */
+  onTurnIdentified?: (state: { questionId: string; turnId: string }) => void
+  /** busy: capture/ask/refine in flight; unresolved: sent but acceptance unknown. */
+  onInteractionState?: (state: { busy: boolean; running: boolean; unresolved: boolean }) => void
+  /** Prefilled question; wins over the stored draft. */
+  initialRaw?: string
+  /** Files attached once on mount (e.g. shared from another app). */
+  initialFiles?: File[]
+  /** Extra pickers such as camera or gallery, rendered after the file button. */
+  mediaActions?: { label: string; pick: () => Promise<File[]> }[]
+  /** When false the draft is never read from or written to localStorage. */
+  persistDraft?: boolean
 }
 export default function Composer({
   projectId,
   profileId,
   settings,
-  conversationId,
+  questionId,
   recentQuestion,
   onCapture,
   hasInk = false,
   onSaved,
-  onCompleted
+  onCompleted,
+  onTurnIdentified,
+  onInteractionState,
+  initialRaw,
+  initialFiles,
+  mediaActions,
+  persistDraft = true
 }: Props): React.JSX.Element {
+  const api = useApi()
   const draftKey = `fask:draft:${profileId}:${projectId}`
-  const [raw, setRaw] = useState(() => localStorage.getItem(draftKey) || ''),
+  const recentTurn = recentQuestion ? lastTurn(recentQuestion) : undefined
+  const [raw, setRaw] = useState(
+    () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
+  ),
     [refined, setRefined] = useState(''),
     [chosenModel, setModel] = useState('')
   const model = chosenModel || settings.model
   const [image, setImage] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [answer, setAnswer] = useState(recentQuestion?.answer || '')
-  const [running, setRunning] = useState(recentQuestion?.status === 'running')
+    [actualModel, setActualModel] = useState('')
+  const [live, setLiveState] = useState<LiveAnswer>(
+    recentTurn
+      ? { turnId: recentTurn.id, answer: recentTurn.answer, revision: recentTurn.revision }
+      : { turnId: '', answer: '', revision: 0 }
+  )
+  // The stream subscription is registered once, so it reads the latest answer through a ref.
+  const liveRef = useRef(live)
+  const setLive = (next: LiveAnswer): void => {
+    liveRef.current = next
+    setLiveState(next)
+  }
+  const [running, setRunning] = useState(recentTurn?.status === 'running')
   const captureKey = `fask:capture:${profileId}`
   const [includeCapture, setIncludeCapture] = useState(
     () => hasInk || localStorage.getItem(captureKey) === 'true'
@@ -47,7 +105,7 @@ export default function Composer({
   const canRefine = !!raw.trim() || !!image || documents.length > 0
   const hasInput = canRefine || (!!onCapture && includeCapture)
   const attach = async (files: File[]): Promise<void> => {
-    if (running || busy) return
+    if (locked) return
     setBusy(true)
     setError('')
     try {
@@ -70,52 +128,154 @@ export default function Composer({
       setBusy(false)
     }
   }
-  const request = useRef(recentQuestion?.id || '')
-  const question = useRef(recentQuestion?.id || '')
+  const request = useRef('')
+  const question = useRef(recentQuestion?.id ?? '')
+  const turn = useRef(recentTurn?.status === 'running' ? recentTurn.id : '')
+  // Turn whose completion was already handled; each turn finishes exactly once.
+  const finished = useRef('')
+  const syncing = useRef(false),
+    syncAgain = useRef(false)
   // Ink toggles the default; an explicitly attached image wins (capture and image are exclusive).
   const [inkSeen, setInkSeen] = useState(hasInk)
   if (inkSeen !== hasInk) {
     setInkSeen(hasInk)
     setIncludeCapture(hasInk && !image)
   }
+  // A sent ask stays frozen (same requestId, same image bytes, same fields) until the hub's
+  // acceptance is known, so a lost reply is replayed instead of creating a second turn.
+  const pending = useRef<AskInput | null>(null)
+  const [unresolved, setUnresolvedState] = useState(false)
+  const setUnresolved = (value: boolean): void => {
+    if (!value) pending.current = null
+    setUnresolvedState(value)
+  }
+  // Late HTTP results of an older send/replay never overwrite newer state.
+  const operation = useRef(0)
+  // Each turn is announced once; callbacks are read fresh because subscriptions mount once.
+  const identified = useRef('')
+  const callbacks = useRef({ onSaved, onCompleted, onTurnIdentified, onInteractionState })
+  callbacks.current = { onSaved, onCompleted, onTurnIdentified, onInteractionState }
+  const notify = (fn: () => void): void => {
+    try {
+      fn()
+    } catch (e) {
+      // A consumer error must not turn an accepted ask into a failed one.
+      console.error(e)
+    }
+  }
+  const identify = (questionId: string, turnId: string): void => {
+    if (!turnId || identified.current === turnId) return
+    identified.current = turnId
+    notify(() => callbacks.current.onTurnIdentified?.({ questionId, turnId }))
+  }
+  const locked = busy || running || unresolved
   useEffect(() => {
-    localStorage.setItem(draftKey, raw)
-  }, [draftKey, raw])
-  useEffect(
-    () =>
-      window.fask.onStream((event) => {
-        if (event.requestId !== request.current && event.questionId !== question.current) return
-        if (event.delta) setAnswer((s) => s + event.delta)
-        if (event.done) {
-          setRunning(false)
-          setError(event.error || '')
-          // A panel reopened mid-stream may have missed tokens since the last DB checkpoint.
-          void window.fask
-            .snapshot()
-            .then((s) => {
-              if (request.current !== event.requestId && question.current !== event.questionId)
-                return
-              const saved = s.questions.find((q) => q.id === event.questionId)
-              if (saved) setAnswer(saved.answer)
-            })
-            .catch(() => {})
-          if (!event.error) {
-            onCompleted?.(event.questionId)
-            setRaw('')
-            setRefined('')
-            setImage('')
-            setDocuments([])
+    notify(() => callbacks.current.onInteractionState?.({ busy, running, unresolved }))
+  }, [busy, running, unresolved])
+  useEffect(() => {
+    if (persistDraft) localStorage.setItem(draftKey, raw)
+  }, [draftKey, raw, persistDraft])
+  const initialAttached = useRef(false)
+  useEffect(() => {
+    if (initialAttached.current || !initialFiles?.length) return
+    initialAttached.current = true
+    void Promise.resolve().then(() => attach(initialFiles))
+    // Mount-only: shared files are attached once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  /** The only path that applies answer text together with the run status. */
+  const applyState = (turnId: string, state: TurnState): void => {
+    const r = reconcileTurnState(liveRef.current, state, turnId, turn.current)
+    setLive(r.live)
+    if (!r.finished || finished.current === turnId) return
+    finished.current = turnId
+    setRunning(false)
+    setActualModel(r.finished.actualModel)
+    if (r.finished.status === 'completed') {
+      setError('')
+      setRaw('')
+      setRefined('')
+      setImage('')
+      setDocuments([])
+      const qid = question.current
+      notify(() => callbacks.current.onCompleted?.(qid, { turnId, status: 'completed' }))
+    } else if (r.finished.status !== 'saved')
+      setError(r.finished.error || '요청이 실패했습니다.')
+  }
+  const resync = async (): Promise<void> => {
+    if (syncing.current) {
+      syncAgain.current = true
+      return
+    }
+    syncing.current = true
+    try {
+      do {
+        syncAgain.current = false
+        const id = turn.current
+        if (!id) break
+        try {
+          const state = await api.turnState(question.current, id)
+          // A readable turn proves the hub accepted the request that the stream tied to it.
+          if (pending.current && pending.current.requestId === request.current) {
+            setUnresolved(false)
+            setError('')
+            if (finished.current !== id) setRunning(true)
           }
+          applyState(id, state)
+        } catch (e) {
+          // Keep `running`; the next change notification or reconnect retries.
+          setError(errorText(e))
         }
-      }),
-    []
-  )
+      } while (syncAgain.current)
+    } finally {
+      syncing.current = false
+    }
+  }
+  useEffect(() => {
+    const offStream = api.onStream((event) => {
+      if (
+        event.requestId !== request.current &&
+        !(turn.current && event.turnId === turn.current)
+      )
+        return
+      // Events can arrive before the ask response; adopt the turn from the request ID.
+      if (!turn.current) {
+        turn.current = event.turnId
+        question.current = event.questionId
+        identify(event.questionId, event.turnId)
+        // A sent request whose reply was lost: the turn state confirms acceptance.
+        if (pending.current) void resync()
+      }
+      if (event.delta) {
+        const r = applyDelta(liveRef.current, {
+          turnId: event.turnId,
+          revision: event.revision,
+          delta: event.delta
+        })
+        setLive(r.live)
+        if (r.resync) void resync()
+      }
+      // The server stores the final state before `done`; completion is handled by applyState.
+      if (event.done) void resync()
+    })
+    const offChanged = api.onChanged(() => {
+      if (turn.current && finished.current !== turn.current) void resync()
+    })
+    // A reopened panel restores the answer written since the last checkpoint and its status.
+    if (turn.current) void resync()
+    return () => {
+      offStream()
+      offChanged()
+    }
+    // Mount-only subscription; handlers read refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const refine = async (): Promise<void> => {
     setBusy(true)
     setError('')
     try {
       setRefined(
-        await window.fask.refine(
+        await api.refine(
           raw + (documents.length ? `\n첨부파일: ${JSON.stringify(documents)}` : ''),
           image || undefined
         )
@@ -126,54 +286,103 @@ export default function Composer({
       setBusy(false)
     }
   }
+  const submit = async (input: AskInput): Promise<void> => {
+    const op = ++operation.current
+    pending.current = input
+    request.current = input.requestId
+    setBusy(true)
+    setError('')
+    if (!turn.current) setRunning(!input.saveOnly)
+    let result: { questionId: string; turnId: string }
+    try {
+      result = await api.ask(input)
+    } catch (e) {
+      if (op !== operation.current) return
+      const message = errorText(e)
+      if (REJECTED.some((m) => message.includes(m))) {
+        // Rejected before recordAsk: nothing was stored, so the draft simply stays editable.
+        setUnresolved(false)
+        if (!turn.current) setRunning(false)
+        setError(message)
+        return
+      }
+      // Lost replies and timeouts are not evidence of rejection.
+      if (pending.current !== input) {
+        // The stream's turn already proved acceptance; just keep following that turn.
+        void resync()
+        return
+      }
+      setUnresolved(true)
+      if (turn.current) void resync()
+      else setRunning(false)
+      setError(`전송 결과를 확인하지 못했습니다. ${message}`)
+      return
+    } finally {
+      if (op === operation.current) setBusy(false)
+    }
+    if (op !== operation.current) return
+    setUnresolved(false)
+    const { questionId: qid, turnId } = result
+    question.current = qid
+    turn.current = turnId
+    if (liveRef.current.turnId !== turnId) setLive({ turnId, answer: '', revision: 0 })
+    identify(qid, turnId)
+    notify(() => callbacks.current.onSaved?.(qid))
+    if (input.saveOnly) {
+      finished.current = turnId
+      setRunning(false)
+      setRaw('')
+      setRefined('')
+      setImage('')
+      setDocuments([])
+      notify(() => callbacks.current.onCompleted?.(qid, { turnId, status: 'saved' }))
+    }
+    // A replayed request emits nothing, so always re-read the turn.
+    else void resync()
+  }
   const send = async (saveOnly = false): Promise<void> => {
-    if (!hasInput || busy || running) return
+    if (!hasInput || locked) return
     if (!saveOnly && settings.refine && !refined && canRefine) {
       await refine()
       return
     }
+    // Frozen before capture: later edits or a new questionId never alter this request.
+    const base: Omit<AskInput, 'requestId'> = {
+      profileId,
+      projectId,
+      ...(questionId ? { questionId } : {}),
+      raw,
+      refined,
+      model,
+      documents: [...documents],
+      saveOnly
+    }
     setBusy(true)
     setError('')
-    setAnswer('')
-    const id = crypto.randomUUID()
-    request.current = id
-    question.current = ''
+    setActualModel('')
+    setLive({ turnId: '', answer: '', revision: 0 })
+    turn.current = ''
     setRunning(!saveOnly)
-    try {
-      let outgoingImage = image || undefined
-      if (!saveOnly && includeCapture && onCapture) {
-        setCapturing(true)
+    let outgoingImage = image || undefined
+    if (!saveOnly && includeCapture && onCapture) {
+      setCapturing(true)
+      try {
         outgoingImage = await onCapture()
+      } catch (e) {
+        // Nothing reached the hub: keep the draft and release the locks.
+        setError(errorText(e))
+        setRunning(false)
+        setBusy(false)
+        return
+      } finally {
         setCapturing(false)
       }
-      const qid = await window.fask.ask({
-        requestId: id,
-        profileId,
-        projectId,
-        conversationId,
-        raw,
-        refined,
-        model,
-        image: outgoingImage,
-        documents,
-        saveOnly
-      })
-      question.current = qid
-      onSaved?.(qid)
-      if (saveOnly) {
-        setRaw('')
-        setRefined('')
-        setImage('')
-        setDocuments([])
-        onCompleted?.(qid)
-      }
-    } catch (e) {
-      setError(errorText(e))
-      setRunning(false)
-    } finally {
-      setCapturing(false)
-      setBusy(false)
     }
+    await submit({ ...base, requestId: crypto.randomUUID(), image: outgoingImage })
+  }
+  /** Replays the exact frozen request to learn whether the hub accepted it. */
+  const replay = (): void => {
+    if (pending.current && !busy) void submit(pending.current)
   }
   const complex =
     /증명|설계|디버깅|분석|비교|최적화|구현|derive|debug|design/i.test(raw) || raw.length > 500
@@ -198,20 +407,22 @@ export default function Composer({
       }}
     >
       <div className="composer-label">
-        <b>{conversationId ? '이 대화에 이어서 질문' : '새 질문'}</b>
+        <b>{questionId ? '이 질문에 이어서 질문' : '새 질문'}</b>
         <span>프로젝트에 자동 저장</span>
       </div>
-      {recentQuestion && (
+      {recentTurn && (
         <div className="recent-question">
           <small>최근 질문</small>
-          <p>{recentQuestion.sent}</p>
+          <p>{recentTurn.sent}</p>
         </div>
       )}
-      {(answer || running) && (
+      {(live.answer || running) && (
         <div className="live-answer">
-          <span className="eyebrow">{running ? '답변 작성 중' : '이번 답변'}</span>
+          <span className="eyebrow">
+            {running ? '답변 작성 중' : actualModel ? `이번 답변 · ${actualModel}` : '이번 답변'}
+          </span>
           <MarkdownAnswer>
-            {answer ||
+            {live.answer ||
               (capturing ? '현재 화면을 캡처하고 있습니다…' : '모델 응답을 기다리고 있습니다…')}
           </MarkdownAnswer>
         </div>
@@ -233,7 +444,7 @@ export default function Composer({
         aria-label="질문"
         placeholder="지금 궁금한 것을 적어보세요…"
         value={raw}
-        disabled={running}
+        disabled={locked}
         onChange={(e) => {
           setRaw(e.target.value)
           setRefined('')
@@ -249,7 +460,7 @@ export default function Composer({
         <div className="capture-thumb">
           <img src={image} alt="전송할 캡처" />
           <button
-            disabled={running}
+            disabled={locked}
             onClick={() => {
               setImage('')
               setRefined('')
@@ -266,7 +477,7 @@ export default function Composer({
               ▤ {d.name}
               <button
                 aria-label={`${d.name} 제거`}
-                disabled={running}
+                disabled={locked}
                 onClick={() => {
                   setDocuments((ds) => ds.filter((_, i) => i !== index))
                   setRefined('')
@@ -284,9 +495,11 @@ export default function Composer({
           <textarea
             value={refined}
             onChange={(e) => setRefined(e.target.value)}
-            disabled={running}
+            disabled={locked}
           />
-          <button onClick={() => setRefined('')}>원문 사용으로 되돌리기</button>
+          <button disabled={locked} onClick={() => setRefined('')}>
+            원문 사용으로 되돌리기
+          </button>
         </label>
       )}
       {settings.routing !== 'manual' && (
@@ -301,21 +514,37 @@ export default function Composer({
                 : '간단한 설명 · 로컬 규칙'}
           </span>
           {settings.routing === 'recommend' && recommendation && (
-            <button onClick={() => setModel(recommendation)}>사용</button>
+            <button disabled={locked} onClick={() => setModel(recommendation)}>
+              사용
+            </button>
           )}
         </div>
       )}
       <div className="composer-actions">
-        <button disabled={busy || running} onClick={() => fileInput.current?.click()}>
+        <button disabled={locked} onClick={() => fileInput.current?.click()}>
           ＋ 파일·이미지
         </button>
+        {mediaActions?.map((action) => (
+          <button
+            key={action.label}
+            disabled={locked}
+            onClick={() =>
+              void action
+                .pick()
+                .then((files) => (files.length ? attach(files) : undefined))
+                .catch((e) => setError(errorText(e)))
+            }
+          >
+            {action.label}
+          </button>
+        ))}
         {onCapture && (
           <label className={`capture-toggle ${includeCapture ? 'checked' : ''}`}>
             <input
               type="checkbox"
               aria-label="화면 캡처 포함"
               checked={includeCapture}
-              disabled={busy || running}
+              disabled={locked}
               onChange={(e) => {
                 setIncludeCapture(e.target.checked)
                 localStorage.setItem(captureKey, String(e.target.checked))
@@ -325,13 +554,13 @@ export default function Composer({
             화면 캡처 포함
           </label>
         )}
-        <button disabled={busy || running || !canRefine} onClick={() => void refine()}>
+        <button disabled={locked || !canRefine} onClick={() => void refine()}>
           질문 다듬기
         </button>
         <select
           aria-label="사용 모델"
           value={model}
-          disabled={running || settings.routing === 'auto'}
+          disabled={locked || settings.routing === 'auto'}
           onChange={(e) => setModel(e.target.value)}
         >
           <option value="">모델 선택</option>
@@ -339,19 +568,19 @@ export default function Composer({
             <option key={m}>{m}</option>
           ))}
         </select>
-        <button disabled={busy || running || !canRefine} onClick={() => void send(true)}>
+        <button disabled={locked || !canRefine} onClick={() => void send(true)}>
           저장만
         </button>
         {running ? (
           <button
             className="danger"
             disabled={capturing}
-            onClick={() => void window.fask.cancel(request.current || question.current)}
+            onClick={() => void api.cancel(request.current || turn.current)}
           >
             {capturing ? '화면 캡처 중…' : '중지'}
           </button>
         ) : (
-          <button className="primary" disabled={busy || !hasInput} onClick={() => void send()}>
+          <button className="primary" disabled={locked || !hasInput} onClick={() => void send()}>
             {busy
               ? '처리 중…'
               : settings.refine && !refined && canRefine
@@ -360,6 +589,14 @@ export default function Composer({
           </button>
         )}
       </div>
+      {unresolved && (
+        <div className="notice error" role="status">
+          전송 결과를 확인하지 못했습니다.{' '}
+          <button disabled={busy} onClick={replay}>
+            같은 요청 다시 확인
+          </button>
+        </div>
+      )}
       {error && (
         <p className="notice error" role="alert">
           {error}

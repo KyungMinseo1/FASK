@@ -508,6 +508,28 @@ button.danger {
   color: #424e65;
   margin: 20px 0;
 }
+.detail-turn {
+  border-top: 1px solid #ecebf5;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.detail-turn:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+.turn-question {
+  font-weight: 600;
+  white-space: pre-wrap;
+  margin: 6px 0 10px;
+}
+.hub-qr {
+  display: block;
+  width: 240px;
+  height: 240px;
+  margin: 8px 0;
+  image-rendering: pixelated;
+}
 .question-detail details {
   font-size: 10px;
   color: #8d9c82;
@@ -900,6 +922,65 @@ button.danger {
   border: 0;
   border-top: 1px solid #e1e8d7;
   margin: 3px;
+}
+.toolbar-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.overlay-toolbar.collapsed {
+  padding: 6px;
+}
+.overlay-toolbar.collapsed .toolbar-tools {
+  display: none;
+}
+.overlay-toolbar.collapsed.peek .toolbar-tools {
+  display: flex;
+  position: absolute;
+  left: -1px;
+  width: 64px;
+  box-sizing: border-box;
+  padding: 10px 6px;
+  border: 1px solid #dce0ee;
+  border-radius: 18px;
+  background: #fffffffa;
+  box-shadow: 0 4px 24px #26304c20;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+.overlay-toolbar.peek.up .toolbar-tools {
+  bottom: 100%;
+  animation: toolbar-peek-up 0.16s ease-out;
+}
+.overlay-toolbar.peek.down .toolbar-tools {
+  top: 100%;
+  animation: toolbar-peek-down 0.16s ease-out;
+}
+@keyframes toolbar-peek-up {
+  from { clip-path: inset(100% 0 0 0); opacity: 0.4; }
+  to { clip-path: inset(0); opacity: 1; }
+}
+@keyframes toolbar-peek-down {
+  from { clip-path: inset(0 0 100% 0); opacity: 0.4; }
+  to { clip-path: inset(0); opacity: 1; }
+}
+.pen-colors {
+  display: grid;
+  grid-template-columns: repeat(2, 18px);
+  gap: 6px;
+  justify-content: center;
+  padding: 2px 0 4px;
+}
+.overlay-toolbar .pen-colors button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #c9cde0;
+}
+.overlay-toolbar .pen-colors button.selected {
+  box-shadow: 0 0 0 2px #5b51df;
 }
 .overlay-panel {
   display: flex;

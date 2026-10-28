@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { eraseAt, redraw, type Stroke } from './strokes'
+import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
@@ -47,10 +47,26 @@ export default function Overlay(): React.JSX.Element {
     top: number
     width: number
     height: number
+    moved: boolean
   } | null>(null)
+  const collapsedKey = `fask:toolbar-collapsed:${profileId}`
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(collapsedKey) === '1')
+  const [peek, setPeek] = useState(false)
+  const peekTimer = useRef<number>(0)
+  useEffect(() => {
+    localStorage.setItem(collapsedKey, collapsed ? '1' : '0')
+  }, [collapsedKey, collapsed])
+  const penColorKey = `fask:pen-color:${profileId}`
+  const [penColor, setPenColor] = useState<string>(() => {
+    const saved = localStorage.getItem(penColorKey)
+    return saved && (PEN_COLORS as readonly string[]).includes(saved) ? saved : PEN_COLORS[0]
+  })
+  useEffect(() => {
+    localStorage.setItem(penColorKey, penColor)
+  }, [penColorKey, penColor])
   const [resetCount, setResetCount] = useState(0)
   const recent = data?.questions.find((q) => q.id === data.recentQuestions?.[projectId])
-  const conversationId = recent?.conversationId
+  const questionId = recent?.id
   const west = toolbar.x + 32 >= innerWidth / 2
   const north = toolbar.y + toolbarHeight / 2 > innerHeight / 2
   const corner = `${north ? 'n' : 's'}${west ? 'w' : 'e'}`
@@ -124,6 +140,7 @@ export default function Overlay(): React.JSX.Element {
       resizing.current = null
       moving.current = null
       toolbarMoving.current = null
+      setPeek(false)
     }
     const key = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') reset()
@@ -148,11 +165,12 @@ export default function Overlay(): React.JSX.Element {
       off()
       offToggle()
       offOutside()
+      clearTimeout(peekTimer.current)
     }
   }, [])
   useLayoutEffect(() => {
     const update = (): void => {
-      const regions = [...document.querySelectorAll('.overlay-toolbar,.overlay-panel')].map(
+      const regions = [...document.querySelectorAll('.overlay-toolbar,.toolbar-tools,.overlay-panel')].map(
         (el) => {
           const r = el.getBoundingClientRect()
           return { x: r.x, y: r.y, width: r.width, height: r.height }
@@ -166,14 +184,14 @@ export default function Overlay(): React.JSX.Element {
       frame = requestAnimationFrame(update)
     })
     document
-      .querySelectorAll('.overlay-toolbar,.overlay-panel')
+      .querySelectorAll('.overlay-toolbar,.toolbar-tools,.overlay-panel')
       .forEach((el) => observer.observe(el))
     update()
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction])
+  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction, collapsed, peek])
   const paint = (list: Stroke[]): void => {
     const ctx = canvas.current?.getContext('2d')
     if (ctx) redraw(ctx, list, size.width, size.height)
@@ -190,7 +208,7 @@ export default function Overlay(): React.JSX.Element {
     if (mode === 'idle') return
     e.currentTarget.setPointerCapture(e.pointerId)
     if (mode === 'pen') {
-      drawing.current = { points: [{ x: e.clientX, y: e.clientY }] }
+      drawing.current = { points: [{ x: e.clientX, y: e.clientY }], color: penColor }
       paint([...strokes, drawing.current])
     } else setStrokes((s) => eraseAt(s, { x: e.clientX, y: e.clientY }))
   }
@@ -242,13 +260,22 @@ export default function Overlay(): React.JSX.Element {
         </div>
       )}
       <div
-        className="overlay-toolbar"
+        className={`overlay-toolbar ${collapsed ? 'collapsed' : ''} ${collapsed && peek ? `peek ${north ? 'up' : 'down'}` : ''}`}
         style={{ left: toolbar.x, top: toolbar.y, right: 'auto', transform: 'none' }}
+        onPointerEnter={() => {
+          clearTimeout(peekTimer.current)
+          if (collapsed && !toolbarMoving.current) setPeek(true)
+        }}
+        onPointerLeave={() => {
+          clearTimeout(peekTimer.current)
+          peekTimer.current = window.setTimeout(() => setPeek(false), 150)
+        }}
       >
         <button
           className="toolbar-drag-handle"
-          aria-label="토글 위치 이동"
-          title="드래그해서 토글 이동"
+          aria-label="토글 접기/펼치기"
+          aria-expanded={!collapsed}
+          title="클릭: 접기/펼치기 · 드래그: 이동"
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
             const r = e.currentTarget.parentElement!.getBoundingClientRect()
@@ -258,25 +285,30 @@ export default function Overlay(): React.JSX.Element {
               left: r.left,
               top: r.top,
               width: r.width,
-              height: r.height
+              height: r.height,
+              moved: false
             }
+            setPeek(false)
             setPanelInteraction(true)
           }}
           onPointerMove={(e) => {
             const start = toolbarMoving.current
-            if (start)
-              setToolbar({
-                x: Math.max(
-                  8,
-                  Math.min(innerWidth - start.width - 8, start.left + e.clientX - start.x)
-                ),
-                y: Math.max(
-                  8,
-                  Math.min(innerHeight - start.height - 8, start.top + e.clientY - start.y)
-                )
-              })
+            if (!start) return
+            const dx = e.clientX - start.x,
+              dy = e.clientY - start.y
+            if (!start.moved && Math.hypot(dx, dy) < 4) return
+            start.moved = true
+            setToolbar({
+              x: Math.max(8, Math.min(innerWidth - start.width - 8, start.left + dx)),
+              y: Math.max(8, Math.min(innerHeight - start.height - 8, start.top + dy))
+            })
           }}
           onPointerUp={() => {
+            const start = toolbarMoving.current
+            if (start && !start.moved) {
+              setCollapsed((c) => !c)
+              setPeek(false)
+            }
             toolbarMoving.current = null
             setPanelInteraction(false)
           }}
@@ -289,6 +321,7 @@ export default function Overlay(): React.JSX.Element {
             f<span>{project?.name || 'FASK'}</span>
           </b>
         </button>
+        <div className="toolbar-tools">
         <button
           title="배경 앱 조작"
           className={mode === 'idle' ? 'active' : ''}
@@ -303,8 +336,24 @@ export default function Overlay(): React.JSX.Element {
             setPanel(false)
           }}
         >
-          ✎<small>펜</small>
+          <span style={{ color: penColor }}>✎</span>
+          <small>펜</small>
         </button>
+        {mode === 'pen' && (
+          <div className="pen-colors" role="radiogroup" aria-label="펜 색상">
+            {PEN_COLORS.map((c) => (
+              <button
+                key={c}
+                role="radio"
+                aria-checked={c === penColor}
+                aria-label={c}
+                className={c === penColor ? 'selected' : ''}
+                style={{ background: c }}
+                onClick={() => setPenColor(c)}
+              />
+            ))}
+          </div>
+        )}
         <button
           className={mode === 'eraser' ? 'active' : ''}
           onClick={() => {
@@ -342,6 +391,7 @@ export default function Overlay(): React.JSX.Element {
         >
           ▣<small>캡처 영역</small>
         </button>
+        </div>
       </div>
       {panel && (
         <section
@@ -406,7 +456,7 @@ export default function Overlay(): React.JSX.Element {
                 projectId={projectId}
                 profileId={profileId}
                 settings={data.settings}
-                conversationId={conversationId}
+                questionId={questionId}
                 recentQuestion={recent}
                 hasInk={strokes.length > 0}
                 onCapture={() =>
@@ -419,7 +469,7 @@ export default function Overlay(): React.JSX.Element {
                 }}
               />
             )}
-            {conversationId && (
+            {questionId && (
               <button
                 className="overlay-new"
                 onClick={() => {
