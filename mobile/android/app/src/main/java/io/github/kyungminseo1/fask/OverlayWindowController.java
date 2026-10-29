@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.Insets;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.os.Build;
 import android.os.Handler;
 import android.view.Choreographer;
@@ -15,15 +16,14 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
+import android.widget.Toast;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,27 +39,27 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         void onStop();
         void onWindowFailure();
         void onProjectPicker();
+        void onProjectSelected(String projectId);
     }
 
     private static final String GEOMETRY_CHANGED = "화면 구성이 바뀌었습니다. 영역을 다시 선택해 주세요.";
+    /** Last confirmed capture region as display fractions plus the rotation it was chosen in. */
+    private static final String REGION_PREFS = "overlay_region";
     private final Context context;
     private final WindowManager windows;
     private final Listener listener;
     private final OverlayInkView ink;
-    private final ImageView toggle;
-    private final ScrollView toolbar;
-    private final LinearLayout tools;
+    private final OverlayChrome chrome;
     private final FrameLayout panel;
     private final FrameLayout panelContent;
-    private final WindowManager.LayoutParams toggleParams;
-    private final WindowManager.LayoutParams toolbarParams;
     private final WindowManager.LayoutParams panelParams;
+    private final LinearLayout panelHeader, panelRow;
+    private final TextView panelEyebrow, panelTitle, panelFold;
+    private final View panelHeaderRule, panelEdgeBar;
+    private final FrameLayout panelEdge;
+    private final SharedPreferences regionPrefs;
+    private boolean resizingPanel;
     private final WindowManager.LayoutParams inkParams;
-    private final SharedPreferences position;
-    private final List<Button> editButtons = new ArrayList<>();
-    private final Switch finger;
-    private final Button question;
-    private final TextView notice;
     private final Rect bounds = new Rect();
     private final Rect safe = new Rect();
     private OverlayGeometry.GeometrySnapshot geometry;
@@ -67,8 +67,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
     private int rotation;
     private long readerGeneration;
     private boolean closed;
-    private boolean toolbarVisible;
-    private boolean toolbarPinned;
     private boolean hasPanelContent;
     private boolean interactionLocked;
     private boolean captureLocked;
@@ -81,7 +79,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
     private static final class CaptureVisibility {
         final String id;
         Mode mode;
-        final boolean toggle;
+        boolean toggle;
         final boolean toolbar;
         boolean panel;
         final View observer;
@@ -102,7 +100,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         this.densityDpi = densityDpi;
         this.rotation = rotation;
         this.readerGeneration = readerGeneration;
-        position = context.getSharedPreferences("overlay_position", Context.MODE_PRIVATE);
         ink = new OverlayInkView(context, this);
         inkParams = params(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, true, "FASK 편집");
         inkParams.flags |= WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
@@ -112,124 +109,94 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             new OverlayGeometry.PointPx(bounds.left, bounds.top), new OverlayGeometry.SizePx(bounds.width(), bounds.height()), densityDpi, readerGeneration);
         ink.setGeometry(geometry);
 
-        toggle = new ImageView(context);
-        toggle.setImageResource(R.mipmap.ic_launcher);
-        toggle.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        toggle.setContentDescription("FASK 화면 질문 메뉴");
-        toggle.setElevation(dp(4));
-        toggleParams = params(dp(48), dp(48), false, "FASK 토글");
-        toggleParams.x = Math.round(position.getFloat("x", .92f) * Math.max(0, bounds.width() - dp(48)));
-        toggleParams.y = Math.round(position.getFloat("y", .25f) * Math.max(0, bounds.height() - dp(48)));
-        toggle.setOnClickListener(view -> toggleToolbar());
-        installDrag(toggle, toggleParams, false, true);
-        toggle.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-            if (!closed && toggle.isAttachedToWindow() && toggle.getWidth() > 0) listener.onToggleReady();
+        chrome = new OverlayChrome(context, windows, densityDpi, bounds, new OverlayChrome.Host() {
+            @Override public void perform(Runnable action) { OverlayWindowController.this.perform(action); }
+            @Override public void onHandleReady() { if (!closed) listener.onToggleReady(); }
+            @Override public void onPen() { setMode(mode == Mode.PEN ? Mode.IDLE : Mode.PEN); }
+            @Override public void onEraser() { setMode(mode == Mode.ERASER ? Mode.IDLE : Mode.ERASER); }
+            @Override public void onClearInk() { ink.clearInk(); }
+            @Override public void onQuestion() { showPanel(); }
+            @Override public void onDashboard() { setMode(Mode.IDLE); listener.onOpenApp(); }
+            @Override public void onRegion() { setMode(Mode.REGION); }
+            @Override public void onProjectPicker() { showProjectPicker(); }
+            @Override public void onProjectSelected(String projectId) { listener.onProjectSelected(projectId); }
+            @Override public void onStop() { listener.onStop(); }
+            @Override public void onPenColor(int color) { ink.setPenColor(color); }
+            @Override public void onFingerDrawing(boolean enabled) { ink.setFingerDrawing(enabled); }
+            @Override public void onThemeChanged() { if (closed) return; stylePanel(); listener.onStateChanged(); }
         });
 
-        tools = new LinearLayout(context);
-        tools.setOrientation(LinearLayout.VERTICAL);
-        tools.setPadding(dp(8), dp(8), dp(8), dp(8));
-        tools.setBackgroundColor(0xfff8fafc);
-        toolbar = new ScrollView(context);
-        toolbar.setFillViewport(false);
-        toolbar.addView(tools);
-        toolbarParams = params(dp(300), dp(350), false, "FASK 도구");
-        toolbarParams.flags |= WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
-        toolbar.setOnTouchListener((v, e) -> {
-            if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE && !insideToggle(e)) perform(this::closePeek);
-            return false;
-        });
-        addRow(new String[]{"읽기", "펜", "지우개"}, new Runnable[]{() -> setMode(Mode.IDLE), () -> setMode(Mode.PEN), () -> setMode(Mode.ERASER)}, false);
-        // Reading and folding remain available while a request owns the edit lock.
-        LinearLayout firstRow = (LinearLayout) tools.getChildAt(0);
-        editButtons.add((Button) firstRow.getChildAt(1));
-        editButtons.add((Button) firstRow.getChildAt(2));
-        SharedPreferences penPrefs = context.getSharedPreferences("overlay_pen", Context.MODE_PRIVATE);
-        int savedColor = penPrefs.getInt("color", OverlayInkView.PEN_COLORS[0]);
-        int initialColor = OverlayInkView.PEN_COLORS[0];
-        for (int c : OverlayInkView.PEN_COLORS) if (c == savedColor) initialColor = c;
-        ink.setPenColor(initialColor);
-        LinearLayout colorRow = new LinearLayout(context);
-        List<View> swatches = new ArrayList<>();
-        int[] selectedColor = {initialColor};
-        Runnable styleSwatches = () -> {
-            for (int i = 0; i < swatches.size(); i++) {
-                int c = OverlayInkView.PEN_COLORS[i];
-                GradientDrawable shape = new GradientDrawable();
-                shape.setShape(GradientDrawable.OVAL);
-                shape.setColor(c);
-                if (c == selectedColor[0]) shape.setStroke(dp(3), 0xff5b51df); else shape.setStroke(dp(1), 0xffcbd5e1);
-                swatches.get(i).setBackground(shape);
-                swatches.get(i).setSelected(c == selectedColor[0]);
-            }
-        };
-        for (int i = 0; i < OverlayInkView.PEN_COLORS.length; i++) {
-            int c = OverlayInkView.PEN_COLORS[i];
-            View swatch = new View(context);
-            swatch.setContentDescription("펜 색상 " + (i + 1));
-            swatch.setOnClickListener(v -> perform(() -> {
-                selectedColor[0] = c;
-                ink.setPenColor(c);
-                styleSwatches.run();
-                penPrefs.edit().putInt("color", c).apply();
-            }));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(36), 1);
-            lp.setMargins(dp(3), dp(3), dp(3), dp(3));
-            colorRow.addView(swatch, lp);
-            swatches.add(swatch);
-        }
-        styleSwatches.run();
-        tools.addView(colorRow);
-        addRow(new String[]{"모두 지우기", "영역 선택"}, new Runnable[]{ink::clearInk, () -> setMode(Mode.REGION)}, true);
-        finger = new Switch(context);
-        finger.setText("손가락으로 그리기");
-        finger.setTextColor(0xff0f172a);
-        finger.setMinHeight(dp(48));
-        finger.setOnCheckedChangeListener((button, checked) -> ink.setFingerDrawing(checked));
-        tools.addView(finger);
-        notice = new TextView(context);
-        notice.setText("필기는 화면 위치에 고정됩니다. 문서를 이동했다면 필기와 영역을 다시 설정하세요.\n보호된 화면은 검게 캡처되거나 캡처할 수 없습니다.");
-        notice.setTextColor(0xff334155);
-        notice.setTextSize(12);
-        notice.setPadding(dp(4), dp(4), dp(4), dp(4));
-        tools.addView(notice);
-        LinearLayout actions = new LinearLayout(context);
-        question = button("질문 · 앱 열기", this::showPanel);
-        actions.addView(question, new LinearLayout.LayoutParams(0, dp(52), 1));
-        actions.addView(button("종료", listener::onStop), new LinearLayout.LayoutParams(0, dp(52), 1));
-        tools.addView(button("프로젝트 바꾸기", this::showProjectPicker), new LinearLayout.LayoutParams(-1, dp(48)));
-        tools.addView(actions);
-
+        // Mirrors the desktop .overlay-panel: header (eyebrow, project, 접기 ×), content, side width grip.
         panel = new FrameLayout(context);
-        panel.setBackgroundColor(Color.WHITE);
+        panel.setClipToOutline(true);
         LinearLayout panelColumn = new LinearLayout(context);
         panelColumn.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout header = new LinearLayout(context);
-        TextView title = new TextView(context);
-        title.setText("FASK 화면 질문 · 이동");
-        title.setTextColor(0xff0f172a);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setPadding(dp(12), 0, 0, 0);
-        header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
-        header.addView(button("접기", this::hidePanel), new LinearLayout.LayoutParams(dp(80), dp(48)));
-        panelColumn.addView(header);
+        panelHeader = new LinearLayout(context);
+        panelHeader.setGravity(Gravity.CENTER_VERTICAL);
+        panelHeader.setPadding(dp(12), dp(10), dp(12), dp(10));
+        LinearLayout heading = new LinearLayout(context);
+        heading.setOrientation(LinearLayout.VERTICAL);
+        panelEyebrow = new TextView(context);
+        panelEyebrow.setText("ASK IN CONTEXT");
+        panelEyebrow.setTextSize(11);
+        panelEyebrow.setLetterSpacing(0.05f);
+        panelEyebrow.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        heading.addView(panelEyebrow);
+        panelTitle = new TextView(context);
+        panelTitle.setText("화면 질문");
+        panelTitle.setTextSize(13);
+        panelTitle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        panelTitle.setSingleLine(true);
+        panelTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        panelTitle.setPadding(0, dp(4), 0, 0);
+        heading.addView(panelTitle);
+        panelHeader.addView(heading, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        panelFold = new TextView(context);
+        panelFold.setText("접기 ×");
+        panelFold.setTextSize(12);
+        panelFold.setGravity(Gravity.CENTER);
+        panelFold.setPadding(dp(10), dp(6), dp(10), dp(6));
+        panelFold.setContentDescription("질문 창 접기");
+        panelFold.setOnClickListener(v -> perform(this::hidePanel));
+        panelHeader.addView(panelFold, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        panelColumn.addView(panelHeader, new LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT));
+        panelHeaderRule = new View(context);
+        panelColumn.addView(panelHeaderRule, new LinearLayout.LayoutParams(-1, Math.max(1, dp(1) / 2)));
         panelContent = new FrameLayout(context);
         panelColumn.addView(panelContent, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView resize = new TextView(context);
-        resize.setText("↘ 크기 조절");
-        resize.setTextColor(0xff475569);
-        resize.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        resize.setPadding(0, 0, dp(12), 0);
-        resize.setContentDescription("질문 패널 크기 조절");
-        panelColumn.addView(resize, new LinearLayout.LayoutParams(-1, dp(36)));
-        panel.addView(panelColumn, new FrameLayout.LayoutParams(-1, -1));
+        panelRow = new LinearLayout(context);
+        panelRow.setOrientation(LinearLayout.HORIZONTAL);
+        panelRow.addView(panelColumn, new LinearLayout.LayoutParams(0, -1, 1));
+        // Width-only grip on the side away from the nearer screen edge (see placePanelEdge).
+        panelEdge = new FrameLayout(context);
+        panelEdge.setContentDescription("질문 창 너비 조절");
+        panelEdgeBar = new View(context);
+        panelEdge.addView(panelEdgeBar, new FrameLayout.LayoutParams(dp(4), dp(40), Gravity.CENTER));
+        panelRow.addView(panelEdge, new LinearLayout.LayoutParams(dp(14), -1));
+        // Near a screen edge the grip sits inside the system back-gesture zone; claim its
+        // centre (Android caps exclusions at 200dp per edge) so drags reach the grip.
+        if (Build.VERSION.SDK_INT >= 29) panelEdge.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int mid = (b - t) / 2, half = Math.min(dp(100), mid);
+            v.setSystemGestureExclusionRects(java.util.Collections.singletonList(new Rect(0, mid - half, r - l, mid + half)));
+        });
+        panel.addView(panelRow, new FrameLayout.LayoutParams(-1, -1));
         panelParams = params(dp(420), dp(640), true, "FASK 질문");
         panelParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+        // Tapping the app behind the panel folds it, like clicking outside the desktop panel.
+        panelParams.flags |= WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
+        panel.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE && mode == Mode.PANEL && !imeVisible()) perform(this::hidePanel);
+            return false;
+        });
         panelParams.x = dp(12); panelParams.y = dp(12);
-        installDrag(title, panelParams, false, false);
-        installDrag(resize, panelParams, true, false);
+        installDrag(panelHeader, panelParams, false);
+        installDrag(panelEdge, panelParams, true);
+        stylePanel();
         refreshSafeBounds();
         clampAll();
+        applyLock();
+        regionPrefs = context.getSharedPreferences(REGION_PREFS, Context.MODE_PRIVATE);
+        restoreSavedRegion();
     }
 
     private static void checkThread() {
@@ -248,21 +215,49 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         if (Build.VERSION.SDK_INT >= 30) p.setFitInsetsTypes(0);
         return p;
     }
-    private Button button(String title, Runnable action) {
-        Button button = new Button(context);
-        button.setText(title); button.setTextSize(12); button.setAllCaps(false); button.setMinWidth(0);
-        button.setPadding(dp(2), 0, dp(2), 0);
-        button.setOnClickListener(v -> { perform(action); closePeek(); });
-        return button;
+    private void render() {
+        if (closed) return;
+        boolean locked = interactionLocked || captureLocked;
+        chrome.render(mode, !locked && geometryReady, locked, mode == Mode.PANEL);
     }
-    private void addRow(String[] titles, Runnable[] actions, boolean editing) {
-        LinearLayout row = new LinearLayout(context);
-        for (int i = 0; i < titles.length; i++) {
-            Button button = button(titles[i], actions[i]);
-            row.addView(button, new LinearLayout.LayoutParams(0, dp(50), 1));
-            if (editing) editButtons.add(button);
+    /** Project list for the native picker, sent by the panel page whenever it changes. */
+    public void setProjects(List<OverlayChrome.Project> projects, String currentId, String lockReason) {
+        checkThread();
+        if (closed) return;
+        chrome.setProjects(projects, currentId, lockReason);
+        for (OverlayChrome.Project p : projects) if (p.id.equals(currentId)) panelTitle.setText(p.name);
+    }
+    /** Same tokens as the native toolbar, so the panel follows the app theme on every open. */
+    private void stylePanel() {
+        OverlayChrome.Palette c = chrome.palette();
+        GradientDrawable card = new GradientDrawable();
+        card.setCornerRadius(dp(12));
+        card.setColor(c.bar);
+        card.setStroke(Math.max(1, dp(1)), c.hairlineStrong);
+        panel.setBackground(card);
+        panelEyebrow.setTextColor(c.inkSubtle);
+        panelTitle.setTextColor(c.ink);
+        GradientDrawable fold = new GradientDrawable();
+        fold.setCornerRadius(dp(8));
+        fold.setColor(c.bar);
+        fold.setStroke(Math.max(1, dp(1)), c.hairlineStrong);
+        panelFold.setBackground(fold);
+        panelFold.setTextColor(c.inkSubtle);
+        panelHeaderRule.setBackgroundColor(c.hairline);
+        GradientDrawable grip = new GradientDrawable();
+        grip.setCornerRadius(dp(2));
+        grip.setColor(c.hairlineStrong);
+        panelEdgeBar.setBackground(grip);
+    }
+    /** Keyboard taps reach the panel as outside touches; they must not fold it. */
+    private boolean imeVisible() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsets insets = panel.getRootWindowInsets();
+            return insets != null && insets.isVisible(WindowInsets.Type.ime());
         }
-        tools.addView(row);
+        Rect visible = new Rect();
+        panel.getWindowVisibleDisplayFrame(visible);
+        return visible.height() < bounds.height() * 3 / 4;
     }
     private void perform(Runnable action) {
         if (closed) return;
@@ -275,10 +270,11 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
 
     public void show() {
         checkThread();
-        if (!closed) attach(toggle, toggleParams);
+        if (!closed) chrome.attachHandle();
     }
-    public boolean isToggleReady() { return toggle.isAttachedToWindow() && toggle.getWidth() > 0 && toggle.getHeight() > 0; }
+    public boolean isToggleReady() { return chrome.isHandleReady(); }
     public Mode getMode() { return mode; }
+    public boolean isDarkTheme() { return chrome.isDark(); }
     public OverlayInkView getInk() { return ink; }
     public OverlayGeometry.GeometrySnapshot getGeometry() { return geometry; }
     public boolean isGeometryReady() { return geometryReady; }
@@ -292,8 +288,8 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         checkThread();
         if (closed || captureVisibility != null) throw new IllegalStateException("Capture already owns windows");
         View observer = new View(context);
-        CaptureVisibility state = new CaptureVisibility(captureId, mode, toggle.isAttachedToWindow(),
-            toolbar.isAttachedToWindow(), panel.isAttachedToWindow(), observer);
+        CaptureVisibility state = new CaptureVisibility(captureId, mode, chrome.isHandleAttached(),
+            chrome.isBarShown(), panel.isAttachedToWindow(), observer);
         captureVisibility = state;
         setCaptureLocked(true);
         WindowManager.LayoutParams observation = params(1, WindowManager.LayoutParams.MATCH_PARENT, false, "FASK 캡처 전환");
@@ -303,14 +299,13 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         attach(observer, observation);
         hideIme();
         panelParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-        remove(ink); remove(toolbar); remove(panel); remove(toggle);
+        remove(ink); chrome.detachAll(); remove(panel);
         mode = Mode.CAPTURING;
         ink.setMode(mode);
         state.observation = new Runnable() {
             @Override public void run() {
                 if (closed || captureVisibility != state) return;
-                boolean detached = !ink.isAttachedToWindow() && !toolbar.isAttachedToWindow()
-                    && !panel.isAttachedToWindow() && !toggle.isAttachedToWindow();
+                boolean detached = !ink.isAttachedToWindow() && !chrome.anyAttached() && !panel.isAttachedToWindow();
                 boolean imeHidden = false;
                 if (observer.isAttachedToWindow() && observer.getWidth() > 0) {
                     if (Build.VERSION.SDK_INT >= 30) {
@@ -355,10 +350,10 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             attach(panel, panelParams);
             // Never force-show an IME the user may have dismissed during capture.
         }
-        toolbarVisible = state.toolbar;
-        if (state.toolbar) attach(toolbar, toolbarParams);
-        if (state.toggle) attach(toggle, toggleParams);
+        // A panel that was not brought back must not leave the handle hidden with it.
+        chrome.restore(state.toggle || (state.panel && !panel.isAttachedToWindow()), state.toolbar);
         listener.onStateChanged();
+        render();
     }
 
     public void setPanelContent(View content) {
@@ -367,7 +362,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         panelContent.removeAllViews();
         if (content != null) panelContent.addView(content, new FrameLayout.LayoutParams(-1, -1));
         hasPanelContent = content != null;
-        question.setText(hasPanelContent ? "질문" : "질문 · 앱 열기");
         if (!hasPanelContent) hidePanel();
     }
 
@@ -381,8 +375,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
     private void applyLock() {
         boolean locked = interactionLocked || captureLocked;
         ink.setInteractionLocked(locked);
-        for (Button button : editButtons) button.setEnabled(!locked && geometryReady);
-        finger.setEnabled(!locked);
+        render();
     }
     public void setCaptureLocked(boolean locked) {
         checkThread(); captureLocked = locked; applyLock();
@@ -402,12 +395,11 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             attach(ink, inkParams);
             ink.requestFocus();
             // Tools must sit above the explicitly touch-owning full-display editor.
-            remove(toolbar); remove(toggle);
-            if (toolbarVisible) attach(toolbar, toolbarParams);
-            attach(toggle, toggleParams);
+            chrome.raise();
             ink.post(ink::reportGeometry);
         } else remove(ink);
         listener.onStateChanged();
+        render();
     }
 
     public void showPanel() {
@@ -415,16 +407,19 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         if (closed || captureLocked) return;
         if (!hasPanelContent) {
             setMode(Mode.IDLE);
-            toolbarVisible = false; toolbarPinned = false; remove(toolbar);
+            chrome.collapse();
             listener.onOpenApp();
+            render();
             return;
         }
         mode = Mode.PANEL;
         ink.setMode(mode); remove(ink);
-        toolbarVisible = false; toolbarPinned = false; remove(toolbar);
+        chrome.hideHandle();
         panelParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        stylePanel();
         clampAll(); attach(panel, panelParams); update(panel, panelParams);
         listener.onStateChanged();
+        render();
     }
     /** Opens the panel with its project list expanded; no signal when showPanel opened the app instead. */
     private void showProjectPicker() {
@@ -432,21 +427,26 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         if (mode == Mode.PANEL) listener.onProjectPicker();
     }
     private void hidePanelWindow() {
+        boolean shown = panel.isAttachedToWindow();
         hideIme();
         panelParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         update(panel, panelParams);
         remove(panel);
+        // The handle steps aside while the panel is open; capture restores it itself.
+        if (shown && captureVisibility == null) chrome.attachHandle();
     }
     public void hidePanel() {
         checkThread();
         if (closed) return;
         if (captureVisibility != null) {
+            if (captureVisibility.panel) captureVisibility.toggle = true;
             captureVisibility.panel = false;
             if (captureVisibility.mode == Mode.PANEL) captureVisibility.mode = Mode.IDLE;
         }
         hidePanelWindow();
         if (mode == Mode.PANEL) mode = Mode.IDLE;
         listener.onStateChanged();
+        render();
     }
     private void hideIme() {
         InputMethodManager ime = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -456,30 +456,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         }
         panel.clearFocus();
     }
-    /** Collapsed → peek (auto-closes) → pinned → collapsed. */
-    private void toggleToolbar() {
-        if (closed || captureLocked) return;
-        if (!toolbarVisible) {
-            toolbarVisible = true; toolbarPinned = false;
-            positionToolbar(); attach(toolbar, toolbarParams); animatePeek();
-        } else if (!toolbarPinned) toolbarPinned = true;
-        else { toolbarVisible = false; toolbarPinned = false; remove(toolbar); }
-    }
-    private void closePeek() {
-        if (toolbarVisible && !toolbarPinned) { toolbarVisible = false; remove(toolbar); }
-    }
-    private boolean insideToggle(MotionEvent e) {
-        float x = e.getRawX(), y = e.getRawY();
-        return x >= toggleParams.x && x < toggleParams.x + toggleParams.width
-            && y >= toggleParams.y && y < toggleParams.y + toggleParams.height;
-    }
-    private void animatePeek() {
-        boolean up = toolbarParams.y < toggleParams.y;
-        tools.setAlpha(0f);
-        tools.setTranslationY(up ? dp(24) : -dp(24));
-        tools.animate().alpha(1f).translationY(0f).setDuration(160).start();
-    }
-
     public void updateDisplay(Rect nextBounds, int nextDensity, int nextRotation, long generation) {
         checkThread();
         if (closed) return;
@@ -508,7 +484,8 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         geometry = next;
         ink.setGeometry(next);
         ink.invalidateGeometry();
-        notice.setText(GEOMETRY_CHANGED + "\n필기는 화면 위치에 고정됩니다. 문서를 이동했다면 필기와 영역을 다시 설정하세요.\n보호된 화면은 검게 캡처되거나 캡처할 수 없습니다.");
+        restoreSavedRegion();
+        Toast.makeText(context, GEOMETRY_CHANGED, Toast.LENGTH_SHORT).show();
         listener.onGeometryChanged(next);
         if (mode == Mode.PEN || mode == Mode.ERASER || mode == Mode.REGION) setMode(Mode.IDLE);
     }
@@ -525,6 +502,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
                     geometry = measured;
                     ink.setGeometry(measured);
                     ink.invalidateGeometry();
+                    restoreSavedRegion();
                 }
             } else installGeometry(measured);
         });
@@ -532,6 +510,23 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
     @Override public void onRevisionChanged() { listener.onStateChanged(); }
     @Override public void onRegionConfirmed() { perform(this::showPanel); }
     @Override public void onRegionCancelled() { perform(() -> setMode(Mode.IDLE)); }
+    @Override public void onRegionSaved(RectF r) {
+        float w = Math.max(1, bounds.width()), h = Math.max(1, bounds.height());
+        regionPrefs.edit().putFloat("l", r.left / w).putFloat("t", r.top / h)
+            .putFloat("r", r.right / w).putFloat("b", r.bottom / h).putInt("rot", rotation).apply();
+    }
+    /** The last confirmed selection, rescaled to this display; a different rotation needs a new one. */
+    private void restoreSavedRegion() {
+        RectF saved = null;
+        if (regionPrefs.contains("l") && regionPrefs.getInt("rot", -1) == rotation) {
+            float w = bounds.width(), h = bounds.height();
+            saved = new RectF(regionPrefs.getFloat("l", 0) * w, regionPrefs.getFloat("t", 0) * h,
+                regionPrefs.getFloat("r", 0) * w, regionPrefs.getFloat("b", 0) * h);
+            if (saved.width() <= 0 || saved.height() <= 0) saved = null;
+        }
+        if (saved == null && ink.getRegion() == null) return;
+        ink.restoreRegion(saved);
+    }
 
     private void refreshSafeBounds() {
         safe.set(0, 0, bounds.width(), bounds.height());
@@ -552,82 +547,70 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         p.x = Math.max(safe.left, Math.min(p.x, safe.right - p.width));
         p.y = Math.max(safe.top, Math.min(p.y, safe.bottom - p.height));
     }
-    private void positionToolbar() {
-        toolbarParams.width = Math.min(dp(300), safe.width());
-        toolbarParams.height = Math.min(dp(350), safe.height());
-        toolbarParams.x = toggleParams.x;
-        boolean up = toggleParams.y + toggleParams.height / 2 > safe.centerY();
-        toolbarParams.y = up ? toggleParams.y - toolbarParams.height - dp(8) : toggleParams.y + toggleParams.height + dp(8);
-        clamp(toolbarParams);
-        // A narrow/short display can have no vertical space. Keep the toggle beside tools instead.
-        if (overlaps(toggleParams, toolbarParams)) {
-            toolbarParams.x = toggleParams.x >= safe.centerX() ? toggleParams.x - toolbarParams.width - dp(8) : toggleParams.x + toggleParams.width + dp(8);
-            clamp(toolbarParams);
-            if (overlaps(toggleParams, toolbarParams)) {
-                toolbarParams.width = Math.max(1, safe.width() - toggleParams.width - dp(8));
-                toolbarParams.x = toggleParams.x >= safe.centerX() ? safe.left : safe.right - toolbarParams.width;
-                clamp(toolbarParams);
-            }
-        }
+    private int clampPanelWidth(int width) {
+        int max = Math.max(1, safe.width() - dp(24));
+        return Math.max(Math.min(dp(320), max), Math.min(width, max));
     }
-    private boolean overlaps(WindowManager.LayoutParams a, WindowManager.LayoutParams b) {
-        return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-    }
-    private void separateToggleAndPanel() {
-        if (!overlaps(toggleParams, panelParams)) return;
-        int[] xs = {safe.right - toggleParams.width, safe.left};
-        int[] ys = {safe.top, safe.bottom - toggleParams.height};
-        for (int x : xs) for (int y : ys) {
-            toggleParams.x = x; toggleParams.y = y;
-            if (!overlaps(toggleParams, panelParams)) return;
-        }
-        // Preserve a reachable toggle gutter on very small displays.
-        panelParams.width = Math.max(1, Math.min(panelParams.width, safe.width() - toggleParams.width - dp(8)));
-        panelParams.x = safe.left;
-        toggleParams.x = safe.right - toggleParams.width;
-        toggleParams.y = safe.top;
+    private boolean dockedRight() { return panelParams.x + panelParams.width / 2 > safe.centerX(); }
+    /** The width grip faces away from the nearer screen edge: left when docked right, else right. */
+    private void placePanelEdge() {
+        boolean atStart = panelRow.indexOfChild(panelEdge) == 0;
+        boolean wantStart = dockedRight();
+        if (atStart == wantStart) return;
+        ViewGroup.LayoutParams lp = panelEdge.getLayoutParams();
+        panelRow.removeView(panelEdge);
+        panelRow.addView(panelEdge, wantStart ? 0 : panelRow.getChildCount(), lp);
     }
     private void clampAll() {
-        toggleParams.width = Math.min(dp(48), safe.width()); toggleParams.height = Math.min(dp(48), safe.height());
-        clamp(toggleParams);
-        int maxWidth = Math.max(1, safe.width() - dp(24)), maxHeight = Math.max(1, safe.height() - dp(24));
-        panelParams.width = Math.max(Math.min(dp(320), maxWidth), Math.min(panelParams.width, maxWidth));
+        chrome.setDisplay(densityDpi, bounds, safe);
+        int maxHeight = Math.max(1, safe.height() - dp(24));
+        panelParams.width = clampPanelWidth(panelParams.width);
         panelParams.height = Math.max(Math.min(dp(320), maxHeight), Math.min(panelParams.height, maxHeight));
         clamp(panelParams);
-        if (mode == Mode.PANEL) separateToggleAndPanel();
-        positionToolbar();
-        update(toggle, toggleParams); update(toolbar, toolbarParams); update(panel, panelParams);
+        // The grip under a resizing finger stays put until the gesture ends.
+        if (mode == Mode.PANEL && !resizingPanel) placePanelEdge();
+        update(panel, panelParams);
     }
 
-    private void installDrag(View target, WindowManager.LayoutParams p, boolean resize, boolean saveToggle) {
+    private void installDrag(View target, WindowManager.LayoutParams p, boolean resize) {
         target.setOnTouchListener(new View.OnTouchListener() {
             float downX, downY;
-            int startX, startY, startWidth, startHeight, pointer = -1;
-            boolean moved;
+            int startX, startY, startWidth, pointer = -1;
+            boolean moved, leftEdge;
             final int slop = ViewConfiguration.get(context).getScaledTouchSlop();
             @Override public boolean onTouch(View view, MotionEvent event) {
+                int action = event.getActionMasked();
+                if (resize && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) resizingPanel = false;
                 if (closed || captureLocked) return true;
-                switch (event.getActionMasked()) {
+                switch (action) {
                     case MotionEvent.ACTION_DOWN:
                         pointer = event.getPointerId(0); downX = event.getRawX(); downY = event.getRawY();
-                        startX = p.x; startY = p.y; startWidth = p.width; startHeight = p.height; moved = false; return true;
+                        startX = p.x; startY = p.y; startWidth = p.width; moved = false;
+                        leftEdge = dockedRight();
+                        if (resize) resizingPanel = true;
+                        return true;
                     case MotionEvent.ACTION_MOVE:
                         if (event.getPointerId(0) != pointer) return true;
                         float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
                         if (dx * dx + dy * dy > slop * slop) moved = true;
                         if (moved) perform(() -> {
-                            if (resize) { p.width = startWidth + Math.round(dx); p.height = startHeight + Math.round(dy); }
+                            if (resize) {
+                                p.width = clampPanelWidth(startWidth + (leftEdge ? -Math.round(dx) : Math.round(dx)));
+                                if (leftEdge) p.x = startX + startWidth - p.width;
+                            }
                             else { p.x = startX + Math.round(dx); p.y = startY + Math.round(dy); }
                             clampAll();
                         });
                         return true;
                     case MotionEvent.ACTION_UP:
                         if (!moved) view.performClick();
-                        else if (saveToggle) position.edit()
-                            .putFloat("x", p.x / (float) Math.max(1, bounds.width() - p.width))
-                            .putFloat("y", p.y / (float) Math.max(1, bounds.height() - p.height)).apply();
-                        pointer = -1; return true;
-                    case MotionEvent.ACTION_CANCEL: pointer = -1; return true;
+                        pointer = -1;
+                        if (resize) perform(OverlayWindowController.this::clampAll);
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        pointer = -1;
+                        if (resize) perform(OverlayWindowController.this::clampAll);
+                        return true;
                     default: return true;
                 }
             }
@@ -642,8 +625,9 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         captureVisibility = null;
         if (capture != null && capture.observation != null) main.removeCallbacks(capture.observation);
         RuntimeException first = null;
-        try { hideIme(); } catch (RuntimeException error) { first = error; }
-        for (View view : new View[]{ink, toolbar, panel, toggle, capture == null ? null : capture.observer}) {
+        try { hideIme(); } catch (RuntimeException error) { if (first == null) first = error; }
+        try { chrome.close(); } catch (RuntimeException error) { if (first == null) first = error; }
+        for (View view : new View[]{ink, panel, capture == null ? null : capture.observer}) {
             if (view == null) continue;
             try { remove(view); } catch (RuntimeException error) { if (first == null) first = error; }
         }

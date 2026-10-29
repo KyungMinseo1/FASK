@@ -61,6 +61,8 @@ final class OverlayWebBridge {
     private boolean panelShown;
     private long captureRevision;
     private String stateKey = "";
+    /** Test-build preview: the page uses an in-memory hub; no request reaches the network. */
+    private final boolean preview;
 
     static boolean supported() {
         return WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER);
@@ -68,13 +70,14 @@ final class OverlayWebBridge {
 
     @SuppressLint("SetJavaScriptEnabled")
     OverlayWebBridge(Context context, Handler main, OverlaySession session, long epoch,
-                     OverlayWindowController overlay, Host host) {
+                     OverlayWindowController overlay, Host host, boolean preview) {
         this.context = context;
         this.main = main;
         this.session = session;
         this.epoch = epoch;
         this.overlay = overlay;
         this.host = host;
+        this.preview = preview;
         WebViewAssetLoader assets = new WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(context))
             .build();
@@ -149,6 +152,12 @@ final class OverlayWebBridge {
         if (!closed) push("projectPicker", new JSONObject());
     }
 
+    /** The native toolbar picker chose a project; the panel performs the switch (lock, reset, errors). */
+    void selectProject(String projectId) {
+        try { if (!closed) push("selectProject", new JSONObject().put("projectId", projectId)); }
+        catch (JSONException ignored) { }
+    }
+
     void close() {
         if (closed) return;
         push("sessionInvalidated", new JSONObject());
@@ -170,6 +179,7 @@ final class OverlayWebBridge {
             o.put("inkRevision", ink.getRevision());
             o.put("captureRevision", captureRevision);
             o.put("mode", overlay.getMode().name());
+            o.put("theme", overlay.isDarkTheme() ? "dark" : "light");
             RectF region = ink.getRegion();
             if (region != null) o.put("region", new JSONObject()
                 .put("width", Math.round(region.width())).put("height", Math.round(region.height())));
@@ -221,6 +231,7 @@ final class OverlayWebBridge {
                     .put("profileId", session.profileId)
                     .put("projectId", session.projectId)
                     .put("sessionId", session.id);
+                if (preview) result.put("preview", true);
                 if (session.activeQuestionId != null) result.put("questionId", session.activeQuestionId);
                 ok(id, result);
                 return;
@@ -268,6 +279,21 @@ final class OverlayWebBridge {
                 }
                 session.projectId = project;
                 session.activeQuestionId = null;
+                ok(id, new JSONObject());
+                return;
+            }
+            case "setProjects": {
+                JSONArray list = p.getJSONArray("projects");
+                java.util.List<OverlayChrome.Project> projects = new java.util.ArrayList<>();
+                for (int i = 0; i < Math.min(list.length(), 500); i++) {
+                    JSONObject item = list.getJSONObject(i);
+                    String project = item.getString("id");
+                    if (!project.matches("[A-Za-z0-9-]{1,100}")) throw new JSONException("projectId");
+                    projects.add(new OverlayChrome.Project(project, item.getString("name"),
+                        item.isNull("group") ? null : item.getString("group")));
+                }
+                String lock = p.isNull("lockReason") ? null : p.optString("lockReason", null);
+                overlay.setProjects(projects, session.projectId, lock);
                 ok(id, new JSONObject());
                 return;
             }

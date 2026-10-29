@@ -8,7 +8,7 @@ import {
 import { errorText } from '@desktop/renderer/src/personal/common'
 import { parsePairing } from './hub'
 import { savePairing, snapshotCache } from './storage'
-import { stopOverlay } from './overlay/control'
+import { overlayPreviewAvailable, previewOverlay, stopOverlay } from './overlay/control'
 import { HubError, transport, type Pairing } from './transport'
 
 const SCAN_INSTRUCTIONS = 'PC FASK 설정 > 모바일 연결의 QR을 비춰 주세요.'
@@ -124,6 +124,11 @@ export default function Pair({
             연결
           </button>
         </label>
+      )}
+      {overlayPreviewAvailable() && (
+        <button disabled={busy} onClick={() => void previewOverlay().catch((e) => setError(errorText(e)))}>
+          오버레이 미리보기 (테스트)
+        </button>
       )}
       {busy && <p>PC에 연결하는 중…</p>}
       {error && (

@@ -11,3 +11,7 @@ mobile/android/.gradle/
 .envrc
 *.log
 
+# AndroidKeys
+*.jks
+*.keystore
+keystore.properties

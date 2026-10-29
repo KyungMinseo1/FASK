@@ -12,9 +12,8 @@ import { createHubClient, type HubConn } from '../hub'
 import { createBridge, type Bootstrap, type Port } from './bridge'
 import OverlayPanel from './OverlayPanel'
 import { bridgeTransport } from './transport'
-import { initTheme } from '@desktop/renderer/src/personal/theme'
+import { createPreviewClient } from './preview'
 
-initTheme()
 const root = createRoot(document.getElementById('root')!)
 const fatal = (message: string): void =>
   root.render(<p className="notice error screen-q-fatal">{message}</p>)
@@ -53,12 +52,15 @@ async function start(): Promise<void> {
   }
   const bridge = createBridge(port)
   const boot = await bridge.bootstrap()
+  document.documentElement.dataset.theme = boot.theme
   // One client per session: no cache, token stays native, never replaced on hide/show.
-  const client = createHubClient(boot.identity, {
-    transport: bridgeTransport(bridge),
-    onStatus: (s) => statusSubs.forEach((cb) => cb(s)),
-    onUnpaired: (m) => unpairSubs.forEach((cb) => cb(m))
-  })
+  const client = boot.preview
+    ? createPreviewClient(boot)
+    : createHubClient(boot.identity, {
+        transport: bridgeTransport(bridge),
+        onStatus: (s) => statusSubs.forEach((cb) => cb(s)),
+        onUnpaired: (m) => unpairSubs.forEach((cb) => cb(m))
+      })
   bridge.onPush((p) => {
     if (p.event === 'sessionInvalidated') client.close()
   })

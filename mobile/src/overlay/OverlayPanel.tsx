@@ -79,13 +79,17 @@ export default function OverlayPanel({
   useEffect(() => {
     const offChanged = api.onChanged(() => void refresh())
     const offPush = bridge.onPush((push) => {
-      if (push.event === 'overlayState') setOverlay(push.payload)
+      if (push.event === 'overlayState') {
+        setOverlay(push.payload)
+        document.documentElement.dataset.theme = push.payload.theme
+      }
       else if (push.event === 'panelShown') {
         // The Composer stays mounted; reconnecting replays missed stream/state through onChanged.
         api.reconnect()
         void refresh()
       } else if (push.event === 'sessionInvalidated') setBlocked('화면 질문이 종료되었습니다.')
       else if (push.event === 'projectPicker') setPicker(true)
+      else if (push.event === 'selectProject') void switchRef.current(push.payload.projectId)
     })
     return () => {
       offChanged()
@@ -102,7 +106,7 @@ export default function OverlayPanel({
   }, [data, boot.profileId, projectId, questionId, bridge])
 
   // The Composer's autofocused input otherwise keeps the panel scrolled past the opened list.
-  const head = useRef<HTMLElement>(null)
+  const head = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!picker) return
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
@@ -158,8 +162,20 @@ export default function OverlayPanel({
     void refresh()
   }
   const locked = interaction.busy || interaction.running || interaction.unresolved
+  // WebView has no confirm() dialog here; a second tap within 3s confirms instead.
+  const [confirmNew, setConfirmNew] = useState(false)
+  useEffect(() => {
+    if (!confirmNew) return
+    const t = setTimeout(() => setConfirmNew(false), 3000)
+    return () => clearTimeout(t)
+  }, [confirmNew])
   const newConversation = (): void => {
-    if (locked || !confirm('현재 작성 중인 내용을 버리고 새 대화를 시작할까요?')) return
+    if (locked) return
+    if (!confirmNew) {
+      setConfirmNew(true)
+      return
+    }
+    setConfirmNew(false)
     setQuestionId(undefined)
     setHistoryOpen(false)
     void bridge.call('setQuestion', { questionId: null }).catch((e) => setNotice(errorText(e)))
@@ -181,16 +197,25 @@ export default function OverlayPanel({
       setComposerKey((k) => k + 1)
     } catch (e) {
       setNotice(errorText(e))
+      // Chosen from the native toolbar the panel may be hidden; surface the error there.
+      void bridge.call('setPanelVisible', { visible: true }).catch(() => {})
     }
   }
-  const stop = (): void => {
-    const warn = interaction.running || interaction.unresolved
-    if (warn && !confirm('PC에서 답변이 계속 진행될 수 있습니다. 화면 질문을 종료할까요?')) return
-    void bridge.call('stop').catch(() => {})
-  }
+  const switchRef = useRef(switchProject)
+  switchRef.current = switchProject
+  const lockReason = locked ? '답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.' : null
+  const projectsKey = JSON.stringify([data.projects, data.workspaces, projectId, lockReason, notice])
+  // The native toolbar's project popover mirrors this list; resent after every switch attempt.
+  useEffect(() => {
+    const groups = new Map(data.workspaces.map((w) => [w.id, w.name]))
+    const projects = [...data.projects]
+      .sort((a, b) => (groups.get(a.workspaceId) ?? '').localeCompare(groups.get(b.workspaceId) ?? ''))
+      .map((p) => ({ id: p.id, name: p.name, group: groups.get(p.workspaceId) ?? null }))
+    void bridge.call('setProjects', { projects, lockReason }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridge, projectsKey])
 
   const question = questionId ? data.questions.find((q) => q.id === questionId) : undefined
-  const project = data.projects.find((p) => p.id === projectId)
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
       setNotice('')
@@ -200,57 +225,45 @@ export default function OverlayPanel({
       setNotice(errorText(e))
     }
   }
+  // The native window draws the desktop panel's header (project, 접기 ×) and a side resize grip
+  // on the edge facing away from the screen edge.
   return (
-    <div className="screen-q">
-      <header className="screen-q-head" ref={head}>
-        <button className="screen-q-project" aria-expanded={picker} onClick={() => setPicker((v) => !v)}>
-          {project?.name ?? 'FASK'} ▾
-        </button>
-        <span>
-          <button disabled={locked} onClick={newConversation}>
-            새 대화
-          </button>
-          <button onClick={() => void bridge.call('setPanelVisible', { visible: false })}>접기</button>
-          <button className="danger" onClick={stop}>
-            종료
-          </button>
-        </span>
-      </header>
+    <div className="overlay-panel screen-q-panel">
       {picker && (
-        <ProjectPicker
-          workspaces={data.workspaces}
-          projects={data.projects}
-          currentId={projectId}
-          disabledReason={locked ? '답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.' : undefined}
-          onSelect={(id) => void switchProject(id)}
-        />
+        <div className="screen-q-picker" ref={head}>
+          <ProjectPicker
+            workspaces={data.workspaces}
+            projects={data.projects}
+            currentId={projectId}
+            disabledReason={locked ? '답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.' : undefined}
+            onSelect={(id) => void switchProject(id)}
+          />
+        </div>
       )}
-      {unpaired && <p className="notice error">{unpaired}</p>}
-      {conn.state === 'offline' && (
-        <p className="notice">PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.</p>
-      )}
-      {conn.state === 'blocked' && (
-        <p className="notice error">인증서가 일치하지 않는 연결을 차단했습니다.</p>
-      )}
-      {blocked && <p className="notice error">{blocked}</p>}
-      {notice && <p className="notice error">{notice}</p>}
-      <div className="screen-q-region">
-        <span>
+      <div className="overlay-panel-content">
+        {unpaired && <p className="notice error">{unpaired}</p>}
+        {conn.state === 'offline' && (
+          <p className="notice">PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.</p>
+        )}
+        {conn.state === 'blocked' && (
+          <p className="notice error">인증서가 일치하지 않는 연결을 차단했습니다.</p>
+        )}
+        {blocked && <p className="notice error">{blocked}</p>}
+        <small className="overlay-capture-note">
           {overlay.region
-            ? `캡처 영역 ${overlay.region.width}×${overlay.region.height}px 선택됨`
-            : '캡처 영역 없음 · 화면 첨부 시 먼저 영역을 선택하세요'}
-          {overlay.hasInk ? ' · 필기 있음' : ''}
-        </span>
-        <button disabled={locked} onClick={() => void bridge.call('selectRegion').catch((e) => setNotice(errorText(e)))}>
-          영역 선택
-        </button>
-      </div>
-      <small className="screen-q-hint">
-        전송하는 순간의 화면에서 선택 영역과 필기만 보냅니다. 보호된 화면은 검게 캡처될 수 있습니다.
-      </small>
-      {question && (
-        <details open={historyOpen} onToggle={(e) => setHistoryOpen(e.currentTarget.open)}>
-          <summary>대화 기록</summary>
+            ? `캡처 영역 ${overlay.region.width}×${overlay.region.height}px`
+            : '영역 미설정 · 화면 첨부 전에 영역을 선택하세요'}
+          {overlay.hasInk ? ' · 필기 있음' : ''} · 캡처 포함을 선택하면 질문 전송 시 촬영합니다.
+          <button
+            disabled={locked}
+            onClick={() => void bridge.call('selectRegion').catch((e) => setNotice(errorText(e)))}
+          >
+            영역 선택
+          </button>
+        </small>
+        {question && (
+          <details open={historyOpen} onToggle={(e) => setHistoryOpen(e.currentTarget.open)}>
+            <summary>대화 기록</summary>
           <QuestionDetail
             question={question}
             concepts={data.concepts.filter((c) => c.projectId === projectId)}
@@ -264,28 +277,35 @@ export default function OverlayPanel({
               })
             }}
           />
-        </details>
-      )}
-      {!blocked && (
-        <Composer
-          key={composerKey}
-          projectId={projectId}
-          profileId={boot.profileId}
-          settings={data.settings}
-          questionId={questionId}
-          recentQuestion={composerKey === 0 ? recent : undefined}
-          persistDraft={false}
-          hasInk={overlay.hasInk}
-          onCapture={onCapture}
-          onSaved={() => {
-            setHistoryOpen(false)
-            void refresh()
-          }}
-          onCompleted={onCompleted}
-          onTurnIdentified={onTurnIdentified}
-          onInteractionState={onInteractionState}
-        />
-      )}
+          </details>
+        )}
+        {!blocked && (
+          <Composer
+            key={composerKey}
+            projectId={projectId}
+            profileId={boot.profileId}
+            settings={data.settings}
+            questionId={questionId}
+            recentQuestion={composerKey === 0 ? recent : undefined}
+            persistDraft={false}
+            hasInk={overlay.hasInk}
+            onCapture={onCapture}
+            onSaved={() => {
+              setHistoryOpen(false)
+              void refresh()
+            }}
+            onCompleted={onCompleted}
+            onTurnIdentified={onTurnIdentified}
+            onInteractionState={onInteractionState}
+          />
+        )}
+        {questionId && (
+          <button className="overlay-new" disabled={locked} onClick={newConversation}>
+            {confirmNew ? '다시 눌러 새 대화 시작' : '새 대화 시작'}
+          </button>
+        )}
+        {notice && <p className="notice error">{notice}</p>}
+      </div>
     </div>
   )
 }

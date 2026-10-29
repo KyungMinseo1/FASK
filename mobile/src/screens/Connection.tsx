@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { overlayPreviewAvailable, previewOverlay, syncOverlayTheme } from '../overlay/control'
+import { errorText } from '@desktop/renderer/src/personal/common'
 import { useNavigate } from 'react-router'
 import { readTheme, setTheme, type ThemePref } from '@desktop/renderer/src/personal/theme'
 import { useMobile } from '../context'
@@ -7,6 +9,7 @@ export default function Connection(): React.JSX.Element {
   const { data, pairing, client, conn, unpair } = useMobile()
   const navigate = useNavigate()
   const [theme, setThemeState] = useState(readTheme)
+  const [previewError, setPreviewError] = useState('')
   const profile = data.profiles.find((p) => p.id === data.activeProfileId)
   return (
     <>
@@ -17,7 +20,7 @@ export default function Connection(): React.JSX.Element {
         <h1>연결</h1>
         <span />
       </header>
-      <main className="mobile-body">
+      <main className="mobile-body mobile-connection-screen">
         <dl className="mobile-connection">
           <dt>연결 주소</dt>
           <dd>
@@ -40,6 +43,7 @@ export default function Connection(): React.JSX.Element {
               const v = e.target.value as ThemePref
               setThemeState(v)
               setTheme(v)
+              syncOverlayTheme(v)
             }}
           >
             <option value="system">시스템 설정 따르기</option>
@@ -47,6 +51,18 @@ export default function Connection(): React.JSX.Element {
             <option value="dark">다크</option>
           </select>
         </label>
+        {overlayPreviewAvailable() && (
+          <>
+            <button onClick={() => void previewOverlay().catch((e) => setPreviewError(errorText(e)))}>
+              오버레이 미리보기 (테스트)
+            </button>
+            {previewError && (
+              <p className="notice error" role="alert">
+                {previewError}
+              </p>
+            )}
+          </>
+        )}
         <button className="danger" onClick={() => void unpair('연결을 해제했습니다.')}>
           연결 해제
         </button>

@@ -223,6 +223,7 @@ public final class OverlaySessionService extends Service {
                         @Override public void onStop() { stopSession("CLOSED", "화면 질문을 종료했습니다."); }
                         @Override public void onWindowFailure() { stopSession("OVERLAY_PERMISSION", "화면 질문 창을 표시할 수 없습니다."); }
                         @Override public void onProjectPicker() { if (bridge != null) bridge.openProjectPicker(); }
+                        @Override public void onProjectSelected(String projectId) { if (bridge != null) bridge.selectProject(projectId); }
                     });
                 overlay.setGeometryReady(true);
                 overlay.show();
@@ -234,7 +235,7 @@ public final class OverlaySessionService extends Service {
                     @Override public boolean live(long epoch) { return OverlaySessionService.this.live() && epoch == sessionEpoch; }
                     @Override public void stop(String code, String message) { stopSession(code, message); }
                     @Override public void capture(OverlayCaptureController.Callback callback) { captureSelectedRegion(callback); }
-                });
+                }, false);
                 overlay.setPanelContent(bridge.view());
             }
             // Window attachment/layout is required, not just the addView call.

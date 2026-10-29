@@ -21,6 +21,8 @@ public final class OverlayInkView extends View {
         void onRegionConfirmed();
         void onRegionCancelled();
         void onGeometryMeasured(int x, int y, int width, int height);
+        /** A confirmed selection, in display-local pixels, for the controller to persist. */
+        void onRegionSaved(RectF region);
     }
 
     /** An immutable capture copy. The path and its width are already in display logical pixels. */
@@ -143,9 +145,20 @@ public final class OverlayInkView extends View {
         if (!strokes.isEmpty()) { strokes.clear(); changed(); }
     }
 
+    /** Ink is tied to the old geometry; the region is kept for the controller to restore or clear. */
     public void invalidateGeometry() {
         discardGesture();
-        strokes.clear(); region = null; draft = null; regionEpoch = -1;
+        strokes.clear(); draft = null;
+        regionEpoch = region == null ? -1 : geometry.epoch;
+        changed();
+    }
+
+    /** Installs a saved selection for the current geometry; null clears it. */
+    public void restoreRegion(RectF r) {
+        discardGesture();
+        region = r == null ? null : new RectF(r);
+        regionEpoch = r == null ? -1 : geometry.epoch;
+        draft = mode == OverlayWindowController.Mode.REGION && region != null ? new RectF(region) : null;
         changed();
     }
 
@@ -365,7 +378,9 @@ public final class OverlayInkView extends View {
         }
         if (pendingButton == 1 && cancelButton.contains(localX, localY)) { listener.onRegionCancelled(); return; }
         if (pendingButton == 2 && confirmButton.contains(localX, localY) && draft != null && validRegion(draft)) {
-            region = new RectF(draft); regionEpoch = geometry.epoch; changed(); listener.onRegionConfirmed();
+            region = new RectF(draft); regionEpoch = geometry.epoch; changed();
+            listener.onRegionSaved(new RectF(region));
+            listener.onRegionConfirmed();
         }
     }
 
