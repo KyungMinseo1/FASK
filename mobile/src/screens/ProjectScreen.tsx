@@ -52,7 +52,8 @@ export default function ProjectScreen(): React.JSX.Element {
   const project = data.projects.find((p) => p.id === projectId)
   const [query, setQuery] = useState(''),
     [filter, setFilter] = useState('all'),
-    [view, setView] = useState<'list' | 'graph'>('list')
+    [view, setView] = useState<'list' | 'graph'>('list'),
+    [menu, setMenu] = useState<Question | null>(null)
   const questions = useMemo(
     () => data.questions.filter((q) => q.projectId === projectId),
     [data.questions, projectId]
@@ -108,6 +109,7 @@ export default function ProjectScreen(): React.JSX.Element {
               selected={q.id === questionId}
               concepts={concepts}
               onOpen={() => open(q.id)}
+              onMenu={() => setMenu(q)}
             />
           ))}
         </div>
@@ -153,6 +155,15 @@ export default function ProjectScreen(): React.JSX.Element {
             ＋ 새 질문
           </button>
         </div>
+      )}
+      {menu && (
+        <QuestionSheet
+          key={menu.id}
+          question={menu}
+          projectId={projectId}
+          currentId={questionId}
+          onClose={() => setMenu(null)}
+        />
       )}
     </>
   )
@@ -298,20 +309,167 @@ function Navigate404(): React.JSX.Element {
   )
 }
 
+type SheetMode = 'actions' | 'rename' | 'delete' | 'move'
+
+function QuestionSheet({
+  question: q,
+  projectId,
+  currentId,
+  onClose
+}: {
+  question: Question
+  projectId: string
+  currentId?: string
+  onClose: () => void
+}): React.JSX.Element {
+  const { data, refresh } = useMobile()
+  const api = useApi()
+  const navigate = useNavigate()
+  const [mode, setMode] = useState<SheetMode>('actions')
+  const [name, setName] = useState(() => questionHeading(q))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const run = async (fn: () => Promise<void>, after?: () => void): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+      onClose()
+      after?.()
+      void refresh()
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="mobile-sheet-backdrop" onClick={() => !busy && onClose()}>
+      <div className="mobile-sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
+        <strong>{questionHeading(q)}</strong>
+        {mode === 'actions' && (
+          <>
+            <button onClick={() => setMode('rename')}>이름 바꾸기</button>
+            <button onClick={() => setMode('move')}>다른 프로젝트로 이동</button>
+            <button className="danger" onClick={() => setMode('delete')}>
+              삭제
+            </button>
+          </>
+        )}
+        {mode === 'rename' && (
+          <>
+            <input aria-label="질문 이름" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+            <button
+              className="primary"
+              disabled={busy || !name.trim()}
+              onClick={() => void run(() => api.rename('question', q.id, name.trim()))}
+            >
+              저장
+            </button>
+          </>
+        )}
+        {mode === 'delete' && (
+          <>
+            <p>이 질문을 삭제할까요?</p>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() =>
+                void run(
+                  () => api.remove('question', q.id),
+                  () => {
+                    if (q.id === currentId) navigate(`/p/${projectId}`)
+                  }
+                )
+              }
+            >
+              삭제
+            </button>
+          </>
+        )}
+        {mode === 'move' &&
+          data.workspaces.map((w) => {
+            const targets = data.projects.filter((p) => p.workspaceId === w.id && p.id !== projectId)
+            if (!targets.length) return null
+            return (
+              <div key={w.id} className="mobile-sheet-group">
+                <small>{w.name}</small>
+                {targets.map((p) => (
+                  <button
+                    key={p.id}
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        () => api.moveQuestion(q.id, p.id),
+                        () => navigate(`/p/${p.id}`)
+                      )
+                    }
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )
+          })}
+        {error && <p className="notice error">{error}</p>}
+        <button disabled={busy} onClick={onClose}>
+          취소
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function QuestionCard({
   question: q,
   selected,
   concepts,
-  onOpen
+  onOpen,
+  onMenu
 }: {
   question: Question
   selected: boolean
   concepts: { id: string; name: string }[]
   onOpen: () => void
+  onMenu: () => void
 }): React.JSX.Element {
   const complexity = questionComplexity(q)
+  const press = useRef<{ timer: number; x: number; y: number } | null>(null)
+  const longPressed = useRef(false)
+  const cancel = (): void => {
+    if (press.current) clearTimeout(press.current.timer)
+    press.current = null
+  }
+  useEffect(() => cancel, [])
   return (
-    <button className={`question-card ${selected ? 'selected' : ''}`} onClick={onOpen}>
+    <button
+      className={`question-card ${selected ? 'selected' : ''}`}
+      onPointerDown={(e) => {
+        cancel()
+        longPressed.current = false
+        const timer = window.setTimeout(() => {
+          press.current = null
+          longPressed.current = true
+          onMenu()
+        }, 500)
+        press.current = { timer, x: e.clientX, y: e.clientY }
+      }}
+      onPointerMove={(e) => {
+        const p = press.current
+        if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) cancel()
+      }}
+      onPointerUp={cancel}
+      onPointerCancel={cancel}
+      onPointerLeave={cancel}
+      onContextMenu={(e) => e.preventDefault()}
+      onClick={() => {
+        if (longPressed.current) {
+          longPressed.current = false
+          return
+        }
+        onOpen()
+      }}
+    >
       <div className="question-meta">
         <span>{complexity === 'complex' ? '깊이 탐구' : complexity === 'simple' ? '빠른 질문' : '미확정'}</span>
         <time>{dateLabel(q.createdAt)}</time>

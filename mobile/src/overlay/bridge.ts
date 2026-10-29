@@ -13,6 +13,7 @@ export type Op =
   | 'setInteractionState'
   | 'setQuestion'
   | 'setProject'
+  | 'setProjects'
   | 'clearInk'
   | 'setPanelVisible'
   | 'stop'
@@ -24,6 +25,7 @@ export type OverlayState = {
   inkRevision: number
   region?: { width: number; height: number }
   mode: string
+  theme: 'light' | 'dark'
 }
 export type Bootstrap = OverlayState & {
   identity: HubIdentity
@@ -31,6 +33,8 @@ export type Bootstrap = OverlayState & {
   projectId: string
   questionId?: string
   sessionId: string
+  /** Test-build preview only: no hub; the page serves an in-memory snapshot. */
+  preview?: boolean
 }
 export type Push =
   | { event: 'hubEvent'; payload: { id: string; event: string; data: string } }
@@ -39,6 +43,7 @@ export type Push =
   | { event: 'panelShown'; payload: Record<string, never> }
   | { event: 'sessionInvalidated'; payload: Record<string, never> }
   | { event: 'projectPicker'; payload: Record<string, never> }
+  | { event: 'selectProject'; payload: { projectId: string } }
 
 export class BridgeError extends Error {
   readonly code: string

@@ -256,6 +256,7 @@ export function createHubClient<P extends HubIdentity>(
     create: (kind, name, parentId) => rpc('create', [kind, name, parentId]) as Promise<string>,
     rename: async (kind, id, name) => void (await rpc('rename', [kind, id, name])),
     remove: async (kind, id) => void (await rpc('remove', [kind, id])),
+    moveQuestion: async (id, projectId) => void (await rpc('move-question', [id, projectId])),
     updateQuestion: async (id, patch) => void (await rpc('update-question', [id, patch])),
     editConcept: async (id, name, parentId) =>
       void (await rpc('edit-concept', [id, name, parentId])),

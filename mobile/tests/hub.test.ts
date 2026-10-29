@@ -147,6 +147,21 @@ describe('identity-only hub client without persistent cache', () => {
     c.close()
   })
 
+  it('moveQuestion posts move-question with id and project', async () => {
+    const calls: [string, unknown][] = []
+    const transport: HubTransport<HubIdentity> = {
+      async request(_identity, _address, _method, path, body) {
+        calls.push([path, body ? JSON.parse(body).args : undefined])
+        return ok(null)
+      },
+      openEvents: () => new Promise(() => {})
+    }
+    const { c } = memoryClient(transport)
+    await c.moveQuestion('q1', 'p2')
+    expect(calls).toContainEqual(['/rpc/move-question', ['q1', 'p2']])
+    c.close()
+  })
+
   it.each(['NETWORK', 'PIN_MISMATCH'] as const)(
     'returns only the last successful in-memory snapshot on %s',
     async (code) => {

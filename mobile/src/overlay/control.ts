@@ -29,6 +29,8 @@ export const isAndroidOverlay = (): boolean =>
 const plugin = registerPlugin<
   OverlayPlugin & {
     addListener(e: 'revoked', cb: (x: { fingerprint: string }) => void): Promise<PluginListenerHandle>
+    preview(): Promise<void>
+    setTheme(options: { pref: string }): Promise<void>
   }
 >('FaskOverlay')
 
@@ -38,6 +40,22 @@ export const overlayControl: OverlayPlugin = {
   start: (options) => plugin.start(options),
   stop: () => plugin.stop(),
   consumeRevocation: async () => (await plugin.consumeRevocation()) ?? null
+}
+
+/** Mirrors the app's theme choice (system/light/dark) to the native overlay toolbar. */
+export function syncOverlayTheme(pref: string): void {
+  if (isAndroidOverlay()) void plugin.setTheme({ pref }).catch(() => {})
+}
+
+/** Native overlay UI check without a PC; only `apk:test` (vite --mode pairing-test) shows it. */
+export const overlayPreviewAvailable = (): boolean =>
+  import.meta.env.MODE === 'pairing-test' && isAndroidOverlay()
+
+/** Shows the native toggle/toolbar without a hub or screen capture. */
+export async function previewOverlay(): Promise<void> {
+  const { granted } = await plugin.requestOverlayPermission()
+  if (!granted) throw new Error('다른 앱 위에 표시 권한을 허용해 주세요.')
+  await plugin.preview()
 }
 
 export function isOverlayCancellation(error: unknown): boolean {

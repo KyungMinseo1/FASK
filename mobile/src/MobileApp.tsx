@@ -184,19 +184,37 @@ function Shell({
       offRevoked()
     }
   }, [client, refresh, pairing, unpair])
+  const [retrying, setRetrying] = useState(false)
+  useEffect(() => setRetrying(false), [conn])
+  // Safety net: never leave the button stuck if no status change arrives.
+  useEffect(() => {
+    if (!retrying) return
+    const t = setTimeout(() => setRetrying(false), 15000)
+    return () => clearTimeout(t)
+  }, [retrying])
+  const retry = (): void => {
+    setRetrying(true)
+    client.reconnect()
+  }
+  const retryButton = (
+    <button disabled={retrying} onClick={retry}>
+      {retrying && <span className="mobile-spinner" aria-hidden />}
+      {retrying ? '연결 중…' : '다시 시도'}
+    </button>
+  )
 
   const banner =
     conn.state === 'offline' ? (
       <div className="mobile-banner offline" role="status">
         PC에 연결할 수 없습니다 · {conn.savedAt ? dateLabel(conn.savedAt) : '저장된'} 기록을
         표시합니다
-        <button onClick={() => client.reconnect()}>다시 시도</button>
+        {retryButton}
       </div>
     ) : conn.state === 'blocked' ? (
       <div className="mobile-banner blocked" role="alert">
         인증서가 일치하지 않는 연결을 차단했습니다. PC에서 연결을 초기화했다면 새 QR로 다시
         연결해 주세요.
-        <button onClick={() => client.reconnect()}>다시 시도</button>
+        {retryButton}
         <button onClick={() => navigate('/pair')}>다시 연결</button>
       </div>
     ) : null

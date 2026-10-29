@@ -10,12 +10,16 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.DisplayMetrics;
+import android.view.WindowManager;
+import android.widget.Toast;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.Lifecycle;
@@ -125,6 +129,7 @@ public final class OverlayPlugin extends Plugin {
     }
 
     private void begin(PluginCall call) {
+        closePreview();
         OverlaySession candidate;
         try {
             JSObject pairing = call.getObject("pairing");
@@ -285,6 +290,107 @@ public final class OverlayPlugin extends Plugin {
             if (fingerprint == null) call.resolve(null);
             else call.resolve(new JSObject().put("fingerprint", fingerprint));
         });
+    }
+
+    /** Test-build UI preview: real toggle/toolbar/panel windows over an in-memory hub; no session or capture. */
+    private static OverlayWindowController preview;
+    private static OverlayWebBridge previewBridge;
+
+    @PluginMethod
+    public void preview(PluginCall call) {
+        main.post(() -> {
+            if (!Settings.canDrawOverlays(getContext())) { call.reject("다른 앱 위에 표시 권한이 필요합니다.", "PERMISSION"); return; }
+            if (OverlaySession.current != null) { call.reject("화면 질문이 실행 중입니다.", "BUSY"); return; }
+            if (preview != null) { call.resolve(); return; }
+            Context app = getContext().getApplicationContext();
+            WindowManager windows = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
+            Rect bounds;
+            DisplayMetrics metrics = new DisplayMetrics();
+            windows.getDefaultDisplay().getRealMetrics(metrics);
+            if (Build.VERSION.SDK_INT >= 30) bounds = new Rect(windows.getMaximumWindowMetrics().getBounds());
+            else bounds = new Rect(0, 0, metrics.widthPixels, metrics.heightPixels);
+            try {
+                preview = new OverlayWindowController(app, windows, bounds, metrics.densityDpi,
+                    windows.getDefaultDisplay().getRotation(), 0, new OverlayWindowController.Listener() {
+                        @Override public void onToggleReady() {}
+                        @Override public void onStateChanged() { if (previewBridge != null) previewBridge.onOverlayChanged(); }
+                        @Override public void onGeometryChanged(OverlayGeometry.GeometrySnapshot geometry) {}
+                        @Override public void onOpenApp() { Toast.makeText(app, "미리보기: 앱 열기", Toast.LENGTH_SHORT).show(); }
+                        @Override public void onStop() { closePreview(); }
+                        @Override public void onWindowFailure() { closePreview(); }
+                        @Override public void onProjectPicker() { if (previewBridge != null) previewBridge.openProjectPicker(); }
+                        @Override public void onProjectSelected(String projectId) {
+                            if (previewBridge != null) previewBridge.selectProject(projectId);
+                        }
+                    });
+                preview.setProjects(PREVIEW_PROJECTS, PREVIEW_PROJECTS.get(0).id, null);
+                preview.setGeometryReady(true);
+                preview.show();
+                if (OverlayWebBridge.supported()) {
+                    OverlaySession session = new OverlaySession(new String[]{"127.0.0.1"}, 1, "preview", null,
+                        "preview-profile", PREVIEW_PROJECTS.get(0).id, null);
+                    previewBridge = new OverlayWebBridge(app, main, session, 0, preview, new OverlayWebBridge.Host() {
+                        @Override public boolean live(long epoch) { return preview != null; }
+                        @Override public void stop(String code, String message) { main.post(() -> closePreview()); }
+                        @Override public void capture(OverlayCaptureController.Callback callback) {
+                            callback.onFailure("CAPTURE", "미리보기에서는 화면을 캡처할 수 없습니다.");
+                        }
+                    }, true);
+                    preview.setPanelContent(previewBridge.view());
+                }
+                android.hardware.display.DisplayManager displays =
+                    (android.hardware.display.DisplayManager) app.getSystemService(Context.DISPLAY_SERVICE);
+                previewDisplays = new android.hardware.display.DisplayManager.DisplayListener() {
+                    @Override public void onDisplayAdded(int id) {}
+                    @Override public void onDisplayRemoved(int id) {}
+                    @Override public void onDisplayChanged(int id) {
+                        if (preview == null || id != android.view.Display.DEFAULT_DISPLAY) return;
+                        DisplayMetrics m = new DisplayMetrics();
+                        windows.getDefaultDisplay().getRealMetrics(m);
+                        Rect b = Build.VERSION.SDK_INT >= 30 ? new Rect(windows.getMaximumWindowMetrics().getBounds())
+                            : new Rect(0, 0, m.widthPixels, m.heightPixels);
+                        preview.updateDisplay(b, m.densityDpi, windows.getDefaultDisplay().getRotation(), 0);
+                        preview.setGeometryReady(true);
+                    }
+                };
+                displays.registerDisplayListener(previewDisplays, main);
+                call.resolve();
+            } catch (RuntimeException error) {
+                closePreview();
+                call.reject("미리보기를 띄울 수 없습니다.", "START_FAILED");
+            }
+        });
+    }
+
+    private static android.hardware.display.DisplayManager.DisplayListener previewDisplays;
+
+    private void closePreview() {
+        OverlayWindowController current = preview;
+        preview = null;
+        OverlayWebBridge panel = previewBridge;
+        previewBridge = null;
+        if (panel != null) try { panel.close(); } catch (RuntimeException ignored) {}
+        if (previewDisplays != null) {
+            ((android.hardware.display.DisplayManager) getContext().getApplicationContext()
+                .getSystemService(Context.DISPLAY_SERVICE)).unregisterDisplayListener(previewDisplays);
+            previewDisplays = null;
+        }
+        if (current != null) try { current.close(); } catch (RuntimeException ignored) {}
+    }
+
+    private static final java.util.List<OverlayChrome.Project> PREVIEW_PROJECTS = java.util.Arrays.asList(
+        new OverlayChrome.Project("preview-1", "자료구조", "2학기"),
+        new OverlayChrome.Project("preview-2", "운영체제", "2학기"),
+        new OverlayChrome.Project("preview-3", "선형대수 스터디", "개인"));
+
+    /** The app's theme choice (system/light/dark) for the native overlay chrome. */
+    @PluginMethod
+    public void setTheme(PluginCall call) {
+        String pref = call.getString("pref", "system");
+        if (!"light".equals(pref) && !"dark".equals(pref)) pref = "system";
+        getContext().getSharedPreferences(OverlayChrome.THEME_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(OverlayChrome.THEME_KEY, pref).apply();
+        call.resolve();
     }
 
     // Capacitor's default implementation serializes the complete PluginCall, including pairing.
