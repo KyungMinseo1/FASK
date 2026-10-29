@@ -3,6 +3,7 @@ package io.github.kyungminseo1.fask;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 
 import java.io.IOException;
@@ -64,23 +65,30 @@ public class PinnedTrustManagerTest {
         HeldCertificate a = TestCerts.leaf("a");
         HeldCertificate b = TestCerts.leaf("b");
         OkHttpClient c = PinnedTrustManager.client(TestCerts.pin(a), 5000);
-        int port;
-        MockWebServer sa = TestCerts.tlsServer(a);
-        sa.enqueue(new MockResponse().setBody("ok"));
-        sa.start(TestCerts.loopback(), 0);
-        port = sa.getPort();
-        String url = sa.url("/").toString();
-        try (Response r = get(c, url)) {
-            assertEquals(200, r.code());
-        }
-        sa.shutdown();
-        c.connectionPool().evictAll();
-        try (MockWebServer sb = TestCerts.tlsServer(b)) {
-            sb.enqueue(new MockResponse().setBody("ok"));
-            sb.start(TestCerts.loopback(), port);
+        try (MockWebServer server = TestCerts.tlsServer(a)) {
+            server.enqueue(new MockResponse().setBody("ok"));
+            server.start(TestCerts.loopback(), 0);
+            String url = server.url("/").toString();
+            try (Response r = get(c, url)) {
+                assertEquals(200, r.code());
+            }
+            RecordedRequest first = server.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull(first);
+            assertEquals("Bearer tok", first.getHeader("Authorization"));
+
+            // Keep the listener and URL: rebinding a just-closed port can fail on
+            // Linux. Force a new TLS connection, then rotate its certificate.
+            c.connectionPool().evictAll();
+            TestCerts.useCertificate(server, b);
+            // Enqueue after rotation so the server observes it before the next handshake.
+            server.enqueue(new MockResponse().setBody("ok"));
             IOException e = expectFailure(c, url);
             assertEquals("PIN_MISMATCH", HubErrors.classify(e));
-            assertEquals(0, sb.getRequestCount());
+            assertEquals(1, server.getRequestCount());
+            assertNull(server.takeRequest(100, java.util.concurrent.TimeUnit.MILLISECONDS));
+        } finally {
+            c.connectionPool().evictAll();
+            c.dispatcher().executorService().shutdownNow();
         }
     }
 
