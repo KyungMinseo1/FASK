@@ -258,7 +258,6 @@ export function createHubClient<P extends HubIdentity>(
     remove: async (kind, id) => void (await rpc('remove', [kind, id])),
     moveQuestion: async (id, projectId) => void (await rpc('move-question', [id, projectId])),
     updateQuestion: async (id, patch) => void (await rpc('update-question', [id, patch])),
-    moveQuestion: async (id, projectId) => void (await rpc('move-question', [id, projectId])),
     editConcept: async (id, name, parentId) =>
       void (await rpc('edit-concept', [id, name, parentId])),
     mergeConcept: async (source, target) => void (await rpc('merge-concept', [source, target])),
