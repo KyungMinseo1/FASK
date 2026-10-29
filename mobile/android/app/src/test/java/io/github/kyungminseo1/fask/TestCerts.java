@@ -21,8 +21,12 @@ final class TestCerts {
 
     static MockWebServer tlsServer(HeldCertificate cert, HeldCertificate... intermediates) {
         MockWebServer s = new MockWebServer();
-        s.useHttps(new HandshakeCertificates.Builder().heldCertificate(cert, intermediatesOf(intermediates)).build().sslSocketFactory(), false);
+        useCertificate(s, cert, intermediates);
         return s;
+    }
+
+    static void useCertificate(MockWebServer server, HeldCertificate cert, HeldCertificate... intermediates) {
+        server.useHttps(new HandshakeCertificates.Builder().heldCertificate(cert, intermediatesOf(intermediates)).build().sslSocketFactory(), false);
     }
 
     private static java.security.cert.X509Certificate[] intermediatesOf(HeldCertificate[] hs) {
