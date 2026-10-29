@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 const here = (file: string): string => fileURLToPath(new URL(file, import.meta.url))
 import { defineConfig } from 'vitest/config'
@@ -6,6 +7,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Shared desktop sources belong to this app's compilation. A JSON string is
+  // intentional: Vite still discovers per-file desktop tsconfigs for object values.
+  esbuild: { tsconfigRaw: readFileSync(new URL('./tsconfig.json', import.meta.url), 'utf8') },
   resolve: {
     alias: { '@desktop': fileURLToPath(new URL('../desktop/src', import.meta.url)) },
     // Bare imports inside desktop sources resolve from mobile/node_modules: one React copy.
