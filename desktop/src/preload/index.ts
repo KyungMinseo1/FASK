@@ -30,6 +30,7 @@ const fask: PersonalApi = {
   saveSettings: (settings, key) => ipcRenderer.invoke('personal:save-settings', settings, key),
   models: (endpoint, key) => ipcRenderer.invoke('personal:models', endpoint, key),
   updateQuestion: (id, patch) => ipcRenderer.invoke('personal:update-question', id, patch),
+  moveQuestion: (id, projectId) => ipcRenderer.invoke('personal:move-question', id, projectId),
   editConcept: (id, name, parent) => ipcRenderer.invoke('personal:edit-concept', id, name, parent),
   mergeConcept: (source, target) => ipcRenderer.invoke('personal:merge-concept', source, target),
   ask: (input) => ipcRenderer.invoke('personal:ask', input),

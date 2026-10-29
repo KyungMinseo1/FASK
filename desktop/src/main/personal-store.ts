@@ -449,6 +449,13 @@ export class PersonalStore {
       safe.suggestions = patch.suggestions.filter((s) => typeof s === 'string').slice(0, 10)
     this.put('question', this.active, { ...q, ...safe })
   }
+  moveQuestion(id: string, projectId: string): void {
+    const q = this.record<Question>('question', id)
+    this.record<Project>('project', projectId)
+    if (q.projectId === projectId) return
+    // Concepts belong to the old project's map, so links and suggestions do not carry over.
+    this.put('question', this.active, { ...q, projectId, conceptIds: [], suggestions: [] })
+  }
   editConcept(id: string, name: string, parentId: string | null): void {
     const c = this.record<Concept>('concept', id)
     if (!name.trim()) throw new Error('개념 이름을 입력해 주세요.')

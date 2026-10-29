@@ -40,6 +40,7 @@ const HUB_METHODS: ReadonlySet<string> = new Set([
   'rename',
   'remove',
   'update-question',
+  'move-question',
   'edit-concept',
   'merge-concept',
   'ask',
@@ -312,6 +313,14 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   )
   handle('update-question', (id, patch) => {
     store.updateQuestion(id, patch)
+    changed()
+  })
+  handle('move-question', (id: string, projectId: string) => {
+    if ([...controllers.values()].some((c) => c.questionId === id))
+      throw new Error('진행 중인 답변을 마친 뒤 이동해 주세요.')
+    store.moveQuestion(id, projectId)
+    for (const [project, question] of recentQuestions)
+      if (question === id) recentQuestions.delete(project)
     changed()
   })
   handle('edit-concept', (id, name, parent) => {

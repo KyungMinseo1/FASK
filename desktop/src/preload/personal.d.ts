@@ -166,6 +166,7 @@ export interface KnowledgeApi {
     id: string,
     patch: Partial<Pick<Question, 'memo' | 'important' | 'conceptIds' | 'suggestions'>>
   ): Promise<void>
+  moveQuestion(id: string, projectId: string): Promise<void>
   editConcept(id: string, name: string, parentId: string | null): Promise<void>
   mergeConcept(source: string, target: string): Promise<void>
   ask(input: AskInput): Promise<AskResult>
