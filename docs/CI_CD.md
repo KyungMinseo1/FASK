@@ -17,6 +17,11 @@ SDK Platform 36과 Build Tools 35.0.0을 명시적으로 설치합니다.
 Ubuntu에서는 Gradle 실행 스크립트의 Windows 줄바꿈을 정리하고 실행 권한을 부여합니다.
 Mobile 작업에는 Desktop 소스가 필요하지만 Desktop 패키지 설치와 빌드 산출물은
 필요하지 않아야 합니다. CI는 이 조건을 매번 검증합니다.
+Mobile Vite는 공유 소스에도 Mobile의 tsconfig를 적용하여 Desktop의 Electron 전용
+tsconfig와 패키지를 읽지 않습니다. 독립 환경을 재현할 때는 Desktop 소스뿐 아니라
+Desktop의 tsconfig 파일들도 포함하고, Desktop node_modules는 제외해야 합니다.
+Android SDK 준비에는 `packages: platform-tools`를 지정해 폐기된 `tools` 패키지
+설치를 방지합니다. 이 설정은 CI와 Release 작업에 모두 적용합니다.
 
 PR의 Checks 탭과 Actions 로그에서 결과를 확인할 수 있습니다.
 Android 테스트 보고서와 Debug APK는 Actions Artifacts에서 7일간 내려받을 수 있습니다.
