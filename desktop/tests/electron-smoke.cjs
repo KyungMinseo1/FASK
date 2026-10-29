@@ -207,7 +207,7 @@ app.whenReady().then(async () => {
     assert.equal(renamed.projects.find((p) => p.id === project.id).name, '개인 연구')
     assert.equal(renamed.workspaces[0].name, '연구 워크스페이스')
     report.checks.push('workspace/project rename retains IDs and question references')
-    const context = async (selector) => {
+    const context = async (selector, items = 2) => {
       await js(
         `document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:350,clientY:220}))`
       )
@@ -217,12 +217,12 @@ app.whenReady().then(async () => {
       )
       assert.equal(
         await js("document.querySelectorAll('.item-context-menu [role=menuitem]').length"),
-        2
+        items
       )
     }
-    await context('[aria-label="프로필"]')
+    await context('[aria-label="프로필"]', 2)
     await renameUi('.item-context-menu button', '연구 프로필')
-    await context('.question-card')
+    await context('.question-card', 3)
     await renameUi('.item-context-menu button', '투명 오버레이에서 입력 처리 연구')
     const namedQuestion = (await js('window.fask.snapshot()')).questions.find(
       (q) => q.id === 'seed-question'
@@ -985,7 +985,7 @@ app.whenReady().then(async () => {
       'list view opens'
     )
     const deletingId = (await js('window.fask.snapshot()')).questions[0].id
-    await context('.question-card')
+    await context('.question-card', 3)
     await js("document.querySelector('.item-context-menu .danger').click()")
     await wait(
       () =>

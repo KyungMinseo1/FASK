@@ -54,6 +54,8 @@ export default function Dashboard(): React.JSX.Element {
     } | null>(null),
     [name, setName] = useState('')
   const [conceptId, setConceptId] = useState('')
+  const [move, setMove] = useState<{ id: string; name: string } | null>(null),
+    [moveTarget, setMoveTarget] = useState('')
   const workspace = data?.workspaces.find((w) => w.id === workspaceId) ?? data?.workspaces[0]
   const projects = data?.projects.filter((p) => p.workspaceId === workspace?.id) ?? []
   const project = projects.find((p) => p.id === projectId) ?? projects[0]
@@ -632,6 +634,19 @@ export default function Dashboard(): React.JSX.Element {
           >
             편집 · 이름 바꾸기
           </button>
+          {context.kind === 'question' && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMove({ id: context.id, name: context.name })
+                setMoveTarget('')
+                setNotice('')
+                setContext(null)
+              }}
+            >
+              다른 프로젝트로 이동
+            </button>
+          )}
           <button
             role="menuitem"
             className="danger"
@@ -703,6 +718,58 @@ export default function Dashboard(): React.JSX.Element {
               </button>
               <button className="primary" disabled={!name.trim()}>
                 {create.id ? '저장' : '만들기'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {move && (
+        <div className="modal-backdrop">
+          <form
+            className="create-modal"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const { id } = move
+              void run(async () => {
+                await window.fask.moveQuestion(id, moveTarget)
+                if (id === selectedId) setSelectedId('')
+                setMove(null)
+              })
+            }}
+          >
+            <span className="eyebrow">MOVE QUESTION</span>
+            <h2>다른 프로젝트로 이동</h2>
+            <p>{move.name}</p>
+            <select
+              aria-label="이동할 프로젝트"
+              autoFocus
+              value={moveTarget}
+              onChange={(e) => setMoveTarget(e.target.value)}
+            >
+              <option value="">프로젝트 선택</option>
+              {data.workspaces.map((w) => {
+                const current = data.questions.find((q) => q.id === move.id)?.projectId
+                const targets = data.projects.filter((p) => p.workspaceId === w.id && p.id !== current)
+                return (
+                  targets.length > 0 && (
+                    <optgroup key={w.id} label={w.name}>
+                      {targets.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )
+                )
+              })}
+            </select>
+            {notice && <p className="error">{notice}</p>}
+            <div className="button-row">
+              <button type="button" onClick={() => setMove(null)}>
+                취소
+              </button>
+              <button className="primary" disabled={!moveTarget}>
+                이동
               </button>
             </div>
           </form>

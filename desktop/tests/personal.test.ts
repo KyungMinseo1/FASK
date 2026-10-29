@@ -493,6 +493,38 @@ test('recordAsk commits question and run atomically; replays identical requests'
     rmSync(dir, { recursive: true, force: true })
   }
 })
+test('moveQuestion keeps id and turns, changes project, clears concept links', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fask-move-')),
+    store = new PersonalStore(dir)
+  try {
+    const project = store.list<Project>('project')[0]
+    const base = { requestHash: 'h', profile: store.active, projectId: project.id, saveOnly: true }
+    const { questionId } = store.recordAsk({
+      ...base,
+      requestId: 'm1',
+      turn: turn({ id: 'move-1' })
+    })
+    store.recordAsk({ ...base, requestId: 'm2', questionId, turn: turn({ id: 'move-2' }) })
+    const concept = store.create('concept', '개념', project.id)
+    store.updateQuestion(questionId, { conceptIds: [concept], suggestions: ['제안'] })
+    const workspace = store.create('workspace', '다른 워크스페이스')
+    const target = store.create('project', '다른 프로젝트', workspace)
+    store.moveQuestion(questionId, target)
+    const moved = store.record<Question>('question', questionId)
+    assert.equal(moved.projectId, target)
+    assert.deepEqual(
+      moved.turns.map((t) => t.id),
+      ['move-1', 'move-2']
+    )
+    assert.deepEqual(moved.conceptIds, [])
+    assert.deepEqual(moved.suggestions, [])
+    assert.throws(() => store.moveQuestion(questionId, 'missing-project'))
+    assert.equal(store.record<Question>('question', questionId).projectId, target)
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 test('applyDelta and mergeLive order revisions and detect gaps', () => {
   let live = { turnId: 't', answer: '', revision: 0 }
   for (const [revision, delta] of [
