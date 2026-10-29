@@ -1,18 +1,5 @@
 apply plugin: 'com.android.application'
 
-def keystoreProperties = new Properties()
-
-def keystorePropertiesFile = new File(
-    System.getProperty("user.home"),
-    "Desktop/None/AndroidKeys/FASK/keystore.properties"
-)
-
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(
-        new FileInputStream(keystorePropertiesFile)
-    )
-}
-
 def signingEnvironment = ['ANDROID_KEYSTORE_PATH', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
 def hasReleaseSigning = signingEnvironment.every { System.getenv(it) }
 if (signingEnvironment.any { System.getenv(it) } && !hasReleaseSigning) {
@@ -31,7 +18,7 @@ android {
         applicationId "io.github.kyungminseo1.fask"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
+        versionCode 1
         versionName "1.1.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -42,15 +29,21 @@ android {
     }
     signingConfigs {
         release {
-            storeFile file(keystoreProperties["storeFile"])
-            storePassword keystoreProperties["storePassword"]
-            keyAlias keystoreProperties["keyAlias"]
-            keyPassword keystoreProperties["keyPassword"]
+            if (hasReleaseSigning) {
+                storeFile file(System.getenv('ANDROID_KEYSTORE_PATH'))
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
         }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }
