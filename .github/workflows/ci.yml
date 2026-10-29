@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # PRs are checked on every update; push checks apply to the default branch only.
+    if: github.event_name != 'push' || github.ref_name == github.event.repository.default_branch
+    uses: ./.github/workflows/validate.yml
