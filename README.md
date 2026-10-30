@@ -69,7 +69,7 @@ Open a project, select **Ask from screen**, and mark anything relevant. Choose *
 
 ### Android companion
 
-In desktop **Settings → Mobile connection**, enable the hub and select a reachable LAN or Tailscale address. Scan its QR in the Android app. Keep the PC running; the phone uses its current profile and AI connection. Treat the QR as a password. Reset pairing to revoke existing phones.
+In desktop **Settings → Mobile connection**, enable the hub and select a reachable LAN or Tailscale address, or turn on the relay server to connect from outside without Tailscale (the relay only forwards end-to-end encrypted bytes). Scan its QR in the Android app. Keep the PC running; the phone uses its current profile and AI connection. Treat the QR as a password. Reset pairing to revoke existing phones.
 
 The native app pins the PC certificate, stores pairing secrets in secure storage, and encrypts its offline snapshot. Offline records remain readable; AI requests require the PC. Camera/gallery attachments and Android text/image sharing open the shared question composer.
 

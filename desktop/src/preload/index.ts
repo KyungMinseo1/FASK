@@ -54,6 +54,7 @@ const fask: PersonalApi = {
   hubStatus: () => ipcRenderer.invoke('personal:hub-status'),
   setHub: (enabled) => ipcRenderer.invoke('personal:hub-enable', enabled),
   setHubAddresses: (addresses) => ipcRenderer.invoke('personal:hub-addresses', addresses),
+  setHubRelay: (enabled, url) => ipcRenderer.invoke('personal:hub-relay', enabled, url),
   resetHubPairing: () => ipcRenderer.invoke('personal:hub-reset'),
   onStream: (cb) => {
     const listener = (_: Electron.IpcRendererEvent, event: StreamEvent): void => cb(event)

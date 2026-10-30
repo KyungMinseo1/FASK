@@ -1,6 +1,7 @@
 package io.github.kyungminseo1.fask;
 
 import android.util.Log;
+import java.io.IOException;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -14,7 +15,7 @@ public class FaskHubPlugin extends Plugin {
 
     @PluginMethod
     public void request(PluginCall call) {
-        String url = call.getString("url");
+        String url = resolved(call);
         String method = call.getString("method", "GET");
         String body = call.getString("body");
         String fingerprint = call.getString("fingerprint");
@@ -44,7 +45,7 @@ public class FaskHubPlugin extends Plugin {
     @PluginMethod
     public void openEvents(PluginCall call) {
         String id = call.getString("id");
-        String url = call.getString("url");
+        String url = resolved(call);
         String fingerprint = call.getString("fingerprint");
         String token = call.getString("token");
         if (id == null || url == null || fingerprint == null || token == null) {
@@ -88,6 +89,15 @@ public class FaskHubPlugin extends Plugin {
         String id = call.getString("id");
         if (id != null) client.closeEvents(id);
         call.resolve();
+    }
+
+    /** The call's hub URL with the relay pseudo-address mapped to the loopback tunnel; null rejects NETWORK. */
+    private static String resolved(PluginCall call) {
+        try {
+            return RelayTunnel.resolve(call.getString("url"), call.getString("relayUrl"), call.getString("relayRoom"));
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     @Override

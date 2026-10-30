@@ -3,7 +3,7 @@
 import { SecureStorage } from '@aparajita/capacitor-secure-storage'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { createSnapshotCache } from './cache'
-import type { Pairing } from './transport'
+import { parseRelay, RELAY_ADDRESS, type Pairing } from './transport'
 
 const PAIRING_KEY = 'fask.pairing'
 const CACHE_KEY = 'fask.cacheKey'
@@ -26,13 +26,21 @@ export async function loadPairing(): Promise<Pairing | null> {
       typeof value.fingerprint === 'string' &&
       'token' in value &&
       typeof value.token === 'string'
-    )
+    ) {
+      const stored = 'relay' in value && value.relay && typeof value.relay === 'object' ? value.relay : null
+      const relay = stored
+        ? parseRelay('url' in stored ? stored.url : undefined, 'room' in stored ? stored.room : undefined)
+        : null
+      // A malformed relay or one out of step with the relay address is treated as unpaired.
+      if ((stored && !relay) || value.addresses.includes(RELAY_ADDRESS) !== !!relay) return null
       return {
         addresses: value.addresses,
         port: value.port,
         fingerprint: value.fingerprint,
-        token: value.token
+        token: value.token,
+        ...(relay ? { relay } : {})
       }
+    }
   } catch {
     /* Corrupt entry: treated as unpaired. */
   }

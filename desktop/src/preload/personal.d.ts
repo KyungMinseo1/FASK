@@ -187,11 +187,19 @@ export interface HubAddress {
   listening: boolean
   error: string
 }
+export interface HubRelayStatus {
+  enabled: boolean
+  /** Effective relay URL (custom or build default); empty when none is configured. */
+  url: string
+  state: 'off' | 'connecting' | 'online' | 'error'
+  error: string
+}
 export interface HubStatus {
   enabled: boolean
   port: number
   addresses: HubAddress[]
-  /** QR payload; empty while no address is listening. */
+  relay: HubRelayStatus
+  /** QR payload; empty while neither an address nor the relay is serving. */
   pairing: string
   error: string
 }
@@ -222,6 +230,7 @@ export interface PersonalApi extends KnowledgeApi {
   setHub(enabled: boolean): Promise<HubStatus>
   setHubAddresses(addresses: string[]): Promise<HubStatus>
   resetHubPairing(): Promise<HubStatus>
+  setHubRelay(enabled: boolean, url: string): Promise<HubStatus>
 }
 declare global {
   interface Window {

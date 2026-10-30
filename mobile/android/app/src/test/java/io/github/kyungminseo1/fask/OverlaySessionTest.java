@@ -10,7 +10,7 @@ import org.junit.Test;
 public class OverlaySessionTest {
     private static OverlaySession create() {
         OverlaySession session = new OverlaySession(new String[] { "192.168.1.2" }, 443,
-            "fingerprint", "secret", "profile", "project", null);
+            "fingerprint", "secret", null, null, "profile", "project", null);
         OverlaySession.current = session;
         session.awaitConsent();
         return session;
@@ -96,5 +96,18 @@ public class OverlaySessionTest {
         assertFalse(previous.activate(epoch));
         assertEquals(OverlaySession.State.AWAITING_CONSENT, next.state);
         assertSame(next, OverlaySession.current);
+    }
+
+    @Test public void relayIdentityIsPartOfTheSessionContext() {
+        String[] addresses = { "192.168.1.2", RelayTunnel.ADDRESS };
+        String room = "R".repeat(43);
+        OverlaySession a = new OverlaySession(addresses, 443, "fingerprint", "secret",
+            "wss://relay.example.dev", room, "profile", "project", null);
+        OverlaySession same = new OverlaySession(addresses, 443, "fingerprint", "secret",
+            "wss://relay.example.dev", room, "profile", "project", null);
+        OverlaySession otherRelay = new OverlaySession(addresses, 443, "fingerprint", "secret",
+            "wss://other.example.dev", room, "profile", "project", null);
+        assertTrue(a.sameContext(same));
+        assertFalse(a.sameContext(otherRelay));
     }
 }

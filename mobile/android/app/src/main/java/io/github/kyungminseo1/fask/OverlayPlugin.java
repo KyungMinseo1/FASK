@@ -31,7 +31,9 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.util.Arrays;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 @CapacitorPlugin(name = "FaskOverlay", permissions = {
     @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS })
@@ -144,8 +146,14 @@ public final class OverlayPlugin extends Plugin {
             for (int i = 0; i < array.length(); i++) addresses[i] = required(array.getString(i));
             int port = pairing.getInt("port");
             if (port < 1 || port > 65535) throw new IllegalArgumentException();
+            JSONObject relay = pairing.optJSONObject("relay");
+            String relayUrl = relay == null ? null : required(relay.getString("url"));
+            String relayRoom = relay == null ? null : required(relay.getString("room"));
+            if (Arrays.asList(addresses).contains(RelayTunnel.ADDRESS) != (relay != null)) {
+                throw new IllegalArgumentException();
+            }
             candidate = new OverlaySession(addresses, port, required(pairing.getString("fingerprint")),
-                required(pairing.getString("token")), profile, project, question);
+                required(pairing.getString("token")), relayUrl, relayRoom, profile, project, question);
         } catch (Exception error) {
             call.reject("연결 및 프로젝트 정보를 확인해 주세요.", "INVALID_CONTEXT");
             return;
@@ -328,7 +336,7 @@ public final class OverlayPlugin extends Plugin {
                 preview.show();
                 if (OverlayWebBridge.supported()) {
                     OverlaySession session = new OverlaySession(new String[]{"127.0.0.1"}, 1, "preview", null,
-                        "preview-profile", PREVIEW_PROJECTS.get(0).id, null);
+                        null, null, "preview-profile", PREVIEW_PROJECTS.get(0).id, null);
                     previewBridge = new OverlayWebBridge(app, main, session, 0, preview, new OverlayWebBridge.Host() {
                         @Override public boolean live(long epoch) { return preview != null; }
                         @Override public void stop(String code, String message) { main.post(() -> closePreview()); }

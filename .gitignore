@@ -6,6 +6,10 @@ mobile/dist/
 mobile/android/app/build/
 mobile/android/.gradle/
 
+# Cloudflare relay (relay/)
+.wrangler/
+.dev.vars
+
 # Environment and local files
 .env
 .envrc

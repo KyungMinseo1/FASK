@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fask-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // The relay never logs requests; host keys travel only in Authorization headers.
+  "observability": { "enabled": false },
+  // "required" fails closed (503) when any rate limiting binding is missing. Only the user sets "off".
+  "vars": { "RATE_LIMIT_MODE": "required" },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "ratelimits": [
+    { "name": "IP_LIMIT", "namespace_id": "4761501", "simple": { "limit": 120, "period": 60 } },
+    { "name": "HOST_LIMIT", "namespace_id": "4761502", "simple": { "limit": 10, "period": 60 } },
+    { "name": "CONNECT_LIMIT", "namespace_id": "4761503", "simple": { "limit": 120, "period": 60 } }
+  ]
+}

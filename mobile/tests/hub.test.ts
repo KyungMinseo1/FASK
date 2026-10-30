@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Snapshot } from '@desktop/preload/personal'
 import { createSnapshotCache, type SnapshotCacheIo } from '../src/cache'
-import { createHubClient, parsePairing, type HubConn } from '../src/hub'
-import { HubError, toHubError, type HubErrorCode, type HubIdentity, type HubTransport, type Pairing } from '../src/transport'
+import { createHubClient, parsePairing, staggered, STAGGER_MS, UPGRADE_PROBE_MS, type HubConn } from '../src/hub'
+import {
+  HubError,
+  RELAY_ADDRESS,
+  toHubError,
+  type HubErrorCode,
+  type HubIdentity,
+  type HubTransport,
+  type Pairing
+} from '../src/transport'
 
 const fp1 = 'A'.repeat(43),
   fp2 = 'B'.repeat(43)
@@ -531,6 +539,7 @@ describe('hub client', () => {
 
 describe('parsePairing', () => {
   const token = 'T'.repeat(43)
+  const room = 'R'.repeat(43)
   it('accepts a desktop pairing link and keeps address order', () => {
     expect(
       parsePairing(`fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&a=192.168.0.17&a=100.64.1.2`)
@@ -541,15 +550,300 @@ describe('parsePairing', () => {
       token
     })
   })
+  const relay = `&r=${encodeURIComponent('wss://relay.example.dev')}&rk=${room}`
+  it('appends the relay address last for a relay pairing', () => {
+    expect(parsePairing(`fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&a=192.168.0.17${relay}`)).toEqual({
+      addresses: ['192.168.0.17', RELAY_ADDRESS],
+      port: 47615,
+      fingerprint: fp1,
+      token,
+      relay: { url: 'wss://relay.example.dev', room }
+    })
+  })
+  it('accepts a relay-only pairing', () => {
+    expect(parsePairing(`fask://pair?v=1&p=47615&fp=${fp1}&t=${token}${relay}`).addresses).toEqual([
+      RELAY_ADDRESS
+    ])
+  })
   it.each([
     `https://pair?v=1&p=47615&fp=${fp1}&t=${token}&a=1.2.3.4`,
     `fask://pair?v=2&p=47615&fp=${fp1}&t=${token}&a=1.2.3.4`,
     `fask://pair?v=1&p=70000&fp=${fp1}&t=${token}&a=1.2.3.4`,
     `fask://pair?v=1&p=47615&fp=short&t=${token}&a=1.2.3.4`,
     `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}`,
+    `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&a=1.2.3.4&r=${encodeURIComponent('wss://x.dev')}`,
+    `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&a=1.2.3.4&rk=${room}`,
+    `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&r=${encodeURIComponent('https://x.dev')}&rk=${room}`,
+    `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&r=${encodeURIComponent('ws://example.com')}&rk=${room}`,
+    `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&r=${encodeURIComponent('wss://x.dev/path')}&rk=${room}`,
+    `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&r=${encodeURIComponent('wss://x.dev')}&rk=short`,
     `fask://pair?v=1&p=47615&fp=${fp1}&t=${token}&a=999.1.1.1`,
     'not a url'
   ])('rejects %s', (text) => {
     expect(() => parsePairing(text)).toThrow('FASK 페어링 QR이 아닙니다.')
+  })
+})
+
+describe('staggered', () => {
+  it('starts the next address after STAGGER_MS while the first hangs', async () => {
+    vi.useFakeTimers()
+    const started: string[] = []
+    const race = staggered(
+      [A, B],
+      (a) => {
+        started.push(a)
+        return a === A ? new Promise<string>(() => {}) : Promise.resolve(a)
+      },
+      () => {},
+      () => false
+    )
+    await vi.advanceTimersByTimeAsync(STAGGER_MS - 1)
+    expect(started).toEqual([A])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(started).toEqual([A, B])
+    await expect(race).resolves.toEqual({ address: B, value: B })
+  })
+  it('starts the next address at once when the first fails', async () => {
+    vi.useFakeTimers()
+    const started: string[] = []
+    const race = staggered(
+      [A, B],
+      async (a) => {
+        started.push(a)
+        if (a === A) throw toHubError('NETWORK')
+        return a
+      },
+      () => {},
+      () => false
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual([A, B])
+    await expect(race).resolves.toEqual({ address: B, value: B })
+  })
+  it('hands a later success to onLate', async () => {
+    vi.useFakeTimers()
+    const slow = deferred<string>()
+    const late: string[] = []
+    const race = staggered(
+      [A, B],
+      (a) => (a === A ? slow.promise : Promise.resolve(a)),
+      (v) => late.push(v),
+      () => false
+    )
+    await vi.advanceTimersByTimeAsync(STAGGER_MS)
+    await expect(race).resolves.toMatchObject({ address: B })
+    slow.resolve(A)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(late).toEqual([A])
+  })
+  it('rejects with every error in address order', async () => {
+    vi.useFakeTimers()
+    const first = deferred<string>()
+    const race = staggered(
+      [A, B],
+      (a) => (a === A ? first.promise : Promise.reject(toHubError('PIN_MISMATCH'))),
+      () => {},
+      () => false
+    )
+    const settled = race.catch((e: { errors: HubError[] }) => e.errors.map((x) => x.code))
+    await vi.advanceTimersByTimeAsync(STAGGER_MS)
+    first.reject(toHubError('NETWORK'))
+    expect(await settled).toEqual(['NETWORK', 'PIN_MISMATCH'])
+  })
+})
+
+describe('hub client over the relay', () => {
+  const relayPairing: Pairing = {
+    addresses: [A, RELAY_ADDRESS],
+    port: 47615,
+    fingerprint: fp1,
+    token: 'T'.repeat(43),
+    relay: { url: 'wss://relay.example.dev', room: 'R'.repeat(43) }
+  }
+  type Stream = {
+    onEvent: (e: string, d: string) => void
+    onClose: (c: HubErrorCode) => void
+    released: number
+  }
+  /** Records opened event streams; open n (0-based) of an address resolves when `gate(address, n)` does. */
+  function relayTransport(
+    gate: (address: string, n: number) => Promise<void>,
+    request: (address: string, path: string) => Promise<{ status: number; body: string }> = async () => ok(null)
+  ) {
+    const streams: Array<Stream & { address: string }> = []
+    const t = fakeTransport(
+      (address, path) => request(address, path),
+      async (address, onEvent, onClose) => {
+        const stream = { address, onEvent, onClose, released: 0 }
+        await gate(address, t.opens.filter((a) => a === address).length - 1)
+        streams.push(stream)
+        return () => void stream.released++
+      }
+    )
+    return { t, streams, latest: (address: string) => streams.filter((s) => s.address === address).at(-1)! }
+  }
+  const health = async (address: string, path: string) =>
+    path === '/health' && address === A ? { status: 200, body: JSON.stringify({ app: 'fask' }) } : ok(null)
+  const never = new Promise<void>(() => {})
+
+  it('goes online over the relay when the direct address hangs', async () => {
+    vi.useFakeTimers()
+    const { t } = relayTransport(async (a) => (a === A ? never : undefined))
+    const { c, statuses } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(STAGGER_MS - 1)
+    expect(t.opens).toEqual([A])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(t.opens).toEqual([A, RELAY_ADDRESS])
+    expect(statuses.at(-1)).toEqual({ state: 'online' })
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    c.close()
+  })
+  it('never tries the relay when the direct address opens within the stagger', async () => {
+    vi.useFakeTimers()
+    const { t } = relayTransport((a) => new Promise((r) => setTimeout(r, a === A ? 500 : 0)))
+    const { c } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(t.opens).toEqual([A])
+    expect(c.address()).toBe(A)
+    c.close()
+  })
+  it('releases a direct stream that opens after the relay won', async () => {
+    vi.useFakeTimers()
+    const slowA = deferred<void>()
+    const { t, streams } = relayTransport(async (a) => (a === A ? slowA.promise : undefined))
+    const { c } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(STAGGER_MS)
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    slowA.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(streams.find((s) => s.address === A)?.released).toBe(1)
+    expect(streams.find((s) => s.address === RELAY_ADDRESS)?.released).toBe(0)
+    c.close()
+  })
+  it('moves the event stream to a direct path make-before-break while events flow', async () => {
+    vi.useFakeTimers()
+    const candidate = deferred<void>()
+    const { t, latest } = relayTransport(
+      async (a, n) => (a === A ? (n === 0 ? Promise.reject(toHubError('NETWORK')) : candidate.promise) : undefined),
+      health
+    )
+    const { c } = client(t, undefined, relayPairing)
+    const got: string[] = []
+    c.onStream((e) => got.push(String(e.delta)))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    const relayStream = latest(RELAY_ADDRESS)
+    for (let i = 0; i < 30; i++) {
+      relayStream.onEvent('stream', JSON.stringify({ delta: `r${i}` }))
+      await vi.advanceTimersByTimeAsync(1000)
+    }
+    expect(t.requests).toContain(`${A}/health`)
+    expect(t.opens.filter((a) => a === A)).toHaveLength(2)
+    // The candidate is opening: the relay stream is still live and owns dispatch.
+    expect(relayStream.released).toBe(0)
+    relayStream.onEvent('stream', JSON.stringify({ delta: 'still-relay' }))
+    candidate.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(relayStream.released).toBe(1)
+    expect(c.address()).toBe(A)
+    relayStream.onEvent('stream', JSON.stringify({ delta: 'stale-relay' }))
+    latest(A).onEvent('stream', JSON.stringify({ delta: 'direct' }))
+    expect(got.slice(-2)).toEqual(['still-relay', 'direct'])
+    expect(got).not.toContain('stale-relay')
+    c.close()
+  })
+  it('ignores events of a candidate that is not yet promoted', async () => {
+    vi.useFakeTimers()
+    const candidate = deferred<void>()
+    let candidateEvent: ((e: string, d: string) => void) | undefined
+    const t = fakeTransport(health, async (address, onEvent) => {
+      if (address === A) {
+        if (!candidateEvent && t.opens.filter((a) => a === A).length === 1) throw toHubError('NETWORK')
+        candidateEvent = onEvent
+        await candidate.promise
+      }
+      return () => {}
+    })
+    const { c } = client(t, undefined, relayPairing)
+    const got: string[] = []
+    c.onStream((e) => got.push(String(e.delta)))
+    await vi.advanceTimersByTimeAsync(UPGRADE_PROBE_MS)
+    expect(candidateEvent).toBeDefined()
+    candidateEvent!('stream', JSON.stringify({ delta: 'early' }))
+    expect(got).toEqual([])
+    c.close()
+  })
+  it('stays on the relay when the candidate fails', async () => {
+    vi.useFakeTimers()
+    const { t, latest } = relayTransport(async (a) => (a === A ? Promise.reject(toHubError('NETWORK')) : undefined), health)
+    const { c, statuses } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(UPGRADE_PROBE_MS * 2)
+    expect(t.requests.filter((r) => r === `${A}/health`)).toHaveLength(2)
+    expect(t.opens.filter((a) => a === A).length).toBeGreaterThanOrEqual(2)
+    expect(latest(RELAY_ADDRESS).released).toBe(0)
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    expect(statuses.every((s) => s.state === 'online')).toBe(true)
+    c.close()
+  })
+  it('finishes an RPC in flight on the relay and sends the next one direct', async () => {
+    vi.useFakeTimers()
+    const asked = deferred<{ status: number; body: string }>()
+    const { t } = relayTransport(
+      async (a, n) => (a === A && n === 0 ? Promise.reject(toHubError('NETWORK')) : undefined),
+      async (address, path) => {
+        if (path === '/rpc/ask' && address === RELAY_ADDRESS) return asked.promise
+        return health(address, path)
+      }
+    )
+    const { c } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    const pending = c.ask(askInput('r1'))
+    await vi.advanceTimersByTimeAsync(UPGRADE_PROBE_MS)
+    expect(c.address()).toBe(A)
+    asked.resolve(ok({ questionId: 'q1', turnId: 't1' }))
+    expect(await pending).toEqual({ questionId: 'q1', turnId: 't1' })
+    expect(t.requests.filter((r) => r.endsWith('/rpc/ask'))).toEqual([`${RELAY_ADDRESS}/rpc/ask`])
+    await c.snapshot().catch(() => {})
+    expect(t.requests.find((r) => r.endsWith('/rpc/snapshot'))).toBe(`${A}/rpc/snapshot`)
+    c.close()
+  })
+  it('releases a candidate that opens after close', async () => {
+    vi.useFakeTimers()
+    const candidate = deferred<void>()
+    let candidateEvent: ((e: string, d: string) => void) | undefined
+    let candidateReleased = 0
+    const t = fakeTransport(health, async (address, onEvent) => {
+      if (address !== A) return () => {}
+      if (t.opens.filter((a) => a === A).length === 1) throw toHubError('NETWORK')
+      candidateEvent = onEvent
+      await candidate.promise
+      return () => void candidateReleased++
+    })
+    const { c, statuses } = client(t, undefined, relayPairing)
+    const got: string[] = []
+    c.onStream((e) => got.push(String(e.delta)))
+    await vi.advanceTimersByTimeAsync(UPGRADE_PROBE_MS)
+    expect(candidateEvent).toBeDefined()
+    const before = statuses.length
+    c.close()
+    candidate.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(candidateReleased).toBe(1)
+    candidateEvent!('stream', JSON.stringify({ delta: 'late' }))
+    expect(got).toEqual([])
+    expect(statuses.length).toBe(before)
+    expect(c.address()).toBe(RELAY_ADDRESS)
+  })
+  it('goes offline and schedules a retry when every path fails', async () => {
+    vi.useFakeTimers()
+    const { t } = relayTransport(async () => Promise.reject(toHubError('NETWORK')))
+    const { c, statuses } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(t.opens).toEqual([A, RELAY_ADDRESS])
+    expect(statuses.at(-1)).toEqual({ state: 'offline' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(t.opens).toEqual([A, RELAY_ADDRESS, A, RELAY_ADDRESS])
+    c.close()
   })
 })

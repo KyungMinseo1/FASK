@@ -3,11 +3,15 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer } from 'node:http'
+import { createServer, request as httpRequest, type IncomingHttpHeaders } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { TLSSocket } from 'node:tls'
-import { createHash } from 'node:crypto'
-import { createHubCertificate, PersonalHub } from '../src/main/personal-hub'
+import { connect as tlsConnect, TLSSocket } from 'node:tls'
+import { createHash, randomBytes } from 'node:crypto'
+import { once } from 'node:events'
+import type { Duplex } from 'node:stream'
+import WebSocket, { WebSocketServer } from 'ws'
+import { createHubCertificate, PersonalHub, type HubLimits, type HubTls } from '../src/main/personal-hub'
+import { HubRelay, RELAY_WINDOW, RelayStream, normalizeRelayUrl, relayRoom } from '../src/main/personal-relay'
 import { DatabaseSync } from 'node:sqlite'
 import { PersonalStore } from '../src/main/personal-store'
 import { normalizeEndpoint, localModels, streamChat } from '../src/main/local-api'
@@ -693,6 +697,7 @@ test('mobile hub serves TLS with pinned cert, header-only auth, origin and metho
     const missing = await elsewhere.start(['203.0.113.7'], 0, 'tok', tls)
     assert.match(missing[0].error, /현재 네트워크에 없는 주소입니다/)
     assert.equal(elsewhere.running, false)
+    await elsewhere.stop()
   } finally {
     await hub.stop()
   }
@@ -769,5 +774,373 @@ test('local proxy model auth, split SSE, Unicode, incomplete response, errors, a
   } finally {
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+// ── Relay ── a fake relay with the real wire protocol, minus window policing and rate limits.
+interface FakeRelay {
+  url: string
+  host: () => WebSocket | null
+  maxFrame: { up: number; down: number }
+  /** Close codes the relay saw from PC-side data sockets. */
+  dataCloses: number[]
+  close: () => Promise<void>
+}
+async function fakeRelay(): Promise<FakeRelay> {
+  const server = createServer()
+  // workerd negotiates permessage-deflate whenever a client offers it; so does this relay.
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: true })
+  let host: WebSocket | null = null
+  const pending = new Map<string, WebSocket>()
+  const maxFrame = { up: 0, down: 0 }
+  const dataCloses: number[] = []
+  const forwardClose = (code: number): number => (code >= 3000 || code === 1000 || code === 1009 ? code : 1000)
+  const pipe = (from: WebSocket, to: WebSocket, dir: 'up' | 'down'): void => {
+    from.on('message', (msg: Buffer, isBinary) => {
+      maxFrame[dir] = Math.max(maxFrame[dir], msg.length)
+      if (to.readyState === WebSocket.OPEN) to.send(msg, { binary: isBinary })
+    })
+    from.on('close', (code) => {
+      if (dir === 'down') dataCloses.push(code)
+      if (to.readyState === WebSocket.OPEN) to.close(forwardClose(code))
+    })
+  }
+  const reject = (socket: Duplex, status: string): void => {
+    socket.end(`HTTP/1.1 ${status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`)
+  }
+  server.on('upgrade', (req, socket, head) => {
+    const url = req.url ?? ''
+    if (url === '/v1/host')
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        host = ws
+        ws.on('close', () => {
+          if (host === ws) host = null
+        })
+      })
+    else if (url.startsWith('/v1/connect/')) {
+      const current = host
+      if (!current || current.readyState !== WebSocket.OPEN) return reject(socket, '503 Service Unavailable')
+      wss.handleUpgrade(req, socket, head, (client) => {
+        const id = randomBytes(16).toString('base64url')
+        pending.set(id, client)
+        current.send(JSON.stringify({ type: 'open', id }))
+      })
+    } else if (url.startsWith('/v1/accept/')) {
+      const id = url.slice('/v1/accept/'.length)
+      const client = pending.get(id)
+      if (!client) return reject(socket, '404 Not Found')
+      pending.delete(id)
+      wss.handleUpgrade(req, socket, head, (data) => {
+        client.send('ready')
+        pipe(client, data, 'up')
+        pipe(data, client, 'down')
+      })
+    } else reject(socket, '404 Not Found')
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  return {
+    url: `ws://127.0.0.1:${port}`,
+    host: () => host,
+    maxFrame,
+    dataCloses,
+    close: async () => {
+      for (const ws of wss.clients) ws.terminate()
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  }
+}
+const RELAY_LIMITS: HubLimits = {
+  relayHandshakeMs: 300,
+  relayAuthMs: 300,
+  relayMaxStreams: 32,
+  relayMaxUnauthenticated: 8
+}
+const RELAY_KEY = randomBytes(32).toString('base64url')
+function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${what} did not happen within ${ms} ms`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+async function until(condition: () => boolean, ms: number, what: string): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`${what} did not happen within ${ms} ms`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+/** Phone side: connect through the relay and wrap the socket once the relay says `ready`. */
+function phoneStream(relay: FakeRelay): Promise<{ ws: WebSocket; stream: RelayStream }> {
+  const ws = new WebSocket(`${relay.url}/v1/connect/${relayRoom(RELAY_KEY)}`)
+  return new Promise((resolve, reject) => {
+    ws.once('error', reject)
+    ws.once('close', (code) => reject(new Error(`relay closed ${code} before ready`)))
+    ws.once('message', (msg, isBinary) => {
+      if (isBinary || String(msg) !== 'ready') return reject(new Error('expected ready'))
+      ws.on('error', () => {})
+      resolve({ ws, stream: new RelayStream(ws) })
+    })
+  })
+}
+async function phoneTls(relay: FakeRelay): Promise<{ ws: WebSocket; stream: RelayStream; tls: TLSSocket }> {
+  const { ws, stream } = await phoneStream(relay)
+  const tls = tlsConnect({ socket: stream, rejectUnauthorized: false })
+  tls.on('error', () => {})
+  await once(tls, 'secureConnect')
+  return { ws, stream, tls }
+}
+function relayHttp(
+  tls: TLSSocket,
+  path: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {}
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      { createConnection: () => tls, path, method: options.method ?? 'GET', headers: options.headers },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (c: Buffer) => chunks.push(c))
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString() })
+        )
+      }
+    )
+    req.on('error', reject)
+    req.end(options.body)
+  })
+}
+async function relayedHub(
+  limits: HubLimits = RELAY_LIMITS
+): Promise<{ hub: PersonalHub; relay: FakeRelay; hubRelay: HubRelay; tls: HubTls }> {
+  const tls = await createHubCertificate()
+  const hub = new PersonalHub(async (_name, args) => args[0], new Set(['snapshot']), '1.1.0', limits)
+  await hub.start([], 0, 'tok', tls)
+  const relay = await fakeRelay()
+  const hubRelay = new HubRelay((stream) => hub.inject(stream))
+  hubRelay.start(relay.url, RELAY_KEY)
+  await until(() => hubRelay.state === 'online', 3000, 'relay registration')
+  return { hub, relay, hubRelay, tls }
+}
+const AUTH = { Authorization: 'Bearer tok' }
+
+test('relay url normalization keeps only a bare wss origin or loopback ws', () => {
+  assert.equal(normalizeRelayUrl(' wss://relay.example.workers.dev/ '), 'wss://relay.example.workers.dev')
+  assert.equal(normalizeRelayUrl('ws://127.0.0.1:8787'), 'ws://127.0.0.1:8787')
+  for (const bad of ['ws://example.com', 'https://x.dev', 'wss://x.dev/path', 'wss://x.dev/?a=1', 'wss://u:p@x.dev', 'x'])
+    assert.equal(normalizeRelayUrl(bad), null, bad)
+  assert.equal(relayRoom(RELAY_KEY), createHash('sha256').update(RELAY_KEY).digest('base64url'))
+})
+
+test('relay serves pinned TLS', async () => {
+  const { hub, relay, hubRelay, tls } = await relayedHub()
+  try {
+    const phone = await phoneTls(relay)
+    const fingerprint = createHash('sha256').update(phone.tls.getPeerCertificate().raw).digest('base64url')
+    assert.equal(fingerprint, tls.fingerprint)
+    const health = await relayHttp(phone.tls, '/health', { headers: { ...AUTH, Connection: 'keep-alive' } })
+    assert.equal(health.status, 200)
+    assert.equal(JSON.parse(health.body).app, 'fask')
+    const big = randomBytes(6 * 1024 * 1024).toString('base64')
+    const rpc = await relayHttp(phone.tls, '/rpc/snapshot', {
+      method: 'POST',
+      headers: { ...AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args: [big] })
+    })
+    assert.equal(rpc.status, 200)
+    assert.equal(JSON.parse(rpc.body).result, big)
+    assert.ok(relay.maxFrame.up > 0 && relay.maxFrame.up <= 16385, `up ${relay.maxFrame.up}`)
+    assert.ok(relay.maxFrame.down > 0 && relay.maxFrame.down <= 16385, `down ${relay.maxFrame.down}`)
+  } finally {
+    hubRelay.stop()
+    await hub.stop()
+    await relay.close()
+  }
+})
+
+test('relay unauthenticated connections are bounded', async () => {
+  const { hub, relay, hubRelay } = await relayedHub()
+  try {
+    // (a) No ClientHello: the handshake timeout drops the stream.
+    const silent = await phoneStream(relay)
+    await within(once(silent.ws, 'close'), 1000, 'handshake timeout close')
+    // (b) TLS done but no request: the auth deadline drops it.
+    const idle = await phoneTls(relay)
+    await within(once(idle.ws, 'close'), 1000, 'auth deadline close')
+    // (c) A request without the token gets one 401 and the connection closes.
+    const anonymous = await phoneTls(relay)
+    const closed = once(anonymous.ws, 'close')
+    const denied = await relayHttp(anonymous.tls, '/health', { headers: { Connection: 'keep-alive' } })
+    assert.equal(denied.status, 401)
+    assert.equal(denied.headers.connection, 'close')
+    await within(closed, 1000, '401 close')
+    // (e) Authenticated and idle: keep-alive timeout closes it.
+    const authed = await phoneTls(relay)
+    const authedClosed = once(authed.ws, 'close')
+    const started = Date.now()
+    assert.equal((await relayHttp(authed.tls, '/health', { headers: { ...AUTH, Connection: 'keep-alive' } })).status, 200)
+    await within(authedClosed, 7000, 'keep-alive close')
+    assert.ok(Date.now() - started > 1000, 'authenticated connection outlived the auth deadline')
+    // (f) An authenticated event stream stays open past the auth deadline.
+    const events = await phoneTls(relay)
+    let eventsClosed = false
+    events.ws.once('close', () => (eventsClosed = true))
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = httpRequest({ createConnection: () => events.tls, path: '/events', headers: AUTH }, (res) => {
+        res.once('data', (c: Buffer) => resolve(String(c)))
+      })
+      req.on('error', reject)
+      req.end()
+    })
+    assert.match(body, /: connected/)
+    // Real time on purpose: the hub's auth deadline is a wall-clock timer on a live socket.
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    assert.equal(eventsClosed, false)
+  } finally {
+    hubRelay.stop()
+    await hub.stop()
+    await relay.close()
+  }
+  // (d) With a long auth deadline, 8 unauthenticated streams fill the cap; the 9th is dropped at once.
+  const capped = await relayedHub({ ...RELAY_LIMITS, relayAuthMs: 10000 })
+  try {
+    const held = await Promise.all(Array.from({ length: 8 }, () => phoneTls(capped.relay)))
+    const ninth = await phoneStream(capped.relay)
+    await within(once(ninth.ws, 'close'), 1000, 'over-cap close')
+    for (const h of held) assert.equal(h.ws.readyState, WebSocket.OPEN)
+  } finally {
+    capped.hubRelay.stop()
+    await capped.hub.stop()
+    await capped.relay.close()
+  }
+})
+
+test('RelayStream backpressure', async () => {
+  const relay = await fakeRelay()
+  const pcSide: RelayStream[] = []
+  const pcSockets: WebSocket[] = []
+  const host = new WebSocket(`${relay.url}/v1/host`)
+  await once(host, 'open')
+  host.on('message', (msg) => {
+    const ws = new WebSocket(`${relay.url}/v1/accept/${JSON.parse(String(msg)).id}`)
+    ws.once('open', () => {
+      pcSockets.push(ws)
+      const stream = new RelayStream(ws)
+      stream.on('error', () => {})
+      pcSide.push(stream)
+    })
+  })
+  try {
+    const phone = await phoneStream(relay)
+    await until(() => pcSide.length === 1, 2000, 'accept')
+    const [pc] = pcSide
+    const up = randomBytes(16 * 1024 * 1024)
+    const down = randomBytes(16 * 1024 * 1024)
+    const write = async (stream: RelayStream, data: Buffer): Promise<void> => {
+      for (let offset = 0; offset < data.length; offset += 65536)
+        if (!stream.write(data.subarray(offset, offset + 65536))) await once(stream, 'drain')
+    }
+    /** Consumes 64 KiB per 20 ms, well below what the sender can produce. */
+    const slowRead = async (stream: RelayStream, length: number): Promise<Buffer> => {
+      const chunks: Buffer[] = []
+      let got = 0
+      while (got < length) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        const n = Math.min(65536, stream.readableLength)
+        const chunk: Buffer | null = n ? stream.read(n) : (stream.read(0), null)
+        if (chunk) {
+          chunks.push(chunk)
+          got += chunk.length
+        }
+      }
+      return Buffer.concat(chunks)
+    }
+    const violations: string[] = []
+    const sampler = setInterval(() => {
+      for (const [name, sender, ws, receiver] of [
+        ['up', phone.stream, phone.ws, pc],
+        ['down', pc, pcSockets[0], phone.stream]
+      ] as const) {
+        if (sender.unacked > RELAY_WINDOW) violations.push(`${name} unacked ${sender.unacked}`)
+        if (ws.bufferedAmount > RELAY_WINDOW + 16385) violations.push(`${name} buffered ${ws.bufferedAmount}`)
+        if (receiver.readableLength > RELAY_WINDOW + 16384) violations.push(`${name} readable ${receiver.readableLength}`)
+      }
+    }, 5)
+    const [gotUp, gotDown] = await Promise.all([
+      slowRead(pc, up.length),
+      slowRead(phone.stream, down.length),
+      write(phone.stream, up),
+      write(pc, down)
+    ])
+    clearInterval(sampler)
+    assert.deepEqual(violations, [])
+    assert.ok(gotUp.equals(up), 'upstream bytes intact')
+    assert.ok(gotDown.equals(down), 'downstream bytes intact')
+    assert.ok(phone.stream.maxUnacked <= RELAY_WINDOW && pc.maxUnacked <= RELAY_WINDOW)
+    assert.ok(phone.stream.maxFrameSent <= 16385 && pc.maxFrameSent <= 16385)
+    assert.ok(relay.maxFrame.up <= 16385 && relay.maxFrame.down <= 16385)
+
+    // A peer that ignores the window: 17 unacked 16 KiB frames make the stream close with 4400.
+    const rogue = new WebSocket(`${relay.url}/v1/connect/${relayRoom(RELAY_KEY)}`)
+    await once(rogue, 'message')
+    await until(() => pcSide.length === 2, 2000, 'second accept')
+    const rogueClosed = once(rogue, 'close')
+    for (let i = 0; i < 17; i++) rogue.send(Buffer.concat([Buffer.from([0]), randomBytes(16384)]))
+    const [code] = await within(rogueClosed, 2000, 'window violation close')
+    assert.equal(code, 4400)
+    assert.ok(pcSide[1].destroyed)
+  } finally {
+    host.terminate()
+    await relay.close()
+  }
+})
+
+test('relay stop and reset tear down sessions', async () => {
+  const { hub, relay, hubRelay } = await relayedHub()
+  try {
+    const phone = await phoneTls(relay)
+    const connected = new Promise<void>((resolve, reject) => {
+      const req = httpRequest({ createConnection: () => phone.tls, path: '/events', headers: AUTH }, (res) =>
+        res.once('data', () => resolve())
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    await connected
+    const closed = once(phone.ws, 'close')
+    hubRelay.stop()
+    await hub.stop()
+    await within(closed, 2000, 'phone close after stop')
+    assert.equal(hubRelay.state, 'off')
+    await assert.rejects(phoneStream(relay), /503/)
+  } finally {
+    hubRelay.stop()
+    await hub.stop()
+    await relay.close()
+  }
+})
+
+test('relay reconnects after the control socket drops', async () => {
+  const { hub, relay, hubRelay } = await relayedHub()
+  try {
+    const first = relay.host()
+    first?.terminate()
+    await until(() => hubRelay.state !== 'online', 2000, 'drop noticed')
+    await until(() => hubRelay.state === 'online' && relay.host() !== first, 3000, 'reconnect')
+  } finally {
+    hubRelay.stop()
+    await hub.stop()
+    await relay.close()
   }
 })

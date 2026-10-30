@@ -2,6 +2,8 @@
 // Clients authenticate with a bearer token sent only in the Authorization header.
 import { createServer, type Server } from 'node:https'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
+import type { TLSSocket } from 'node:tls'
 import { createHash, randomBytes, timingSafeEqual, webcrypto } from 'node:crypto'
 // @peculiar/x509 resolves its ASN.1 services through tsyringe, which needs the Reflect polyfill.
 import 'reflect-metadata'
@@ -17,6 +19,20 @@ export interface HubListenResult {
   address: string
   port: number
   error: string
+}
+/** Bounds for relayed connections, which anyone holding the relay room id can open. */
+export interface HubLimits {
+  relayHandshakeMs: number
+  /** A relayed connection must send an authorized request this long after its TLS handshake. */
+  relayAuthMs: number
+  relayMaxStreams: number
+  relayMaxUnauthenticated: number
+}
+export const DEFAULT_HUB_LIMITS: HubLimits = {
+  relayHandshakeMs: 10000,
+  relayAuthMs: 10000,
+  relayMaxStreams: 32,
+  relayMaxUnauthenticated: 8
 }
 
 const ALLOWED_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/
@@ -64,10 +80,17 @@ export class PersonalHub {
   private events = new Set<ServerResponse>()
   private ping: NodeJS.Timeout | null = null
   private token = ''
+  /** Never listens; relayed byte streams are handed to it as connections. */
+  private relayServer: Server | null = null
+  private injected = new Set<Duplex>()
+  private relaySockets = new Set<TLSSocket>()
+  private relayAuthed = new WeakSet<TLSSocket>()
+  private relayAuthedCount = 0
   constructor(
     private invoke: (name: string, args: unknown[]) => Promise<unknown>,
     private methods: ReadonlySet<string>,
-    private version: string
+    private version: string,
+    private limits: HubLimits = DEFAULT_HUB_LIMITS
   ) {}
   get running(): boolean {
     return this.servers.length > 0
@@ -81,6 +104,24 @@ export class PersonalHub {
   ): Promise<HubListenResult[]> {
     await this.stop()
     this.token = token
+    // Node enforces headersTimeout/requestTimeout only for listening servers, so relayed sockets get
+    // their own deadline: authenticate within relayAuthMs of the handshake or be dropped.
+    const relay = createServer(
+      { cert: tls.cert, key: tls.key, minVersion: 'TLSv1.2', handshakeTimeout: this.limits.relayHandshakeMs },
+      (req, res) => void this.handle(req, res)
+    )
+    relay.on('secureConnection', (socket: TLSSocket) => {
+      this.relaySockets.add(socket)
+      const deadline = setTimeout(() => {
+        if (!this.relayAuthed.has(socket)) socket.destroy()
+      }, this.limits.relayAuthMs)
+      socket.once('close', () => {
+        clearTimeout(deadline)
+        this.relaySockets.delete(socket)
+        if (this.relayAuthed.has(socket)) this.relayAuthedCount--
+      })
+    })
+    this.relayServer = relay
     const results: HubListenResult[] = []
     for (const address of addresses) {
       const server = createServer(
@@ -112,10 +153,9 @@ export class PersonalHub {
         })
       }
     }
-    if (this.servers.length)
-      this.ping = setInterval(() => {
-        for (const res of this.events) res.write(': ping\n\n')
-      }, PING_MS)
+    this.ping = setInterval(() => {
+      for (const res of this.events) res.write(': ping\n\n')
+    }, PING_MS)
     return results
   }
   /** Drops open event streams so clients notice and reconnect. */
@@ -124,6 +164,10 @@ export class PersonalHub {
     this.ping = null
     for (const res of this.events) res.destroy()
     this.events.clear()
+    for (const stream of this.injected) stream.destroy()
+    this.injected.clear()
+    for (const socket of this.relaySockets) socket.destroy()
+    this.relayServer = null
     const servers = this.servers
     this.servers = []
     await Promise.all(
@@ -135,6 +179,22 @@ export class PersonalHub {
           })
       )
     )
+  }
+  /** Serves one relayed byte stream (TLS inside) like a freshly accepted TCP connection. */
+  inject(stream: Duplex): void {
+    const relay = this.relayServer
+    const unauthenticated = this.injected.size - this.relayAuthedCount
+    if (
+      !relay ||
+      this.injected.size >= this.limits.relayMaxStreams ||
+      unauthenticated >= this.limits.relayMaxUnauthenticated
+    ) {
+      stream.destroy()
+      return
+    }
+    this.injected.add(stream)
+    stream.once('close', () => this.injected.delete(stream))
+    relay.emit('connection', stream)
   }
   broadcast(event: 'stream' | 'changed', data: unknown): void {
     const chunk = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
@@ -161,7 +221,17 @@ export class PersonalHub {
       return
     }
     // Query-string credentials are ignored on purpose; only the header counts.
-    if (!this.authorized(req)) return json(res, 401, { error: '인증이 필요합니다.' })
+    const socket = req.socket as TLSSocket
+    const relayed = this.relaySockets.has(socket)
+    if (!this.authorized(req)) {
+      // A relayed connection gets one attempt; it must reconnect to try again.
+      if (relayed) res.setHeader('Connection', 'close')
+      return json(res, 401, { error: '인증이 필요합니다.' })
+    }
+    if (relayed && !this.relayAuthed.has(socket)) {
+      this.relayAuthed.add(socket)
+      this.relayAuthedCount++
+    }
     const path = new URL(req.url ?? '/', 'https://hub').pathname
     if (req.method === 'GET' && path === '/health')
       return json(res, 200, { app: 'fask', version: this.version })

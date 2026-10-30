@@ -4,6 +4,7 @@ import { errorText } from '@desktop/renderer/src/personal/common'
 import { useNavigate } from 'react-router'
 import { readTheme, setTheme, type ThemePref } from '@desktop/renderer/src/personal/theme'
 import { useMobile } from '../context'
+import { RELAY_ADDRESS } from '../transport'
 
 export default function Connection(): React.JSX.Element {
   const { data, pairing, client, conn, unpair } = useMobile()
@@ -24,7 +25,7 @@ export default function Connection(): React.JSX.Element {
         <dl className="mobile-connection">
           <dt>연결 주소</dt>
           <dd>
-            {client.address()}:{pairing.port}
+            {client.address() === RELAY_ADDRESS ? '중계 서버' : `${client.address()}:${pairing.port}`}
           </dd>
           <dt>상태</dt>
           <dd>

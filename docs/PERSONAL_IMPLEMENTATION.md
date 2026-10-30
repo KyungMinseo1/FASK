@@ -145,3 +145,15 @@ Android JDK 21에서 testDebugUnitTest와 assembleDebug 성공. Pixel_7에 실�
 - 검증(2026-10-28): 모바일 Vitest 45개(Composer 상태 전이 6개 포함), desktop 16개·타입 검사, Android 단위 테스트, Bitmap 합성 instrumentation 3개 통과. Pixel_7 API 37에서 실제 PC 허브(격리 프로필, 로컬 테스트 모델 프록시)와 pairing-test 수동 입력으로 연결해, 브라우저 위 토글→펜→영역 선택→질문 전송→panel 실시간 답변→같은 질문의 turn 2 저장을 확인했다. PC에 저장된 첨부는 220×290 JPEG로 IN 표식과 펜선만 있고 OUT·토글·도구·panel·IME는 없었다. panel 접기/열기 후 같은 Composer 유지, 앱 프로세스 종료 후 running=false·새 동의 필요, 알림 `종료` 후 서비스·창 잔류 없음, PC 연결 초기화 후 panel의 PIN_MISMATCH 차단 표시를 확인했다. API 34 태블릿 AVD(2560×1600)에서는 normal APK의 동의→ACTIVE→런처 위 토글→Stop만 확인했다.
 - 검증(2026-10-28, 프로젝트 전환): Medium_Phone API 37 AVD에서 격리 PC 허브(두 워크스페이스)와 pairing-test APK로 토글→'프로젝트 바꾸기'→워크스페이스별 목록·✓ 표시(첫 표시에도 헤더 노출), 터치 선택 후 헤더 이름 변경·필기 유지, 전환 후 질문이 PC의 선택 프로젝트에 저장, 스트리밍 중 목록 비활성·문구 표시와 네이티브 `setProject`의 BUSY 응답, 답변 완료 후 해제, 전환한 프로젝트를 PC에서 삭제하면 세션 종료를 확인했다.
 - 미검증: 토큰만 바뀐 401 경로(PC 초기화는 인증서도 바꿔 PIN_MISMATCH가 된다), API 28/33 AVD 실행(이미지·AVD만 생성), 회전·분할 화면·3버튼 내비게이션 좌표 matrix, 태블릿에서의 캡처·질문 E2E, 실제 QR 카메라 페어링, 물리 태블릿·S Pen의 palm rejection·지연, OEM 단일 앱 공유 동작, FLAG_SECURE 화면.
+
+## 중계 서버 연결 (Tailscale 없이)
+
+`relay/`는 Cloudflare Worker와 SQLite 기반 Durable Object(`Room`)로 만든 무지(blind) 바이트 중계다. 허브의 종단 간 TLS 바이트만 전달하므로 인증서 고정·Bearer 토큰·LAN/Tailscale 동작은 그대로다.
+
+- 식별: PC는 32바이트 호스트 키(`hub:relay-key`, safeStorage)를 Authorization 헤더로만 보낸다. QR에는 `room = base64url(SHA-256(key))`와 중계 주소만 `&r=…&rk=…`로 들어간다. 휴대폰은 주소 목록 끝에 `relay.invalid`를 붙이고 Android `RelayTunnel`이 이를 루프백 포트로 바꾼다. 연결 초기화는 토큰·인증서와 함께 호스트 키도 바꾼다.
+- 프레임: DATA `0x00`+1–16384바이트, ACK `0x01`+uint32. 양방향 모두 미확인 바이트 262144(WINDOW) 이하, 수신자가 소비한 바이트를 65536 단위로 ACK한다. 중계 DO도 같은 창과 16385바이트 프레임 한도를 강제한다. TLS 암호문은 압축되지 않으므로 PC `ws`는 permessage-deflate를 끄고 Android OkHttp는 송신 메시지를 압축하지 않는다(압축 시 가득 찬 프레임이 16385바이트를 넘는다).
+- PC 한도: 중계 연결은 TLS 핸드셰이크 10초, 핸드셰이크 후 인증 10초 안에 인증 요청을 보내야 하며 최대 32개(미인증 8개)다. 중계 연결의 401은 `Connection: close`로 끝난다. 듣지 않는 서버에는 Node의 headersTimeout/requestTimeout이 적용되지 않으므로 인증 기한을 허브가 직접 건다.
+- 경로 선택: 휴대폰은 주소를 2초 간격으로 시차 경쟁(staggered race)시키고, 중계로 연결된 동안 30초마다 직접 주소의 `/health`를 확인해 이벤트 스트림을 make-before-break로 옮긴다. 진행 중인 RPC는 시작한 연결에서 끝난다.
+- 속도 제한: Worker의 `ratelimits` 바인딩(IP 120/분, 방별 호스트 10/분·연결 120/분)이 없으면 `RATE_LIMIT_MODE=required`에서 모든 업그레이드 경로가 503으로 닫힌다. DO의 방별 메모리 한도는 항상 적용된다. 휴대폰 터널은 503(호스트 없음)마다 15초 동안 새 연결을 보내지 않는다.
+
+검증: relay 17개(로컬 `wrangler dev`), desktop 23개, mobile 72개, Android 단위 테스트 통과. Medium_Phone API 37 AVD + 로컬 wrangler(`required`, 로컬 바인딩 시뮬레이션)에서 중계 전용 페어링(약 0.45초), SSE 실시간 답변, 오버레이 캡처 질문과 첨부 저장, 6.1MB 이미지 요청의 PC 저장(4,600,000바이트 일치), 미수락 클라이언트의 4504(15.0초), 연결 초기화 후 503이 약 20초 간격으로만 발생함을 확인했다. 중계 재시작 시 PC는 0.8초 안에 다시 등록했지만, 휴대폰이 PC보다 먼저 접속해 503을 받으면 15초 대기 때문에 약 15초 뒤 온라인이 됐다. 카메라 UI 촬영, 물리 휴대폰·LTE, 실제 Cloudflare 배포와 LAN↔중계 전환은 실행하지 않았다.

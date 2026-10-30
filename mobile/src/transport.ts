@@ -3,8 +3,27 @@
 // for `vite` dev mode in a desktop browser.
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core'
 
-export type HubIdentity = { addresses: string[]; port: number; fingerprint: string }
+/** Pseudo-address for the relay path; the native tunnel maps it to a loopback port. */
+export const RELAY_ADDRESS = 'relay.invalid'
+export type RelayIdentity = { url: string; room: string }
+/** Invariant: `addresses.includes(RELAY_ADDRESS) === (relay !== undefined)`, relay last. */
+export type HubIdentity = { addresses: string[]; port: number; fingerprint: string; relay?: RelayIdentity }
 export type Pairing = HubIdentity & { token: string }
+
+/** Accepts only a bare `wss://` origin (or loopback `ws://`) exactly as the PC normalizes it. */
+export function parseRelay(url: unknown, room: unknown): RelayIdentity | null {
+  if (typeof url !== 'string' || typeof room !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(room)) return null
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+  const loopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
+  if (parsed.protocol !== 'wss:' && !(parsed.protocol === 'ws:' && loopback)) return null
+  if (`${parsed.protocol}//${parsed.host}` !== url) return null
+  return { url, room }
+}
 /** CLOSED: result arriving after the client was closed; never triggers failover, cache, or status. */
 export type HubErrorCode = 'PIN_MISMATCH' | 'NETWORK' | 'UNAUTHORIZED' | 'CLOSED'
 
@@ -56,16 +75,22 @@ const hubUrl = (p: HubIdentity, address: string, path: string): string =>
 const errorCode = (e: unknown): unknown =>
   e && typeof e === 'object' && 'code' in e ? e.code : undefined
 
+interface RelayOptions {
+  relayUrl?: string
+  relayRoom?: string
+}
 interface FaskHubPlugin {
-  request(o: {
-    url: string
-    method: string
-    body?: string
-    fingerprint: string
-    token: string
-    timeoutMs: number
-  }): Promise<{ status: number; body: string }>
-  openEvents(o: { id: string; url: string; fingerprint: string; token: string }): Promise<void>
+  request(
+    o: {
+      url: string
+      method: string
+      body?: string
+      fingerprint: string
+      token: string
+      timeoutMs: number
+    } & RelayOptions
+  ): Promise<{ status: number; body: string }>
+  openEvents(o: { id: string; url: string; fingerprint: string; token: string } & RelayOptions): Promise<void>
   closeEvents(o: { id: string }): Promise<void>
   addListener(
     e: 'hubEvent',
@@ -77,6 +102,8 @@ interface FaskHubPlugin {
   ): Promise<PluginListenerHandle>
 }
 const FaskHub = registerPlugin<FaskHubPlugin>('FaskHub')
+const relayOptions = (p: HubIdentity): RelayOptions =>
+  p.relay ? { relayUrl: p.relay.url, relayRoom: p.relay.room } : {}
 
 export const nativeTransport: HubTransport = {
   async request(p, address, method, path, body, timeoutMs) {
@@ -88,7 +115,8 @@ export const nativeTransport: HubTransport = {
         ...(body === undefined ? {} : { body }),
         fingerprint: p.fingerprint,
         token: p.token,
-        timeoutMs
+        timeoutMs,
+        ...relayOptions(p)
       })
     } catch (e) {
       throw toHubError(errorCode(e))
@@ -121,7 +149,8 @@ export const nativeTransport: HubTransport = {
         id,
         url: hubUrl(p, address, '/events'),
         fingerprint: p.fingerprint,
-        token: p.token
+        token: p.token,
+        ...relayOptions(p)
       })
     } catch (e) {
       live = false
