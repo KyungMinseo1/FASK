@@ -8,6 +8,9 @@ import { get as httpGet } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
 import { WINDOW, ack, data, relayPipe } from './framing.mjs'
+import { startLatencyProxy } from './latency-proxy.mjs'
+
+const SMOKE = fileURLToPath(new URL('../scripts/smoke.mjs', import.meta.url))
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
@@ -343,6 +346,24 @@ describe('relay with rate limiting bindings', () => {
       await host.nextData()
     }
     assert.equal(await upgradeStatus(`/v1/connect/${roomOf(key)}`, { ip }), 429)
+  })
+
+  // On Cloudflare the phone→room→PC path is longer than the host's ping round trip, so the bulk
+  // phase's last ACK is still in flight when the frame checks start. The smoke test must not mistake it.
+  test('smoke test passes when the phone path is slower than the host path', async () => {
+    const port = Number(server.base.split(':')[1])
+    const proxy = await startLatencyProxy(port, (line) => (line.includes('/v1/connect/') ? 150 : 20))
+    try {
+      const child = spawn(process.execPath, [SMOKE, `ws://127.0.0.1:${proxy.port}`], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let output = ''
+      child.stdout.on('data', (c) => (output += c))
+      child.stderr.on('data', (c) => (output += c))
+      const [code] = await once(child, 'exit')
+      assert.equal(code, 0, output)
+      assert.match(output, /PASS/)
+    } finally {
+      await proxy.close()
+    }
   })
 })
 

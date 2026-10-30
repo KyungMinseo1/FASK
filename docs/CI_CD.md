@@ -65,6 +65,9 @@ Keystore와 비밀번호는 저장소 밖에 별도로 백업하세요. 기존 �
 `RATE LIMITING UNAVAILABLE`을 출력하면 속도 제한 바인딩이 없는 상태이며, 기본
 `RATE_LIMIT_MODE=required`에서는 모든 연결이 503으로 막힙니다. 이때 바인딩을 지우거나
 `off`로 바꾸지 말고 Workers Paid 전환, 중계 비활성 유지, `off` 명시적 수용 중에서 선택하세요.
+프레임 한도가 의심되면 `npm run probe -- wss://…`로 16384/16385/16386/32768/65536바이트 프레임을
+압축 협상 유무별로 보내 PC 측 수신 크기·SHA-256·메시지 타입·Close Code를 표로 확인합니다.
+16385바이트 이하는 `intact`, 그보다 크면 양쪽 `1009`가 정상입니다.
 
 GitHub 저장소 Variables에 `FASK_RELAY_URL`(`wss://…`)을 등록하면 Windows 릴리스 빌드가
 `MAIN_VITE_FASK_RELAY_URL`로 기본 중계 주소를 포함합니다. 로컬 빌드는 Git에 포함되지

@@ -1,16 +1,16 @@
 // Smoke test for a deployed relay: node scripts/smoke.mjs wss://fask-relay.<sub>.workers.dev
 import { once } from 'node:events'
 import { createHash, randomBytes } from 'node:crypto'
-import WebSocket from 'ws'
-import { data, relayPipe } from '../test/framing.mjs'
+import { relayPipe } from '../test/framing.mjs'
+import { open, pair, sendFrame } from './relay-client.mjs'
 
 const relayUrl = process.argv[2]
 if (!relayUrl || !/^wss?:\/\/[^/]+$/.test(relayUrl)) {
   console.error('usage: npm run smoke -- wss://<relay-host>')
   process.exit(1)
 }
-const httpUrl = relayUrl.replace(/^ws/, 'http')
 const sockets = []
+const track = (...socks) => sockets.push(...socks)
 
 function fail(reason) {
   console.error(`FAIL: ${reason}`)
@@ -18,29 +18,10 @@ function fail(reason) {
   process.exit(1)
 }
 
-function open(path, key) {
-  const sock = new WebSocket(`${relayUrl}${path}`, key ? { headers: { Authorization: `Bearer ${key}` } } : {})
-  sock.on('error', () => {})
-  sockets.push(sock)
-  sock.ready = new Promise((resolve, reject) => {
-    sock.once('unexpected-response', (req, res) => {
-      res.socket.on('error', () => {})
-      reject(Object.assign(new Error(`HTTP ${res.statusCode}`), { status: res.statusCode }))
-      req.destroy()
-      res.socket.destroy()
-    })
-    sock.once('open', resolve)
-    sock.once('error', reject)
-  })
-  // Resolve on the relay's close frame (ws receiver internals) rather than waiting for TCP teardown.
-  sock.closed = new Promise((resolve) => {
-    sock.once('close', resolve)
-    sock.once('open', () => sock._receiver.once('conclude', resolve))
-  })
-  return sock
-}
-
-const health = await fetch(`${httpUrl}/v1/health`).then((r) => r.json(), (e) => fail(`health: ${e.message}`))
+const health = await fetch(`${relayUrl.replace(/^ws/, 'http')}/v1/health`).then(
+  (r) => r.json(),
+  (e) => fail(`health: ${e.message}`)
+)
 console.log(`health: ok=${health.ok} rateLimit=${health.rateLimit}`)
 if (health.rateLimit !== true) {
   console.error('RATE LIMITING UNAVAILABLE — relay running in RATE_LIMIT_MODE=off')
@@ -48,34 +29,19 @@ if (health.rateLimit !== true) {
 }
 if (health.ok !== true) fail('health is not ok')
 
-const key = randomBytes(32).toString('base64url')
-const room = createHash('sha256').update(key).digest('base64url')
-
-const early = open(`/v1/connect/${room}`)
+const lonely = randomBytes(32).toString('base64url')
+const early = open(relayUrl, `/v1/connect/${createHash('sha256').update(lonely).digest('base64url')}`)
+track(early)
 const earlyStatus = await early.ready.then(() => 101, (e) => e.status)
 if (earlyStatus !== 503) fail(`connect without host returned ${earlyStatus}, expected 503`)
 console.log('no host: 503')
 
-const host = open('/v1/host', key)
-await host.ready.catch((e) => fail(`host: ${e.message}`))
-const accepted = new Promise((resolve) => {
-  host.on('message', (msg, isBinary) => {
-    if (isBinary) return
-    const dataSock = open(`/v1/accept/${JSON.parse(String(msg)).id}`, key)
-    dataSock.ready.then(() => resolve(dataSock), (e) => fail(`accept: ${e.message}`))
-  })
-})
-const client = open(`/v1/connect/${room}`)
-// `ready` can arrive in the same read as the 101 response, so listen first.
-const firstMessage = once(client, 'message')
-await client.ready.catch((e) => fail(`connect: ${e.message}`))
-const [first] = await firstMessage
-if (String(first) !== 'ready') fail('client did not receive ready')
-const pcSock = await accepted
-console.log('host/connect/ready: ok')
+const bulk = await pair(relayUrl).catch((e) => fail(`host/connect/ready: ${e.message}`))
+track(bulk.host, bulk.phone, bulk.pc)
+console.log(`host/connect/ready: ok (permessage-deflate: ${bulk.phone.extensions || 'not negotiated'})`)
 
-const phone = relayPipe(client)
-const pc = relayPipe(pcSock)
+const phone = relayPipe(bulk.phone)
+const pc = relayPipe(bulk.pc)
 const up = randomBytes(1024 * 1024)
 const down = randomBytes(1024 * 1024)
 await Promise.all([phone.send(up), pc.send(down)])
@@ -85,22 +51,31 @@ const [gotUp, gotDown] = await Promise.all([pc.until(up.length), phone.until(dow
 if (!gotUp.equals(up) || !gotDown.equals(down)) fail('bulk data corrupted')
 console.log('1 MiB each way: ok')
 
-host.ping()
+bulk.host.ping()
 await Promise.race([
-  once(host, 'pong'),
+  once(bulk.host, 'pong'),
   new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
 ]).catch(() => fail('no pong'))
 console.log('ping/pong: ok')
 
-// Raw frames from here on; the pipes no longer track this pair's window.
-const forwarded = once(pcSock, 'message')
-client.send(data(randomBytes(16384)))
-const [frame] = await forwarded
-if (Buffer.from(frame).length !== 16385) fail('16385-byte frame was not forwarded intact')
-client.send(Buffer.alloc(16386))
-const code = await client.closed
-if (code !== 1009) fail(`16386-byte frame closed with ${code}, expected 1009`)
-console.log('frame limits: ok')
+// Frame limits run on fresh idle pairs: the bulk pair still has ACKs in flight, and the first message a
+// busy PC socket sees after the transfer can legitimately be one of them rather than the probe frame.
+const describe = (r) =>
+  `sent ${r.size}B ${r.sha256.slice(0, 12)}; received ${
+    r.received.map((m) => `${m.bytes}B ${m.type} t${m.frameType} ${m.sha256.slice(0, 12)}`).join(' | ') || 'nothing'
+  }; closes ${r.phoneClose?.code ?? 'open'}/${r.pcClose?.code ?? 'open'}`
+for (const size of [16384, 16385]) {
+  const idle = await pair(relayUrl)
+  track(idle.host, idle.phone, idle.pc)
+  const r = await sendFrame(idle, size)
+  if (!r.intact) fail(`${size}-byte frame was not forwarded intact: ${describe(r)}`)
+}
+const oversize = await pair(relayUrl)
+track(oversize.host, oversize.phone, oversize.pc)
+const rejected = await sendFrame(oversize, 16386)
+if (rejected.phoneClose?.code !== 1009 || rejected.pcClose?.code !== 1009 || rejected.received.length)
+  fail(`16386-byte frame was not rejected with 1009 on both sides: ${describe(rejected)}`)
+console.log('frame limits: ok (16384 and 16385 intact by SHA-256, 16386 closed 1009)')
 
 for (const sock of sockets) sock.terminate()
 console.log('PASS')

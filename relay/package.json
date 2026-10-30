@@ -10,7 +10,8 @@
     "check:deploy": "wrangler deploy --dry-run --outdir .wrangler/dry",
     "deploy": "wrangler deploy",
     "test": "node --test \"test/*.test.mjs\"",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "probe": "node scripts/probe-frames.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
