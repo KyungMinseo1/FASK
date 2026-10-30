@@ -11,6 +11,7 @@
 | Desktop CI | Windows 2022, Node 22 | 단위 테스트, 타입 검사, Electron 빌드 |
 | Mobile CI | Ubuntu 24.04, Node 22 | Mobile 패키지만 설치한 상태에서 웹 테스트·타입 검사·빌드 |
 | Android CI | Ubuntu 24.04, JDK 21, SDK 36 | Capacitor 동기화, 네이티브 단위 테스트, Debug APK 빌드 |
+| Relay CI | Ubuntu 24.04, Node 22 | `wrangler types --check`·타입 검사, 배포 dry-run, 로컬 `wrangler dev` 통합 테스트 |
 
 Android는 저장소의 Gradle Wrapper 8.14.3과 AGP 8.13.0을 사용합니다.
 SDK Platform 36과 Build Tools 35.0.0을 명시적으로 설치합니다.
@@ -55,6 +56,22 @@ Keystore와 비밀번호는 저장소 밖에 별도로 백업하세요. 기존 �
 동일한 서명 키를 사용해야 업데이트할 수 있습니다. Debug APK에서 Release APK로
 전환할 때는 키가 달라 기존 Debug 앱 제거가 필요할 수 있습니다.
 키나 비밀번호를 이슈·로그·워크플로 파일에 붙여 넣지 마세요.
+
+## 모바일 중계 서버
+
+중계 서버(`relay/`)는 개발자가 Cloudflare 계정에 한 번 배포합니다.
+`cd relay && npx wrangler login && npm run deploy` 후
+`npm run smoke -- wss://fask-relay.<sub>.workers.dev`로 확인합니다. smoke가 종료 코드 2로
+`RATE LIMITING UNAVAILABLE`을 출력하면 속도 제한 바인딩이 없는 상태이며, 기본
+`RATE_LIMIT_MODE=required`에서는 모든 연결이 503으로 막힙니다. 이때 바인딩을 지우거나
+`off`로 바꾸지 말고 Workers Paid 전환, 중계 비활성 유지, `off` 명시적 수용 중에서 선택하세요.
+프레임 한도가 의심되면 `npm run probe -- wss://…`로 16384/16385/16386/32768/65536바이트 프레임을
+압축 협상 유무별로 보내 PC 측 수신 크기·SHA-256·메시지 타입·Close Code를 표로 확인합니다.
+16385바이트 이하는 `intact`, 그보다 크면 양쪽 `1009`가 정상입니다.
+
+GitHub 저장소 Variables에 `FASK_RELAY_URL`(`wss://…`)을 등록하면 Windows 릴리스 빌드가
+`MAIN_VITE_FASK_RELAY_URL`로 기본 중계 주소를 포함합니다. 로컬 빌드는 Git에 포함되지
+않는 `desktop/.env`에 같은 변수를 넣습니다. 비워 두면 사용자가 설정에서 주소를 입력합니다.
 
 ## 배포 절차
 

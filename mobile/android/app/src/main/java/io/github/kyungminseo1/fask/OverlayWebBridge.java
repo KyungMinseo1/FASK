@@ -19,6 +19,7 @@ import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
@@ -341,7 +342,14 @@ final class OverlayWebBridge {
             fail(id, "CLOSED", OverlayCaptureController.CLOSED_MESSAGE);
             return;
         }
-        http.request("https://" + address + ":" + session.port + path, method, body, session.fingerprint, token, timeout,
+        String url;
+        try {
+            url = RelayTunnel.resolve("https://" + address + ":" + session.port + path, session.relayUrl, session.relayRoom);
+        } catch (IOException error) {
+            fail(id, "NETWORK", "NETWORK");
+            return;
+        }
+        http.request(url, method, body, session.fingerprint, token, timeout,
             new HubHttpClient.RequestCallback() {
                 @Override public void onResponse(int status, String response) {
                     main.post(() -> {
@@ -372,7 +380,14 @@ final class OverlayWebBridge {
             fail(id, "CLOSED", OverlayCaptureController.CLOSED_MESSAGE);
             return;
         }
-        http.openEvents(stream, "https://" + address + ":" + session.port + "/events", session.fingerprint, token,
+        String url;
+        try {
+            url = RelayTunnel.resolve("https://" + address + ":" + session.port + "/events", session.relayUrl, session.relayRoom);
+        } catch (IOException error) {
+            fail(id, "NETWORK", "NETWORK");
+            return;
+        }
+        http.openEvents(stream, url, session.fingerprint, token,
             new EventStream.Listener() {
                 @Override public void onEvent(String event, String data) {
                     main.post(() -> {

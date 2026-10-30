@@ -53,6 +53,8 @@ jobs:
           node-version: '22'
       - run: npm ci
       - run: npm run build
+        env:
+          MAIN_VITE_FASK_RELAY_URL: ${{ vars.FASK_RELAY_URL }}
       - run: npx --no-install electron-builder --win nsis --publish never
       - uses: actions/upload-artifact@v4
         with:

@@ -1,5 +1,6 @@
-// Hub client: the desktop KnowledgeApi over HTTPS RPC plus an SSE event stream, with address
-// failover, encrypted offline snapshots, and generation guards against late callbacks.
+// Hub client: the desktop KnowledgeApi over HTTPS RPC plus an SSE event stream, with staggered
+// address racing, relay→direct path upgrades, encrypted offline snapshots, and stream ownership
+// tokens that silence callbacks from superseded streams.
 import type {
   AskResult,
   KnowledgeApi,
@@ -8,7 +9,16 @@ import type {
   TurnState
 } from '@desktop/preload/personal'
 import type { SnapshotCache } from './cache'
-import { HubError, toHubError, type HubErrorCode, type HubIdentity, type HubTransport, type Pairing } from './transport'
+import {
+  HubError,
+  parseRelay,
+  RELAY_ADDRESS,
+  toHubError,
+  type HubErrorCode,
+  type HubIdentity,
+  type HubTransport,
+  type Pairing
+} from './transport'
 
 export type HubConn = { state: 'online' | 'offline' | 'blocked'; savedAt?: string }
 export type HubClient = KnowledgeApi & {
@@ -32,6 +42,9 @@ export function parsePairing(text: string): Pairing {
   const fingerprint = q.get('fp') ?? '',
     token = q.get('t') ?? ''
   const addresses = q.getAll('a')
+  const relayUrl = q.get('r'),
+    relayRoom = q.get('rk')
+  const relay = relayUrl === null && relayRoom === null ? null : parseRelay(relayUrl, relayRoom)
   if (
     url.protocol !== 'fask:' ||
     q.get('v') !== '1' ||
@@ -40,12 +53,71 @@ export function parsePairing(text: string): Pairing {
     port > 65535 ||
     !/^[A-Za-z0-9_-]{43}$/.test(fingerprint) ||
     !/^[A-Za-z0-9_-]{43}$/.test(token) ||
-    !addresses.length ||
+    ((relayUrl !== null || relayRoom !== null) && !relay) ||
+    !(addresses.length || relay) ||
     !addresses.every((a) => IPV4.test(a))
   )
     throw new Error(PAIRING_ERROR)
-  return { addresses, port, fingerprint, token }
+  return relay
+    ? { addresses: [...addresses, RELAY_ADDRESS], port, fingerprint, token, relay }
+    : { addresses, port, fingerprint, token }
 }
+
+export const STAGGER_MS = 2000
+/**
+ * Attempt i starts when attempt i-1 fails or STAGGER_MS after it started; first fulfilled wins;
+ * later fulfilments go to onLate; rejects with { errors } (address order) when all fail.
+ */
+export function staggered<T>(
+  addresses: string[],
+  attempt: (address: string) => Promise<T>,
+  onLate: (value: T) => void,
+  cancelled: () => boolean
+): Promise<{ address: string; value: T }> {
+  return new Promise((resolve, reject) => {
+    const errors: unknown[] = []
+    let settled = false,
+      started = 0,
+      failed = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const giveUp = (): void => {
+      settled = true
+      clearTimeout(timer)
+      reject({ errors })
+    }
+    const launch = (): void => {
+      clearTimeout(timer)
+      if (settled) return
+      if (started === addresses.length || cancelled()) {
+        if (failed === started) giveUp()
+        return
+      }
+      const index = started++
+      const address = addresses[index]
+      if (started < addresses.length) timer = setTimeout(launch, STAGGER_MS)
+      attempt(address).then(
+        (value) => {
+          if (settled) return onLate(value)
+          settled = true
+          clearTimeout(timer)
+          resolve({ address, value })
+        },
+        (error: unknown) => {
+          errors[index] = error
+          failed++
+          if (settled) return
+          // The newest attempt failing starts the next one at once; launch() also settles the race
+          // once every started attempt failed and nothing more may start.
+          if (index === started - 1 || failed === started) launch()
+        }
+      )
+    }
+    launch()
+  })
+}
+export const UPGRADE_PROBE_MS = 30000
+/** An open event stream plus the ownership token its callbacks check before dispatching. */
+type OpenedStream = { token: object; release: () => void }
 
 // Only RPCs whose resend yields the same result. `ask` qualifies: the hub replays a known
 // requestId with identical content. create/remove/merge-concept go to the active address only.
@@ -74,9 +146,16 @@ export function createHubClient<P extends HubIdentity>(
 ): HubClient {
   let active = p.addresses[0]
   let closed = false
+  /** Bumped by open()/close(); a connect race whose generation is stale releases its winner. */
   let gen = 0
   let handle: (() => void) | null = null
+  /** Ownership token of the live event stream; callbacks of any other stream are dropped. */
+  let current: object | null = null
+  /** Address the live event stream runs over. */
+  let streamAt = ''
   let timer: ReturnType<typeof setTimeout> | undefined
+  let probe: ReturnType<typeof setInterval> | undefined
+  let candidate: { cancelled: boolean } | null = null
   let attempt = 0
   // Fixed at creation: a cache clear (unpair/re-pair) makes this client's saves no-ops.
   const cacheEpoch = deps.cache?.epoch()
@@ -89,6 +168,8 @@ export function createHubClient<P extends HubIdentity>(
   async function rpc(name: string, args: unknown[]): Promise<unknown> {
     if (closed) throw closedError()
     const body = JSON.stringify({ args })
+    // A path switch while this request is in flight wins over the address it completes on.
+    const startedOn = active
     let pinMismatch = false
     let last: HubError | undefined
     for (const address of FAILOVER_SAFE.has(name) ? ordered() : [active]) {
@@ -124,7 +205,7 @@ export function createHubClient<P extends HubIdentity>(
       const field = (key: string): unknown =>
         parsed && typeof parsed === 'object' ? Reflect.get(parsed, key) : undefined
       if (res.status === 200) {
-        active = address
+        if (active === startedOn) active = address
         return field('result')
       }
       // The hub processed the request; resending it elsewhere could apply it twice.
@@ -172,56 +253,117 @@ export function createHubClient<P extends HubIdentity>(
     deps.onStatus({ state: 'offline' })
     schedule()
   }
+  function stopUpgrade(): void {
+    clearInterval(probe)
+    probe = undefined
+    if (candidate) candidate.cancelled = true
+    candidate = null
+  }
   function drop(code: HubErrorCode): void {
     handle = null
+    current = null
+    stopUpgrade()
     fail([code])
   }
-  async function connect(addresses: string[]): Promise<void> {
-    const codes: HubErrorCode[] = []
-    for (const address of addresses) {
-      if (closed) return
-      const my = ++gen
-      let release: () => void
-      try {
-        release = await deps.transport.openEvents(
-          p,
-          address,
-          (event, data) => {
-            if (my === gen && !closed) dispatch(event, data)
-          },
-          (code) => {
-            if (my === gen && !closed) drop(code)
-          }
-        )
-      } catch (e) {
-        if (my !== gen) return
-        codes.push(e instanceof HubError ? e.code : 'NETWORK')
-        continue
+  async function openStream(address: string): Promise<OpenedStream> {
+    const token = {}
+    const release = await deps.transport.openEvents(
+      p,
+      address,
+      (event, data) => {
+        if (current === token && !closed) dispatch(event, data)
+      },
+      (code) => {
+        if (current === token && !closed) drop(code)
       }
-      // A newer attempt or close() superseded this one while it was opening.
-      if (my !== gen || closed) {
-        release()
-        return
-      }
-      handle = release
-      active = address
-      attempt = 0
-      deps.onStatus({ state: 'online' })
-      // Subscribers re-read whatever changed while the stream was down.
-      for (const cb of changedSubs) cb()
+    )
+    return { token, release }
+  }
+  /** Makes `opened` the live stream; the previous one is released only after the swap. */
+  function promote(address: string, opened: OpenedStream): void {
+    const previous = handle
+    current = opened.token
+    handle = opened.release
+    active = streamAt = address
+    attempt = 0
+    previous?.()
+    deps.onStatus({ state: 'online' })
+    // Subscribers re-read whatever changed while the stream was down or switching.
+    for (const cb of changedSubs) cb()
+    if (address === RELAY_ADDRESS && p.addresses.length > 1) probe = setInterval(upgrade, UPGRADE_PROBE_MS)
+  }
+  async function connect(order: string[]): Promise<void> {
+    const my = ++gen
+    const superseded = (): boolean => my !== gen || closed
+    let winner: { address: string; value: OpenedStream }
+    try {
+      winner = await staggered(order, openStream, (late) => late.release(), superseded)
+    } catch (e) {
+      if (superseded()) return
+      const errors = e && typeof e === 'object' && 'errors' in e && Array.isArray(e.errors) ? e.errors : []
+      fail(errors.filter((x) => x !== undefined).map((x) => (x instanceof HubError ? x.code : 'NETWORK')))
       return
     }
-    fail(codes)
+    if (superseded()) return winner.value.release()
+    promote(winner.address, winner.value)
+  }
+  /**
+   * While streaming over the relay, look for a direct path every UPGRADE_PROBE_MS and move the
+   * event stream there make-before-break. RPCs in flight finish on the connection they started on.
+   */
+  function upgrade(): void {
+    if (closed || candidate || streamAt !== RELAY_ADDRESS || handle === null) return
+    const mine = { cancelled: false }
+    candidate = mine
+    const finish = (): void => {
+      if (candidate === mine) candidate = null
+    }
+    const direct = p.addresses.filter((a) => a !== RELAY_ADDRESS)
+    // /health requires the token, so a 200 from the FASK hub proves the authenticated path.
+    const healthy = async (address: string): Promise<void> => {
+      const res = await deps.transport.request(p, address, 'GET', '/health', undefined, 3000)
+      let app: unknown
+      try {
+        app = Reflect.get(JSON.parse(res.body) ?? {}, 'app')
+      } catch {
+        app = undefined
+      }
+      if (res.status !== 200 || app !== 'fask') throw toHubError('NETWORK')
+    }
+    void (async () => {
+      let target: string
+      try {
+        target = (await staggered(direct, healthy, () => {}, () => mine.cancelled)).address
+      } catch {
+        return finish()
+      }
+      if (mine.cancelled) return
+      let opened: OpenedStream
+      try {
+        opened = await openStream(target)
+      } catch {
+        return finish()
+      }
+      if (mine.cancelled || closed || streamAt !== RELAY_ADDRESS || handle === null) {
+        opened.release()
+        return finish()
+      }
+      finish()
+      clearInterval(probe)
+      probe = undefined
+      promote(target, opened)
+    })()
   }
   function open(): void {
     if (closed) return
     clearTimeout(timer)
-    // Invalidate the generation before closing the previous stream so its callbacks are dropped.
+    stopUpgrade()
+    // Drop ownership before closing the previous stream so its callbacks are ignored.
     const previous = handle
     handle = null
-    gen++
+    current = null
     previous?.()
-    void connect(ordered())
+    void connect(active === RELAY_ADDRESS ? [...p.addresses] : ordered())
   }
 
   const client: HubClient = {
@@ -287,6 +429,8 @@ export function createHubClient<P extends HubIdentity>(
       memorySnapshot = undefined
       gen++
       clearTimeout(timer)
+      stopUpgrade()
+      current = null
       handle?.()
       handle = null
     }

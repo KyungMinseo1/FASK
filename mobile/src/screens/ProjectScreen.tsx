@@ -240,7 +240,8 @@ function ScreenQuestionControl({
       const expected = initial.mobile.pairing
       if (!pairing || pairing.fingerprint !== expected.fingerprint ||
           pairing.token !== expected.token || pairing.port !== expected.port ||
-          JSON.stringify(pairing.addresses) !== JSON.stringify(expected.addresses))
+          JSON.stringify(pairing.addresses) !== JSON.stringify(expected.addresses) ||
+          JSON.stringify(pairing.relay ?? null) !== JSON.stringify(expected.relay ?? null))
         throw new Error('페어링이 변경되었습니다. 연결 상태를 확인해 주세요.')
       // A cached snapshot must not authorize a new screen-sharing session.
       const response = await nativeTransport.request(

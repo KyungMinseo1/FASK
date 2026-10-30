@@ -1,0 +1,10 @@
+// Test-only copy of ../wrangler.jsonc without rate limiting bindings, to prove the relay fails closed.
+{
+  "name": "fask-relay",
+  "main": "../src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": false },
+  "vars": { "RATE_LIMIT_MODE": "required" },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}

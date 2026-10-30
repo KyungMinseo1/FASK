@@ -299,7 +299,8 @@ function MobileHubSection(): React.JSX.Element {
   const [status, setStatus] = useState<HubStatus | null>(null),
     [qr, setQr] = useState(''),
     [error, setError] = useState(''),
-    [busy, setBusy] = useState(false)
+    [busy, setBusy] = useState(false),
+    [relayUrl, setRelayUrl] = useState('')
   const apply = async (fn: () => Promise<HubStatus>): Promise<void> => {
     setBusy(true)
     setError('')
@@ -317,6 +318,19 @@ function MobileHubSection(): React.JSX.Element {
       .then(setStatus)
       .catch((e) => setError(errorText(e)))
   }, [])
+  const relayPolling = !!status?.enabled && !!status.relay.enabled
+  useEffect(() => {
+    if (!relayPolling) return
+    const timer = setInterval(() => {
+      void window.fask
+        .hubStatus()
+        .then(setStatus)
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [relayPolling])
+  const savedRelayUrl = status?.relay.url ?? ''
+  useEffect(() => setRelayUrl(savedRelayUrl), [savedRelayUrl])
   const pairing = status?.pairing ?? ''
   useEffect(() => {
     let alive = true
@@ -368,6 +382,33 @@ function MobileHubSection(): React.JSX.Element {
               {a.error && <small className="error"> {a.error}</small>}
             </label>
           ))}
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={status.relay.enabled}
+              disabled={busy}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                void apply(() => window.fask.setHubRelay(enabled, relayUrl))
+              }}
+            />
+            중계 서버로 외부 연결 · Tailscale 없이
+          </label>
+          <input
+            type="url"
+            value={relayUrl}
+            placeholder="wss://…"
+            aria-label="중계 서버 주소"
+            disabled={busy}
+            onChange={(e) => setRelayUrl(e.target.value)}
+            onBlur={() => {
+              if (relayUrl.trim() !== savedRelayUrl)
+                void apply(() => window.fask.setHubRelay(status.relay.enabled, relayUrl))
+            }}
+          />
+          {status.relay.state === 'online' && <p>중계 서버 연결됨</p>}
+          {status.relay.state === 'connecting' && <p>중계 서버에 연결 중…</p>}
+          {status.relay.state === 'error' && <p className="error">{status.relay.error}</p>}
           {status.error && <p className="error">{status.error}</p>}
           {pairing && qr && <img className="hub-qr" src={qr} alt="모바일 연결 QR 코드" />}
           <button disabled={busy} onClick={() => void apply(() => window.fask.resetHubPairing())}>
@@ -377,8 +418,9 @@ function MobileHubSection(): React.JSX.Element {
       )}
       {error && <p className="error">{error}</p>}
       <p>
-        QR에는 연결 키가 들어 있습니다. 다른 사람에게 보여 주지 마세요. 통신은 TLS로 암호화되며
-        Tailscale 주소를 쓰면 집 밖에서도 연결할 수 있습니다. Windows 방화벽 창이 뜨면 허용하세요.
+        QR에는 연결 키가 들어 있습니다. 다른 사람에게 보여 주지 마세요. 통신은 TLS로 암호화됩니다.
+        Tailscale 주소나 중계 서버를 쓰면 집 밖에서도 연결할 수 있고, 중계 서버는 암호화된 데이터만
+        전달합니다. Windows 방화벽 창이 뜨면 허용하세요.
       </p>
     </section>
   )

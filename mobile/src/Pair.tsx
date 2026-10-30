@@ -6,10 +6,10 @@ import {
   CapacitorBarcodeScannerTypeHint
 } from '@capacitor/barcode-scanner'
 import { errorText } from '@desktop/renderer/src/personal/common'
-import { parsePairing } from './hub'
+import { parsePairing, staggered } from './hub'
 import { savePairing, snapshotCache } from './storage'
 import { overlayPreviewAvailable, previewOverlay, stopOverlay } from './overlay/control'
-import { HubError, transport, type Pairing } from './transport'
+import { HubError, RELAY_ADDRESS, transport, type Pairing } from './transport'
 
 const SCAN_INSTRUCTIONS = 'PC FASK 설정 > 모바일 연결의 QR을 비춰 주세요.'
 // The QR is the only key channel in release builds; manual entry exists for dev/emulator tests.
@@ -54,35 +54,37 @@ export default function Pair({
     setError('')
     try {
       const pairing = parsePairing(text)
-      const failures: string[] = []
-      let lastError = ''
-      for (const address of pairing.addresses) {
-        try {
-          const res = await transport.request(pairing, address, 'GET', '/health', undefined, 10000)
-          const body: unknown = JSON.parse(res.body)
-          if (res.status !== 200 || !body || typeof body !== 'object' || !('app' in body) || body.app !== 'fask')
-            throw new Error('FASK 허브가 아닙니다.')
-          // A new PC: the previous PC's encrypted cache and its key go first.
-          await snapshotCache.clear()
-          const paired = {
-            ...pairing,
-            addresses: [address, ...pairing.addresses.filter((a) => a !== address)]
-          }
-          // A running screen session still holds the previous pairing's token.
-          await stopOverlay()
-          await savePairing(paired)
-          onPaired(paired)
-          return
-        } catch (e) {
-          failures.push(e instanceof HubError ? e.code : 'OTHER')
-          lastError = errorText(e)
-        }
+      const healthy = async (address: string): Promise<void> => {
+        const res = await transport.request(pairing, address, 'GET', '/health', undefined, 10000)
+        const body: unknown = JSON.parse(res.body)
+        if (res.status !== 200 || !body || typeof body !== 'object' || !('app' in body) || body.app !== 'fask')
+          throw new Error('FASK 허브가 아닙니다.')
       }
-      setError(
-        failures.every((f) => f === 'PIN_MISMATCH')
-          ? '인증서가 일치하지 않습니다. PC에서 QR을 새로 열어 주세요.'
-          : lastError
-      )
+      let address: string
+      try {
+        address = (await staggered(pairing.addresses, healthy, () => {}, () => false)).address
+      } catch (e) {
+        const errors: unknown[] =
+          e && typeof e === 'object' && 'errors' in e && Array.isArray(e.errors) ? e.errors : []
+        const failures = errors.filter((x) => x !== undefined)
+        setError(
+          failures.length && failures.every((f) => f instanceof HubError && f.code === 'PIN_MISMATCH')
+            ? '인증서가 일치하지 않습니다. PC에서 QR을 새로 열어 주세요.'
+            : errorText(failures.at(-1))
+        )
+        return
+      }
+      // A new PC: the previous PC's encrypted cache and its key go first.
+      await snapshotCache.clear()
+      // The relay stays last so a direct path is always tried first.
+      const paired =
+        address === RELAY_ADDRESS
+          ? pairing
+          : { ...pairing, addresses: [address, ...pairing.addresses.filter((a) => a !== address)] }
+      // A running screen session still holds the previous pairing's token.
+      await stopOverlay()
+      await savePairing(paired)
+      onPaired(paired)
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -95,7 +97,7 @@ export default function Pair({
       <h1>PC와 연결</h1>
       <p>
         PC의 FASK에서 설정 → 모바일 연결을 켜고 주소를 선택한 뒤 표시되는 QR을 스캔하세요. 같은
-        Wi‑Fi 또는 Tailscale에서 연결됩니다.
+        Wi‑Fi, Tailscale 또는 중계 서버로 연결됩니다.
       </p>
       {notice && <p className="notice">{notice}</p>}
       {Capacitor.isNativePlatform() && (

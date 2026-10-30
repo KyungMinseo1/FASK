@@ -26,6 +26,9 @@ final class OverlaySession {
     final String[] addresses;
     final int port;
     final String fingerprint;
+    /** Relay identity, or both null when the pairing has no relay path. */
+    final String relayUrl;
+    final String relayRoom;
     private String token;
     private final List<StartResult> starts = new ArrayList<>();
     private final List<Runnable> stops = new ArrayList<>();
@@ -37,11 +40,14 @@ final class OverlaySession {
     CaptureRequest captureRequest;
 
     OverlaySession(String[] addresses, int port, String fingerprint, String token,
+                   String relayUrl, String relayRoom,
                    String profileId, String projectId, String questionId) {
         this.addresses = addresses.clone();
         this.port = port;
         this.fingerprint = fingerprint;
         this.token = token;
+        this.relayUrl = relayUrl;
+        this.relayRoom = relayRoom;
         this.profileId = profileId;
         this.projectId = projectId;
         this.questionId = questionId;
@@ -58,7 +64,9 @@ final class OverlaySession {
         return profileId.equals(other.profileId) && projectId.equals(other.projectId)
             && java.util.Objects.equals(questionId, other.questionId)
             && fingerprint.equals(other.fingerprint) && token.equals(other.token)
-            && port == other.port && Arrays.equals(addresses, other.addresses);
+            && port == other.port && Arrays.equals(addresses, other.addresses)
+            && java.util.Objects.equals(relayUrl, other.relayUrl)
+            && java.util.Objects.equals(relayRoom, other.relayRoom);
     }
 
     void awaitConsent() {
