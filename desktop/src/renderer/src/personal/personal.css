@@ -2035,6 +2035,29 @@ button.danger {
 .markdown-answer-preview > :first-child {
   margin-top: 0;
 }
+.answer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.copy-button {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+.markdown-code {
+  position: relative;
+}
+.markdown-code > .copy-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0.7;
+}
+.markdown-code > .copy-button:hover {
+  opacity: 1;
+}
 
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {

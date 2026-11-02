@@ -81,6 +81,29 @@ export default function Overlay(): React.JSX.Element {
   const [resetCount, setResetCount] = useState(0)
   const recent = data?.questions.find((q) => q.id === data.recentQuestions?.[projectId])
   const questionId = recent?.id
+  const scrollKey = `fask:panel-scroll:${profileId}`
+  const conversationKey = `${projectId}:${questionId ?? ''}`
+  const panelContent = useRef<HTMLDivElement>(null)
+  const restored = useRef(false)
+  // The panel unmounts while closed; restore its last scroll once content (Composer) exists.
+  useLayoutEffect(() => {
+    if (!panel) {
+      restored.current = false
+      return
+    }
+    if (!data || restored.current || !panelContent.current) return
+    restored.current = true
+    try {
+      const saved = JSON.parse(localStorage.getItem(scrollKey) ?? 'null') as {
+        key?: string
+        top?: number
+      } | null
+      if (saved?.key === conversationKey && Number.isFinite(saved.top))
+        panelContent.current.scrollTop = saved.top as number
+    } catch {
+      // Corrupt entry: start at the top.
+    }
+  }, [panel, data, conversationKey, scrollKey])
   const west = toolbar.x + 32 >= innerWidth / 2
   const north = edge === 'bottom'
   const corner = `${north ? 'n' : 's'}${west ? 'w' : 'e'}`
@@ -532,7 +555,16 @@ export default function Overlay(): React.JSX.Element {
             </div>
             <button onClick={() => setPanel(false)}>접기 ×</button>
           </header>
-          <div className="overlay-panel-content">
+          <div
+            className="overlay-panel-content"
+            ref={panelContent}
+            onScroll={(e) =>
+              localStorage.setItem(
+                scrollKey,
+                JSON.stringify({ key: conversationKey, top: e.currentTarget.scrollTop })
+              )
+            }
+          >
             <small className="overlay-capture-note">
               {region ? '설정한 영역만 캡처' : '영역 미설정 · 전체 모니터 캡처'} · 캡처 포함을
               선택하면 질문 전송 시 촬영합니다.
