@@ -16,7 +16,7 @@ export default function Home(): React.JSX.Element {
     <>
       <header className="mobile-top">
         <h1>FASK</h1>
-        <button onClick={() => navigate('/connection')}>연결</button>
+        <button onClick={() => navigate('/settings')}>설정</button>
       </header>
       <main className="mobile-body">
         {data.workspaces.map((w) => {

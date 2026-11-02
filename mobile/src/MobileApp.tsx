@@ -9,7 +9,7 @@ import { MobileContext, type PendingShare } from './context'
 import { createHubClient, type HubClient, type HubConn } from './hub'
 import { downscaleToFile } from './media'
 import Pair from './Pair'
-import Connection from './screens/Connection'
+import Settings from './screens/Settings'
 import Home from './screens/Home'
 import NewQuestion from './screens/NewQuestion'
 import ProjectScreen from './screens/ProjectScreen'
@@ -239,7 +239,7 @@ function Shell({
             <Route path="/p/:projectId/q/:questionId" element={<ProjectScreen />} />
             <Route path="/p/:projectId/new" element={<NewQuestion />} />
             <Route path="/share" element={<Share />} />
-            <Route path="/connection" element={<Connection />} />
+            <Route path="/settings" element={<Settings />} />
             <Route
               path="/pair"
               element={

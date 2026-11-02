@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
 import ProjectPicker from './ProjectPicker'
+import { ToolIcon } from './ToolbarIcons'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
 
@@ -410,7 +411,7 @@ export default function Overlay(): React.JSX.Element {
             setPanel(false)
           }}
         >
-          <span style={{ color: penColor }}>✎</span>
+          <ToolIcon kind="pen" ink={penColor} />
           <small>펜</small>
         </button>
         {mode === 'pen' && (
@@ -436,10 +437,12 @@ export default function Overlay(): React.JSX.Element {
             setPanel(false)
           }}
         >
-          ▱<small>지우개</small>
+          <ToolIcon kind="eraser" />
+          <small>지우개</small>
         </button>
         <button onClick={() => setStrokes([])}>
-          ⌫<small>모두 지우기</small>
+          <ToolIcon kind="clear" />
+          <small>모두 지우기</small>
         </button>
         <hr />
         <button
@@ -450,10 +453,12 @@ export default function Overlay(): React.JSX.Element {
             setMode('idle')
           }}
         >
-          ？<small>질문</small>
+          <ToolIcon kind="question" />
+          <small>질문</small>
         </button>
         <button onClick={() => void window.fask.showDashboard()}>
-          ▦<small>대시보드</small>
+          <ToolIcon kind="dashboard" />
+          <small>대시보드</small>
         </button>
         <button
           onClick={() => {
@@ -464,7 +469,8 @@ export default function Overlay(): React.JSX.Element {
             })
           }}
         >
-          ▣<small>캡처 영역</small>
+          <ToolIcon kind="region" />
+          <small>캡처 영역</small>
         </button>
         <hr />
         <button
@@ -483,7 +489,8 @@ export default function Overlay(): React.JSX.Element {
             )
           }}
         >
-          ◈<small>프로젝트</small>
+          <ToolIcon kind="project" />
+          <small>프로젝트</small>
         </button>
         </div>
       </div>

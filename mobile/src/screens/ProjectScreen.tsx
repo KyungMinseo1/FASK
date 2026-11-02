@@ -135,7 +135,7 @@ export default function ProjectScreen(): React.JSX.Element {
         </button>
         <h1>{project.name}</h1>
         {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} questionId={questionId} />}
-        <button onClick={() => navigate('/connection')}>연결</button>
+        <button onClick={() => navigate('/settings')}>설정</button>
       </header>
       <main className={wide ? 'mobile-body project-split' : 'mobile-body'}>
         {wide ? (
