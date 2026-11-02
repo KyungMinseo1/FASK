@@ -193,27 +193,142 @@
   align-items: center;
   gap: 8px;
 }
-.fask-mobile .mobile-connection {
+/* Settings: card sections like the desktop settings, without hover effects. */
+.fask-mobile .mobile-settings {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px 16px;
-  margin: 0 0 20px;
-}
-.fask-mobile .mobile-connection dt {
-  color: var(--ink-subtle);
-}
-.fask-mobile .mobile-connection dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.fask-mobile .mobile-connection-screen {
-  display: grid;
-  gap: 16px;
+  gap: 14px;
   align-content: start;
 }
-.fask-mobile .mobile-connection-screen > .danger {
-  margin-top: 16px;
+.fask-mobile .mobile-settings section {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xl);
+}
+.fask-mobile .mobile-settings h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.fask-mobile .mobile-settings h2::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--primary), var(--accent-3));
+}
+.fask-mobile .mobile-settings p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-subtle);
+}
+.fask-mobile .theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.fask-mobile .theme-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  font-size: 14px;
+  text-align: left;
+}
+.fask-mobile .theme-chip.on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+.fask-mobile .theme-chip i {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #0000001f;
+}
+/* Fixed swatches: each previews its theme regardless of the active one. */
+.theme-system i { background: linear-gradient(135deg, #f5f6fa 50%, #0f1220 50%); }
+.theme-light i { background: linear-gradient(135deg, #ffffff 50%, #5b51df 50%); }
+.theme-dark i { background: linear-gradient(135deg, #0f1220 50%, #7b72f0 50%); }
+.theme-sepia i { background: linear-gradient(135deg, #f4ecdc 50%, #a0612b 50%); }
+.theme-forest i { background: linear-gradient(135deg, #eef3ee 50%, #2f7d55 50%); }
+.theme-rose i { background: linear-gradient(135deg, #fbf1f3 50%, #c94f7c 50%); }
+.fask-mobile .settings-rows {
+  display: grid;
+  margin: 0;
+}
+.fask-mobile .settings-rows > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.fask-mobile .settings-rows > div:last-child {
+  border-bottom: 0;
+}
+.fask-mobile .settings-rows dt {
+  color: var(--ink-subtle);
+  flex: none;
+}
+.fask-mobile .settings-rows dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.fask-mobile .status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--ink-subtle);
+}
+.fask-mobile .status-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.fask-mobile .status-pill.online {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+.fask-mobile .status-pill.blocked {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* Touch screens: a tap leaves :hover stuck, so the desktop hover lifts and glows stay off. */
+@media (hover: none) {
+  .fask-mobile .question-card:hover,
+  .fask-mobile .space-card:hover,
+  .fask-mobile button:hover {
+    transform: none;
+    box-shadow: none;
+  }
+  .fask-mobile .question-card.selected:hover {
+    box-shadow: inset 3px 0 var(--primary);
+  }
+  .fask-mobile .space-card:hover .space-icon {
+    transform: none;
+  }
 }
 
 .fask-mobile .question-card,

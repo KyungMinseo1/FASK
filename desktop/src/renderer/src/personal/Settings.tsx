@@ -10,7 +10,7 @@ import type {
   PeerStatus
 } from '../../../preload/personal'
 import { errorText } from './common'
-import { readTheme, setTheme, type ThemePref } from './theme'
+import { readTheme, setTheme, THEME_OPTIONS, type ThemePref } from './theme'
 
 export default function Settings({
   settings,
@@ -249,9 +249,11 @@ export default function Settings({
                   setTheme(v)
                 }}
               >
-                <option value="system">시스템 설정 따르기</option>
-                <option value="light">라이트</option>
-                <option value="dark">다크</option>
+                {THEME_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </label>
             <small>이 기기에만 적용되며 바로 바뀝니다.</small>

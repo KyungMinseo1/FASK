@@ -161,17 +161,17 @@ final class OverlayChrome {
         tools = new LinearLayout(context);
         int pad = dp(6);
         tools.setPadding(pad, pad, pad, pad);
-        penButton = tool("✎", "펜", "펜", host::onPen);
-        eraser = tool("▱", "지우개", "지우개", host::onEraser);
-        clear = tool("⌫", "모두 지우기", "모두 지우기", host::onClearInk);
+        penButton = tool(ToolIconView.Kind.PEN, "펜", "펜", host::onPen);
+        eraser = tool(ToolIconView.Kind.ERASER, "지우개", "지우개", host::onEraser);
+        clear = tool(ToolIconView.Kind.CLEAR, "모두 지우기", "모두 지우기", host::onClearInk);
         divider();
-        question = tool("？", "질문", "질문 · 앱 열기", () -> { host.onQuestion(); closePeek(); });
-        dashboard = tool("▦", "대시보드", "대시보드", () -> { host.onDashboard(); closePeek(); });
-        region = tool("▣", "캡처 영역", "캡처 영역 선택", () -> { host.onRegion(); closePeek(); });
+        question = tool(ToolIconView.Kind.QUESTION, "질문", "질문 · 앱 열기", () -> { host.onQuestion(); closePeek(); });
+        dashboard = tool(ToolIconView.Kind.DASHBOARD, "대시보드", "대시보드", () -> { host.onDashboard(); closePeek(); });
+        region = tool(ToolIconView.Kind.REGION, "캡처 영역", "캡처 영역 선택", () -> { host.onRegion(); closePeek(); });
         divider();
-        project = tool("◈", "프로젝트", "프로젝트 바꾸기", this::onProjectButton);
+        project = tool(ToolIconView.Kind.PROJECT, "프로젝트", "프로젝트 바꾸기", this::onProjectButton);
         divider();
-        stop = tool("✕", "종료", "FASK 화면 질문 종료", host::onStop);
+        stop = tool(ToolIconView.Kind.STOP, "종료", "FASK 화면 질문 종료", host::onStop);
         vScroll = new ScrollView(context);
         vScroll.setVerticalScrollBarEnabled(false);
         vScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -366,19 +366,14 @@ final class OverlayChrome {
         return p;
     }
 
-    private LinearLayout tool(String glyph, String label, String description, Runnable action) {
+    private LinearLayout tool(ToolIconView.Kind kind, String label, String description, Runnable action) {
         LinearLayout button = new LinearLayout(context);
         button.setOrientation(LinearLayout.VERTICAL);
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(2), dp(4), dp(2), dp(4));
         button.setClickable(true);
         button.setContentDescription(description);
-        TextView g = new TextView(context);
-        // U+FE0E asks for the monochrome text glyph; Android otherwise picks colour emoji.
-        g.setText(glyph + "\uFE0E");
-        g.setTextSize(19);
-        g.setGravity(Gravity.CENTER);
-        g.setIncludeFontPadding(false);
+        ToolIconView g = new ToolIconView(context, kind, dp(22));
         TextView l = new TextView(context);
         l.setText(label);
         l.setTextSize(10.5f);
@@ -917,9 +912,9 @@ final class OverlayChrome {
         styleTool(eraser, mode == OverlayWindowController.Mode.ERASER);
         styleTool(region, mode == OverlayWindowController.Mode.REGION);
         styleTool(project, pop == Pop.PROJECT);
-        ((TextView) penButton.getChildAt(0)).setTextColor(penColor);
+        ((ToolIconView) penButton.getChildAt(0)).setInk(penColor);
         question.setBackground(rounded(panelOpen ? palette.primaryPressed : palette.primary, R_MD));
-        ((TextView) question.getChildAt(0)).setTextColor(Color.WHITE);
+        ((ToolIconView) question.getChildAt(0)).setColor(Color.WHITE);
         ((TextView) question.getChildAt(1)).setTextColor(Color.WHITE);
         for (View b : new View[]{penButton, eraser, clear, region}) {
             b.setEnabled(editable);
@@ -932,7 +927,7 @@ final class OverlayChrome {
         button.setBackground(active ? rounded(palette.primarySoft, R_MD) : null);
         button.setForeground(ripple(R_MD));
         int color = active ? palette.primary : palette.inkSubtle;
-        ((TextView) button.getChildAt(0)).setTextColor(color);
+        ((ToolIconView) button.getChildAt(0)).setColor(color);
         ((TextView) button.getChildAt(1)).setTextColor(color);
     }
 
