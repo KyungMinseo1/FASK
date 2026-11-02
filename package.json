@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "version:bump": "node .github/scripts/version-bump.cjs"
+  }
+}

@@ -25,7 +25,7 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci
       - name: Test release validation rules
-        run: node --test ../.github/scripts/check-release.test.cjs
+        run: node --test ../.github/scripts/check-release.test.cjs ../.github/scripts/version-bump.test.cjs
       - run: npm test
       - run: npm run build
 
