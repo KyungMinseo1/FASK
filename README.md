@@ -29,9 +29,11 @@
 
 <br />
 
-<img width="960" height="540" alt="fask-demo-zoom-1 5x" src="https://github.com/user-attachments/assets/fc62547f-817f-455e-a003-981e6e6a0046" />
-
 > **Mark** the screen &nbsp;→&nbsp; **Ask** in place &nbsp;→&nbsp; **Keep** the answer with its context.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/fc62547f-817f-455e-a003-981e6e6a0046" alt="FASK demo" width="800" />
+</p>
 
 ---
 
