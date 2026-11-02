@@ -327,6 +327,8 @@ function QuestionSheet({
   const api = useApi()
   const navigate = useNavigate()
   const [mode, setMode] = useState<SheetMode>('actions')
+  const workspaceId = data.projects.find((p) => p.id === projectId)?.workspaceId
+  const owner = data.workspaces.find((w) => w.id === workspaceId)?.remote?.peerId
   const [name, setName] = useState(() => questionHeading(q))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -390,6 +392,8 @@ function QuestionSheet({
         )}
         {mode === 'move' &&
           data.workspaces.map((w) => {
+            // Questions cannot cross the local/remote boundary; the PC refuses it anyway.
+            if (w.remote?.peerId !== owner) return null
             const targets = data.projects.filter((p) => p.workspaceId === w.id && p.id !== projectId)
             if (!targets.length) return null
             return (

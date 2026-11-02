@@ -91,6 +91,8 @@ jobs:
       # Release builds do not restore caches written by PR jobs.
       - run: npm ci
       - run: npm run sync
+        env:
+          VITE_FASK_RELAY_URL: ${{ vars.FASK_RELAY_URL }}
       - name: Restore signing key, build and verify APK
         working-directory: mobile/android
         env:

@@ -7,6 +7,7 @@ import {
 } from '@capacitor/barcode-scanner'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import { parsePairing, staggered } from './hub'
+import { PAIR_RELAY_URL, pairWithCode } from './pair-code-flow'
 import { savePairing, snapshotCache } from './storage'
 import { overlayPreviewAvailable, previewOverlay, stopOverlay } from './overlay/control'
 import { HubError, RELAY_ADDRESS, transport, type Pairing } from './transport'
@@ -48,7 +49,10 @@ export default function Pair({
 }): React.JSX.Element {
   const [link, setLink] = useState(''),
     [error, setError] = useState(''),
-    [busy, setBusy] = useState(false)
+    [busy, setBusy] = useState(false),
+    [via, setVia] = useState<'direct' | 'relay'>('direct'),
+    [address, setAddress] = useState(''),
+    [code, setCode] = useState('')
   const connect = async (text: string): Promise<void> => {
     setBusy(true)
     setError('')
@@ -91,6 +95,19 @@ export default function Pair({
       setBusy(false)
     }
   }
+  const connectWithCode = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    let uri: string
+    try {
+      uri = await pairWithCode(via === 'relay' ? { kind: 'relay' } : { kind: 'direct', address }, code)
+    } catch (e) {
+      setError(errorText(e))
+      setBusy(false)
+      return
+    }
+    await connect(uri)
+  }
   return (
     <section className="mobile-pair">
       <span className="eyebrow">FASK MOBILE</span>
@@ -113,6 +130,47 @@ export default function Pair({
           QR 코드 스캔
         </button>
       )}
+      <fieldset className="pair-link" disabled={busy}>
+        <legend>코드로 연결</legend>
+        <p>PC의 FASK에서 &ldquo;기기 연결 코드 만들기&rdquo;로 표시된 8자리 코드를 입력하세요.</p>
+        <label>
+          <input type="radio" name="pair-via" checked={via === 'direct'} onChange={() => setVia('direct')} />
+          Tailscale 주소
+        </label>
+        {via === 'direct' && (
+          <input
+            aria-label="Tailscale 주소"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="100.x.y.z 또는 이름.ts.net"
+            autoCapitalize="none"
+            autoCorrect="off"
+            inputMode="url"
+          />
+        )}
+        {PAIR_RELAY_URL && (
+          <label>
+            <input type="radio" name="pair-via" checked={via === 'relay'} onChange={() => setVia('relay')} />
+            릴레이
+          </label>
+        )}
+        <input
+          aria-label="연결 코드"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="XXXX-XXXX"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          disabled={busy || !code.trim() || (via === 'direct' && !address.trim())}
+          onClick={() => void connectWithCode()}
+        >
+          연결
+        </button>
+      </fieldset>
       {MANUAL_ENTRY && (
         <label className="pair-link">
           페어링 링크

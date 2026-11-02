@@ -43,6 +43,33 @@ public class FaskHubPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void pairRequest(PluginCall call) {
+        String url = resolved(call);
+        String body = call.getString("body");
+        Double timeout = call.getDouble("timeoutMs");
+        if (url == null || body == null || timeout == null) {
+            call.reject("NETWORK", "NETWORK");
+            return;
+        }
+        client.pairRequest(url, body, timeout.longValue(), new HubHttpClient.PairCallback() {
+            @Override
+            public void onResponse(int status, String body, String fingerprint) {
+                JSObject ret = new JSObject();
+                ret.put("status", status);
+                ret.put("body", body);
+                ret.put("fingerprint", fingerprint);
+                call.resolve(ret);
+            }
+
+            @Override
+            public void onFailure(String code) {
+                Log.w(TAG, "pair request failed: " + code);
+                call.reject(code, code);
+            }
+        });
+    }
+
+    @PluginMethod
     public void openEvents(PluginCall call) {
         String id = call.getString("id");
         String url = resolved(call);

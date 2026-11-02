@@ -28,6 +28,11 @@ public final class HubHttpClient implements AutoCloseable {
         void onFailure(String code);
     }
 
+    public interface PairCallback {
+        void onResponse(int status, String body, String fingerprint);
+        void onFailure(String code);
+    }
+
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     // Dispatch under the same lock as close so no callback can begin after close returns.
@@ -110,6 +115,69 @@ public final class HubHttpClient implements AutoCloseable {
     }
 
     private void requestFailed(Call call, String code, RequestCallback callback) {
+        synchronized (lock) {
+            if (!closed && requests.remove(call)) callback.onFailure(code);
+        }
+    }
+
+    /** Unpinned JSON POST for code pairing: no Authorization header; reports the leaf fingerprint. */
+    public void pairRequest(String url, String body, long timeoutMs, PairCallback callback) {
+        synchronized (lock) {
+            if (closed) return;
+        }
+        CapturingTrustManager tm = new CapturingTrustManager();
+        OkHttpClient client = CapturingTrustManager.client(tm, Math.max(1L, timeoutMs));
+        Request request;
+        try {
+            request = new Request.Builder()
+                .url(url)
+                .post(RequestBody.create(body == null ? "" : body, JSON))
+                .build();
+        } catch (IllegalArgumentException e) {
+            synchronized (lock) {
+                if (!closed) callback.onFailure("NETWORK");
+            }
+            return;
+        }
+        Call call = client.newCall(request);
+        synchronized (lock) {
+            if (closed) {
+                call.cancel();
+                return;
+            }
+            requests.add(call);
+            call.enqueue(new Callback() {
+                @Override
+                public void onFailure(Call c, IOException e) {
+                    pairFailed(c, HubErrors.classify(e), callback);
+                }
+
+                @Override
+                public void onResponse(Call c, Response r) {
+                    int status;
+                    String text;
+                    try (Response response = r) {
+                        status = response.code();
+                        ResponseBody b = response.body();
+                        text = b == null ? "" : b.string();
+                    } catch (IOException e) {
+                        pairFailed(c, HubErrors.classify(e), callback);
+                        return;
+                    }
+                    String fingerprint = tm.fingerprint();
+                    if (fingerprint == null) {
+                        pairFailed(c, "NETWORK", callback);
+                        return;
+                    }
+                    synchronized (lock) {
+                        if (!closed && requests.remove(c)) callback.onResponse(status, text, fingerprint);
+                    }
+                }
+            });
+        }
+    }
+
+    private void pairFailed(Call call, String code, PairCallback callback) {
         synchronized (lock) {
             if (!closed && requests.remove(call)) callback.onFailure(code);
         }
