@@ -123,6 +123,8 @@ export interface AskInput {
   model: string
   image?: string
   saveOnly?: boolean
+  /** The image is a screen capture with the user's pen marks drawn on it. */
+  annotated?: boolean
 }
 export interface StreamEvent {
   requestId: string

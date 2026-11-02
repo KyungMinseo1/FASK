@@ -15,6 +15,7 @@ import {
 import { attachmentAccept, readAttachment } from './attachments'
 import { errorText } from './common'
 import MarkdownAnswer from './MarkdownAnswer'
+import CopyButton from './CopyButton'
 import { useApi } from './api'
 
 // personal.ts `ask` throws these before recordAsk stores anything; every other failure is
@@ -340,6 +341,11 @@ export default function Composer({
     // A replayed request emits nothing, so always re-read the turn.
     else void resync()
   }
+  const questionInput = useRef<HTMLTextAreaElement>(null)
+  // Focus without scrolling so a reopened overlay panel keeps its scroll position.
+  useEffect(() => {
+    questionInput.current?.focus({ preventScroll: true })
+  }, [])
   const send = async (saveOnly = false): Promise<void> => {
     if (!hasInput || locked) return
     if (!saveOnly && settings.refine && !refined && canRefine) {
@@ -364,10 +370,12 @@ export default function Composer({
     turn.current = ''
     setRunning(!saveOnly)
     let outgoingImage = image || undefined
+    let annotated = false
     if (!saveOnly && includeCapture && onCapture) {
       setCapturing(true)
       try {
         outgoingImage = await onCapture()
+        annotated = hasInk
       } catch (e) {
         // Nothing reached the hub: keep the draft and release the locks.
         setError(errorText(e))
@@ -378,7 +386,12 @@ export default function Composer({
         setCapturing(false)
       }
     }
-    await submit({ ...base, requestId: crypto.randomUUID(), image: outgoingImage })
+    await submit({
+      ...base,
+      requestId: crypto.randomUUID(),
+      image: outgoingImage,
+      ...(annotated ? { annotated: true } : {})
+    })
   }
   /** Replays the exact frozen request to learn whether the hub accepted it. */
   const replay = (): void => {
@@ -418,9 +431,12 @@ export default function Composer({
       )}
       {(live.answer || running) && (
         <div className="live-answer">
-          <span className="eyebrow">
-            {running ? '답변 작성 중' : actualModel ? `이번 답변 · ${actualModel}` : '이번 답변'}
-          </span>
+          <div className="answer-head">
+            <span className="eyebrow">
+              {running ? '답변 작성 중' : actualModel ? `이번 답변 · ${actualModel}` : '이번 답변'}
+            </span>
+            {!running && live.answer && <CopyButton text={() => live.answer} label="답변 복사" />}
+          </div>
           <MarkdownAnswer>
             {live.answer ||
               (capturing ? '현재 화면을 캡처하고 있습니다…' : '모델 응답을 기다리고 있습니다…')}
@@ -440,7 +456,7 @@ export default function Composer({
         }}
       />
       <textarea
-        autoFocus
+        ref={questionInput}
         aria-label="질문"
         placeholder="지금 궁금한 것을 적어보세요…"
         value={raw}

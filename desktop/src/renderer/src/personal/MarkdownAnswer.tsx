@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import CopyButton from './CopyButton'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -16,6 +18,16 @@ function normalizeMath(text: string): string {
             .replace(/\\\(([\s\S]+?)\\\)/g, (_, m) => `$${m.trim()}$`)
     )
     .join('')
+}
+
+function CodeBlock({ children }: { children?: React.ReactNode }): React.JSX.Element {
+  const ref = useRef<HTMLPreElement>(null)
+  return (
+    <div className="markdown-code">
+      <CopyButton text={() => ref.current?.textContent ?? ''} label="코드 복사" />
+      <pre ref={ref}>{children}</pre>
+    </div>
+  )
 }
 
 /** Render model output as text/Markdown, never executable HTML or remote image requests. */
@@ -55,7 +67,7 @@ export default function MarkdownAnswer({
                   <span aria-label={checked ? '완료' : '미완료'}>{checked ? '☑' : '☐'}</span>
                 )
               }
-            : {})
+            : { pre: CodeBlock })
         }}
       >
         {normalizeMath(children)}

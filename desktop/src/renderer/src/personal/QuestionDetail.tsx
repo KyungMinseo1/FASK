@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Concept, Question, Turn } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import MarkdownAnswer from './MarkdownAnswer'
+import CopyButton from './CopyButton'
 import { useApi } from './api'
 import { dateLabel } from './common'
 
@@ -150,6 +151,11 @@ function TurnView({
         </details>
       ))}
       <div className="detail-answer">
+        {t.answer && (
+          <div className="answer-head">
+            <CopyButton text={() => t.answer} label="답변 복사" />
+          </div>
+        )}
         <MarkdownAnswer>{t.answer || '아직 답변이 없습니다.'}</MarkdownAnswer>
       </div>
       {t.error && <p className="notice error">{t.error}</p>}
