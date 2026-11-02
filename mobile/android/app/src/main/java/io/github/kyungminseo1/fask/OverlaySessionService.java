@@ -50,6 +50,12 @@ public final class OverlaySessionService extends Service {
     private AppOpsManager appOps;
     private AppOpsManager.OnOpChangedListener overlayPermission;
     private boolean displayListenerRegistered;
+    /** Re-posts the ongoing notification in the app's new UI language. */
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener languageListener = (prefs, key) -> {
+        if (Strings.KEY.equals(key) && live()) {
+            ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, notification());
+        }
+    };
 
     private final Runnable safetyCheck = new Runnable() {
         @Override public void run() {
@@ -163,24 +169,29 @@ public final class OverlaySessionService extends Service {
     }
 
     private void startProjectionForeground() {
+        Notification notification = notification();
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        } else startForeground(NOTIFICATION_ID, notification);
+    }
+
+    private Notification notification() {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        manager.createNotificationChannel(new NotificationChannel(CHANNEL, "화면 질문", NotificationManager.IMPORTANCE_LOW));
+        // Re-creating an existing channel only updates its user-visible name.
+        manager.createNotificationChannel(new NotificationChannel(CHANNEL, Strings.get(this, "화면 질문"), NotificationManager.IMPORTANCE_LOW));
         PendingIntent open = PendingIntent.getActivity(this, 0,
             new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         PendingIntent stop = PendingIntent.getService(this, session.id.hashCode(),
             new Intent(this, OverlaySessionService.class).setAction(STOP).putExtra(SESSION_ID, session.id),
             PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification notification = new Notification.Builder(this, CHANNEL)
+        return new Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_overlay_notification)
-            .setContentTitle("FASK 화면 질문 사용 중")
-            .setContentText("토글 또는 알림에서 화면 공유를 종료할 수 있습니다.")
+            .setContentTitle(Strings.get(this, "FASK 화면 질문 사용 중"))
+            .setContentText(Strings.get(this, "토글 또는 알림에서 화면 공유를 종료할 수 있습니다."))
             .setContentIntent(open).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(new Notification.Action.Builder(null, "앱 열기", open).build())
-            .addAction(new Notification.Action.Builder(null, "종료", stop).build()).build();
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
-        } else startForeground(NOTIFICATION_ID, notification);
+            .addAction(new Notification.Action.Builder(null, Strings.get(this, "앱 열기"), open).build())
+            .addAction(new Notification.Action.Builder(null, Strings.get(this, "종료"), stop).build()).build();
     }
 
     private void readDisplayGeometry() {
@@ -210,14 +221,14 @@ public final class OverlaySessionService extends Service {
                         @Override public void onGeometryChanged(OverlayGeometry.GeometrySnapshot geometry) {
                             if (capture != null) capture.cancelCapture("GEOMETRY_CHANGED", OverlayCaptureController.GEOMETRY_MESSAGE);
                             Toast.makeText(OverlaySessionService.this,
-                                "화면 구성이 바뀌었습니다. 영역을 다시 선택해 주세요.", Toast.LENGTH_LONG).show();
+                                Strings.get(OverlaySessionService.this, OverlayCaptureController.GEOMETRY_MESSAGE), Toast.LENGTH_LONG).show();
                         }
                         @Override public void onOpenApp() {
                             try {
                                 startActivity(new Intent(OverlaySessionService.this, MainActivity.class)
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
                             } catch (RuntimeException error) {
-                                Toast.makeText(OverlaySessionService.this, "앱을 열 수 없습니다.", Toast.LENGTH_SHORT).show();
+                                Toast.makeText(OverlaySessionService.this, Strings.get(OverlaySessionService.this, "앱을 열 수 없습니다."), Toast.LENGTH_SHORT).show();
                             }
                         }
                         @Override public void onStop() { stopSession("CLOSED", "화면 질문을 종료했습니다."); }
@@ -276,6 +287,7 @@ public final class OverlaySessionService extends Service {
             }
         });
         appOps.startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, getPackageName(), overlayPermission);
+        Strings.prefs(this).registerOnSharedPreferenceChangeListener(languageListener);
     }
 
 
@@ -284,7 +296,8 @@ public final class OverlaySessionService extends Service {
         if (owned == null || owned.state == OverlaySession.State.STOPPING || owned.state == OverlaySession.State.STOPPED) return;
         boolean wasActive = owned.state == OverlaySession.State.ACTIVE;
         owned.stop(code, message, null);
-        if (wasActive) Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        // The Korean message also reaches JS (start rejection); only this native toast is localized.
+        if (wasActive) Toast.makeText(this, Strings.get(this, message), Toast.LENGTH_LONG).show();
     }
 
     private static void release(Runnable action) {
@@ -296,6 +309,7 @@ public final class OverlaySessionService extends Service {
         if (releasing) return;
         releasing = true;
         main.removeCallbacks(safetyCheck);
+        Strings.prefs(this).unregisterOnSharedPreferenceChangeListener(languageListener);
         OverlaySession owned = session;
         session = null;
         if (displayListenerRegistered) {

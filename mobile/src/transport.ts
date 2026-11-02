@@ -2,6 +2,7 @@
 // hub through the FaskHub plugin (OkHttp + leaf-certificate pin). The fetch transport exists only
 // for `vite` dev mode in a desktop browser.
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core'
+import { t } from '@desktop/shared/i18n'
 
 /** Pseudo-address for the relay path; the native tunnel maps it to a loopback port. */
 export const RELAY_ADDRESS = 'relay.invalid'
@@ -42,12 +43,12 @@ export class HubError extends Error {
 }
 export function toHubError(code: unknown): HubError {
   if (code === 'PIN_MISMATCH')
-    return new HubError('인증서가 일치하지 않는 연결을 차단했습니다.', 'PIN_MISMATCH')
+    return new HubError(t('인증서가 일치하지 않는 연결을 차단했습니다.'), 'PIN_MISMATCH')
   // A revoked token must lead to unpairing, not to offline retries.
   if (code === 'UNAUTHORIZED')
-    return new HubError('페어링이 해제되었습니다. 다시 연결해 주세요.', 'UNAUTHORIZED')
+    return new HubError(t('페어링이 해제되었습니다. 다시 연결해 주세요.'), 'UNAUTHORIZED')
   return new HubError(
-    'PC의 FASK에 연결할 수 없습니다. 네트워크와 모바일 연결 허용을 확인해 주세요.',
+    t('PC의 FASK에 연결할 수 없습니다. 네트워크와 모바일 연결 허용을 확인해 주세요.'),
     'NETWORK'
   )
 }
@@ -184,7 +185,7 @@ export type PairResponse = { status: number; body: unknown; fingerprint: string 
  * the OPAQUE context binds that fingerprint, so a substituted certificate fails the exchange.
  */
 export async function pairPost(endpoint: PairEndpoint, path: string, body: unknown): Promise<PairResponse> {
-  if (!Capacitor.isNativePlatform()) throw new Error('개발용 브라우저에서는 코드 연결을 사용할 수 없습니다.')
+  if (!Capacitor.isNativePlatform()) throw new Error(t('개발용 브라우저에서는 코드 연결을 사용할 수 없습니다.'))
   let res: { status: number; body: string; fingerprint: string }
   try {
     res = await FaskHub.pairRequest({
@@ -303,8 +304,8 @@ export const devWebTransport: HubTransport = {
 }
 
 const unsupportedTransport: HubTransport = {
-  request: () => Promise.reject(new Error('Android 앱에서만 연결할 수 있습니다.')),
-  openEvents: () => Promise.reject(new Error('Android 앱에서만 연결할 수 있습니다.'))
+  request: () => Promise.reject(new Error(t('Android 앱에서만 연결할 수 있습니다.'))),
+  openEvents: () => Promise.reject(new Error(t('Android 앱에서만 연결할 수 있습니다.')))
 }
 export const isDevWeb = !Capacitor.isNativePlatform() && import.meta.env.DEV
 export const transport: HubTransport = Capacitor.isNativePlatform()

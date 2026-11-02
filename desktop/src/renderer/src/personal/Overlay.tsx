@@ -6,6 +6,7 @@ import ProjectPicker from './ProjectPicker'
 import { ToolIcon } from './ToolbarIcons'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
+import { useT } from '../../../shared/i18n/react'
 
 const ANCHOR_W = 64,
   ANCHOR_H = 58
@@ -15,6 +16,7 @@ const PICKER_MAX_H = 360
 const HIT_SELECTOR = '.overlay-toolbar,.toolbar-tools,.overlay-panel,.overlay-project-picker'
 
 export default function Overlay(): React.JSX.Element {
+  const t = useT()
   const [params, setParams] = useSearchParams()
   const projectId = params.get('project') || '',
     profileId = params.get('profile') || ''
@@ -22,9 +24,7 @@ export default function Overlay(): React.JSX.Element {
   const [notice, setNotice] = useState('')
   const [mode, setMode] = useState<'idle' | 'pen' | 'eraser'>('idle'),
     [panel, setPanel] = useState(params.get('panel') === '1')
-  const [picker, setPicker] = useState<{ top: number; left?: number; right?: number } | null>(
-    null
-  )
+  const [picker, setPicker] = useState<{ top: number; left?: number; right?: number } | null>(null)
   const [composerLock, setComposerLock] = useState(false)
   const switchBlocked = panel && composerLock
   const [strokes, setStrokes] = useState<Stroke[]>([]),
@@ -199,12 +199,10 @@ export default function Overlay(): React.JSX.Element {
   }, [])
   useLayoutEffect(() => {
     const update = (): void => {
-      const regions = [...document.querySelectorAll(HIT_SELECTOR)].map(
-        (el) => {
-          const r = el.getBoundingClientRect()
-          return { x: r.x, y: r.y, width: r.width, height: r.height }
-        }
-      )
+      const regions = [...document.querySelectorAll(HIT_SELECTOR)].map((el) => {
+        const r = el.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      })
       // The popover holds focus like the panel, so a background click blurs and closes it.
       void window.fask
         .overlayRegions(mode !== 'idle' || panelInteraction, regions, panel || !!picker)
@@ -221,11 +219,24 @@ export default function Overlay(): React.JSX.Element {
       cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [mode, panel, position, toolbar, size, panelSize, panelInteraction, collapsed, peek, edge, picker])
+  }, [
+    mode,
+    panel,
+    position,
+    toolbar,
+    size,
+    panelSize,
+    panelInteraction,
+    collapsed,
+    peek,
+    edge,
+    picker
+  ])
   useEffect(() => {
     if (!picker) return
     const close = (e: Event): void => {
-      if (!(e.target as Element).closest('.overlay-project-picker,.toolbar-project')) setPicker(null)
+      if (!(e.target as Element).closest('.overlay-project-picker,.toolbar-project'))
+        setPicker(null)
     }
     window.addEventListener('pointerdown', close, true)
     return () => window.removeEventListener('pointerdown', close, true)
@@ -330,7 +341,7 @@ export default function Overlay(): React.JSX.Element {
             height: `${region.rect.height * 100}%`
           }}
         >
-          <span>이 영역 안쪽만 캡처 · 우클릭/Esc로 배경 앱 사용</span>
+          <span>{t('이 영역 안쪽만 캡처 · 우클릭/Esc로 배경 앱 사용')}</span>
         </div>
       )}
       <div
@@ -354,9 +365,9 @@ export default function Overlay(): React.JSX.Element {
       >
         <button
           className="toolbar-drag-handle"
-          aria-label="토글 접기/펼치기"
+          aria-label={t('토글 접기/펼치기')}
           aria-expanded={!collapsed}
-          title="클릭: 접기/펼치기 · 드래그: 이동"
+          title={t('클릭: 접기/펼치기 · 드래그: 이동')}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
             toolbarMoving.current = {
@@ -403,95 +414,95 @@ export default function Overlay(): React.JSX.Element {
           </b>
         </button>
         <div className="toolbar-tools">
-        <button
-          className={mode === 'pen' ? 'active' : ''}
-          title="펜 · 우클릭/Esc로 배경 앱 조작"
-          onClick={() => {
-            setMode('pen')
-            setPanel(false)
-          }}
-        >
-          <ToolIcon kind="pen" ink={penColor} />
-          <small>펜</small>
-        </button>
-        {mode === 'pen' && (
-          <div className="pen-colors" role="radiogroup" aria-label="펜 색상">
-            {PEN_COLORS.map((c) => (
-              <button
-                key={c}
-                role="radio"
-                aria-checked={c === penColor}
-                aria-label={c}
-                className={c === penColor ? 'selected' : ''}
-                style={{ background: c }}
-                onClick={() => setPenColor(c)}
-              />
-            ))}
-          </div>
-        )}
-        <button
-          className={mode === 'eraser' ? 'active' : ''}
-          title="지우개 · 우클릭/Esc로 배경 앱 조작"
-          onClick={() => {
-            setMode('eraser')
-            setPanel(false)
-          }}
-        >
-          <ToolIcon kind="eraser" />
-          <small>지우개</small>
-        </button>
-        <button onClick={() => setStrokes([])}>
-          <ToolIcon kind="clear" />
-          <small>모두 지우기</small>
-        </button>
-        <hr />
-        <button
-          className={`question-trigger ${panel ? 'active' : ''}`}
-          aria-expanded={panel}
-          onClick={() => {
-            setPanel((s) => !s)
-            setMode('idle')
-          }}
-        >
-          <ToolIcon kind="question" />
-          <small>질문</small>
-        </button>
-        <button onClick={() => void window.fask.showDashboard()}>
-          <ToolIcon kind="dashboard" />
-          <small>대시보드</small>
-        </button>
-        <button
-          onClick={() => {
-            setNotice('')
-            void window.fask.editOverlayRegion().catch((e) => {
-              setNotice(errorText(e))
-              setPanel(true)
-            })
-          }}
-        >
-          <ToolIcon kind="region" />
-          <small>캡처 영역</small>
-        </button>
-        <hr />
-        <button
-          className={`toolbar-project ${picker ? 'active' : ''}`}
-          aria-expanded={!!picker}
-          title={`프로젝트 바꾸기 · 현재: ${project?.name ?? ''}`}
-          onClick={(e) => {
-            const r = e.currentTarget.getBoundingClientRect()
-            setPicker((p) =>
-              p
-                ? null
-                : {
-                    top: Math.max(8, Math.min(r.top, innerHeight - 8 - PICKER_MAX_H)),
-                    ...(west ? { right: innerWidth - r.left + 8 } : { left: r.right + 8 })
-                  }
-            )
-          }}
-        >
-          <ToolIcon kind="project" />
-          <small>프로젝트</small>
-        </button>
+          <button
+            className={mode === 'pen' ? 'active' : ''}
+            title={t('펜 · 우클릭/Esc로 배경 앱 조작')}
+            onClick={() => {
+              setMode('pen')
+              setPanel(false)
+            }}
+          >
+            <ToolIcon kind="pen" ink={penColor} />
+            <small>{t('펜')}</small>
+          </button>
+          {mode === 'pen' && (
+            <div className="pen-colors" role="radiogroup" aria-label={t('펜 색상')}>
+              {PEN_COLORS.map((c) => (
+                <button
+                  key={c}
+                  role="radio"
+                  aria-checked={c === penColor}
+                  aria-label={c}
+                  className={c === penColor ? 'selected' : ''}
+                  style={{ background: c }}
+                  onClick={() => setPenColor(c)}
+                />
+              ))}
+            </div>
+          )}
+          <button
+            className={mode === 'eraser' ? 'active' : ''}
+            title={t('지우개 · 우클릭/Esc로 배경 앱 조작')}
+            onClick={() => {
+              setMode('eraser')
+              setPanel(false)
+            }}
+          >
+            <ToolIcon kind="eraser" />
+            <small>{t('지우개')}</small>
+          </button>
+          <button onClick={() => setStrokes([])}>
+            <ToolIcon kind="clear" />
+            <small>{t('모두 지우기')}</small>
+          </button>
+          <hr />
+          <button
+            className={`question-trigger ${panel ? 'active' : ''}`}
+            aria-expanded={panel}
+            onClick={() => {
+              setPanel((s) => !s)
+              setMode('idle')
+            }}
+          >
+            <ToolIcon kind="question" />
+            <small>{t('질문')}</small>
+          </button>
+          <button onClick={() => void window.fask.showDashboard()}>
+            <ToolIcon kind="dashboard" />
+            <small>{t('대시보드')}</small>
+          </button>
+          <button
+            onClick={() => {
+              setNotice('')
+              void window.fask.editOverlayRegion().catch((e) => {
+                setNotice(errorText(e))
+                setPanel(true)
+              })
+            }}
+          >
+            <ToolIcon kind="region" />
+            <small>{t('캡처 영역')}</small>
+          </button>
+          <hr />
+          <button
+            className={`toolbar-project ${picker ? 'active' : ''}`}
+            aria-expanded={!!picker}
+            title={t('프로젝트 바꾸기 · 현재: {{name}}', { name: project?.name ?? '' })}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect()
+              setPicker((p) =>
+                p
+                  ? null
+                  : {
+                      top: Math.max(8, Math.min(r.top, innerHeight - 8 - PICKER_MAX_H)),
+                      ...(west ? { right: innerWidth - r.left + 8 } : { left: r.right + 8 })
+                    }
+              )
+            }}
+          >
+            <ToolIcon kind="project" />
+            <small>{t('프로젝트')}</small>
+          </button>
         </div>
       </div>
       {picker && data && (
@@ -504,7 +515,7 @@ export default function Overlay(): React.JSX.Element {
             projects={data.projects}
             currentId={projectId}
             disabledReason={
-              switchBlocked ? '질문을 보내는 중에는 프로젝트를 바꿀 수 없습니다.' : undefined
+              switchBlocked ? t('질문을 보내는 중에는 프로젝트를 바꿀 수 없습니다.') : undefined
             }
             onSelect={switchProject}
           />
@@ -513,7 +524,7 @@ export default function Overlay(): React.JSX.Element {
       {panel && (
         <section
           className="overlay-panel"
-          aria-label="질문 창"
+          aria-label={t('질문 창')}
           style={{
             left: visiblePosition.x,
             top: visiblePosition.y,
@@ -558,9 +569,9 @@ export default function Overlay(): React.JSX.Element {
           >
             <div>
               <span className="eyebrow">ASK IN CONTEXT</span>
-              <b>{project?.name || '화면 질문'}</b>
+              <b>{project?.name || t('화면 질문')}</b>
             </div>
-            <button onClick={() => setPanel(false)}>접기 ×</button>
+            <button onClick={() => setPanel(false)}>{t('접기 ×')}</button>
           </header>
           <div
             className="overlay-panel-content"
@@ -573,8 +584,8 @@ export default function Overlay(): React.JSX.Element {
             }
           >
             <small className="overlay-capture-note">
-              {region ? '설정한 영역만 캡처' : '영역 미설정 · 전체 모니터 캡처'} · 캡처 포함을
-              선택하면 질문 전송 시 촬영합니다.
+              {region ? t('설정한 영역만 캡처') : t('영역 미설정 · 전체 모니터 캡처')} ·{' '}
+              {t('캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}
             </small>
             {data && (
               <Composer
@@ -606,18 +617,18 @@ export default function Overlay(): React.JSX.Element {
                     .then(() => setResetCount((c) => c + 1))
                 }}
               >
-                새 대화 시작
+                {t('새 대화 시작')}
               </button>
             )}
             {(notice || error) && <p className="notice error">{notice || error}</p>}
           </div>
           <footer className="overlay-panel-footer">
-            <small>모서리를 드래그해 크기 조절</small>
+            <small>{t('모서리를 드래그해 크기 조절')}</small>
             <button
               type="button"
               className={`panel-resize-handle ${corner}`}
-              aria-label="질문 창 크기 조절"
-              title="드래그해서 질문 창 크기 조절"
+              aria-label={t('질문 창 크기 조절')}
+              title={t('드래그해서 질문 창 크기 조절')}
               onPointerDown={(e) => {
                 e.preventDefault()
                 e.currentTarget.setPointerCapture(e.pointerId)

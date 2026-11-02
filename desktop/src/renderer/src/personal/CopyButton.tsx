@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useT } from '../../../shared/i18n/react'
 
 export default function CopyButton({
   text,
@@ -7,6 +8,7 @@ export default function CopyButton({
   text: () => string
   label: string
 }): React.JSX.Element {
+  const t = useT()
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const timer = useRef<number>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
@@ -27,7 +29,7 @@ export default function CopyButton({
         )
       }}
     >
-      {state === 'copied' ? '복사됨 ✓' : state === 'failed' ? '복사 실패' : label}
+      {state === 'copied' ? t('복사됨 ✓') : state === 'failed' ? t('복사 실패') : label}
     </button>
   )
 }

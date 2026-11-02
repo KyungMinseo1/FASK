@@ -57,6 +57,8 @@ final class OverlayChrome {
         void onFingerDrawing(boolean enabled);
         /** The palette changed (app theme or system night mode). */
         void onThemeChanged();
+        /** The app's UI language changed; native labels were already refreshed. */
+        void onLanguageChanged();
     }
 
     static final class Project {
@@ -92,8 +94,8 @@ final class OverlayChrome {
     private final Context context;
     private final WindowManager windows;
     private final Host host;
-    private final SharedPreferences position, pen, theme;
-    private final SharedPreferences.OnSharedPreferenceChangeListener themeListener;
+    private final SharedPreferences position, pen, theme, language;
+    private final SharedPreferences.OnSharedPreferenceChangeListener themeListener, languageListener;
     private final ComponentCallbacks configListener;
     private int densityDpi;
     private Palette palette = LIGHT;
@@ -108,6 +110,8 @@ final class OverlayChrome {
     private final WindowManager.LayoutParams handleParams, barParams, popParams;
     private final LinearLayout penButton, eraser, clear, question, dashboard, region, project, stop;
     private final List<LinearLayout> buttons = new ArrayList<>();
+    /** Korean label/description keys per toolbar button, parallel to {@link #buttons}. */
+    private final List<String[]> buttonText = new ArrayList<>();
     private final List<View> dividers = new ArrayList<>();
     private final Rect bounds = new Rect();
 
@@ -143,20 +147,21 @@ final class OverlayChrome {
         position = context.getSharedPreferences("overlay_position", Context.MODE_PRIVATE);
         pen = context.getSharedPreferences("overlay_pen", Context.MODE_PRIVATE);
         theme = context.getSharedPreferences(THEME_PREFS, Context.MODE_PRIVATE);
+        language = Strings.prefs(context);
 
         handle = new TextView(context);
         handle.setText("f");
         handle.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC));
         handle.setTextSize(28);
         handle.setGravity(Gravity.CENTER);
-        handle.setContentDescription("FASK 화면 질문 메뉴");
+        handle.setContentDescription(Strings.get(context, "FASK 화면 질문 메뉴"));
         handle.setOnClickListener(v -> host.perform(this::onHandleClick));
         handle.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (!closed && handle.isAttachedToWindow() && handle.getWidth() > 0) host.onHandleReady();
         });
         installHandleDrag();
         handleRoot = root(handle);
-        handleParams = params("FASK 토글", false);
+        handleParams = params(Strings.get(context, "FASK 토글"), false);
 
         tools = new LinearLayout(context);
         int pad = dp(6);
@@ -185,7 +190,7 @@ final class OverlayChrome {
         vScroll.addView(tools);
         hScroll.setVisibility(View.GONE);
         barRoot = root(barCard);
-        barParams = params("FASK 도구", true);
+        barParams = params(Strings.get(context, "FASK 도구"), true);
         barRoot.setOnTouchListener((v, e) -> {
             if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE && !inside(handleRect, e) && !(pop != Pop.NONE && inside(popRect, e))) {
                 host.perform(this::closePeek);
@@ -197,7 +202,7 @@ final class OverlayChrome {
         popCard.setOrientation(LinearLayout.VERTICAL);
         popCard.setClipToOutline(true);
         popRoot = root(popCard);
-        popParams = params("FASK 선택", true);
+        popParams = params(Strings.get(context, "FASK 선택"), true);
         // Any touch outside the popover (background, toolbar, other app) dismisses it.
         popRoot.setOnTouchListener((v, e) -> {
             if (e.getActionMasked() == MotionEvent.ACTION_OUTSIDE) host.perform(this::dismissPop);
@@ -219,6 +224,8 @@ final class OverlayChrome {
 
         themeListener = (prefs, key) -> { if (THEME_KEY.equals(key)) host.perform(this::applyTheme); };
         theme.registerOnSharedPreferenceChangeListener(themeListener);
+        languageListener = (prefs, key) -> { if (Strings.KEY.equals(key)) host.perform(this::applyLanguage); };
+        language.registerOnSharedPreferenceChangeListener(languageListener);
         configListener = new ComponentCallbacks() {
             @Override public void onConfigurationChanged(Configuration config) { host.perform(OverlayChrome.this::applyTheme); }
             @Override public void onLowMemory() {}
@@ -332,6 +339,7 @@ final class OverlayChrome {
         closed = true;
         cancelBarAnimation();
         theme.unregisterOnSharedPreferenceChangeListener(themeListener);
+        language.unregisterOnSharedPreferenceChangeListener(languageListener);
         context.unregisterComponentCallbacks(configListener);
         RuntimeException first = null;
         for (View view : new View[]{popRoot, barRoot, handleRoot}) {
@@ -372,24 +380,31 @@ final class OverlayChrome {
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(2), dp(4), dp(2), dp(4));
         button.setClickable(true);
-        button.setContentDescription(description);
         ToolIconView g = new ToolIconView(context, kind, dp(22));
         TextView l = new TextView(context);
-        l.setText(label);
-        l.setTextSize(10.5f);
         l.setMaxLines(1);
         l.setGravity(Gravity.CENTER);
         l.setIncludeFontPadding(false);
         l.setPadding(0, dp(3), 0, 0);
-        // Shrink long labels (모두 지우기) to the 64dp card's inner width instead of clipping.
-        int inner = dp(HANDLE_W - 16);
-        for (float sp = 10.5f; sp > 8 && l.getPaint().measureText(label) > inner; sp -= .5f) l.setTextSize(sp - .5f);
         button.addView(g);
         button.addView(l);
+        labelTool(button, label, description);
         button.setOnClickListener(v -> host.perform(action));
         tools.addView(button);
         buttons.add(button);
+        buttonText.add(new String[]{label, description});
         return button;
+    }
+
+    private void labelTool(LinearLayout button, String label, String description) {
+        button.setContentDescription(Strings.get(context, description));
+        TextView l = (TextView) button.getChildAt(1);
+        String text = Strings.get(context, label);
+        l.setText(text);
+        l.setTextSize(10.5f);
+        // Shrink long labels (모두 지우기) to the 64dp card's inner width instead of clipping.
+        int inner = dp(HANDLE_W - 16);
+        for (float sp = 10.5f; sp > 8 && l.getPaint().measureText(text) > inner; sp -= .5f) l.setTextSize(sp - .5f);
     }
 
     private void divider() {
@@ -649,7 +664,7 @@ final class OverlayChrome {
         for (int i = 0; i < OverlayInkView.PEN_COLORS.length; i++) {
             int c = OverlayInkView.PEN_COLORS[i];
             View swatch = new View(context);
-            swatch.setContentDescription("펜 색상 " + (i + 1));
+            swatch.setContentDescription(Strings.get(context, "펜 색상 {{n}}").replace("{{n}}", String.valueOf(i + 1)));
             GradientDrawable dot = new GradientDrawable();
             dot.setShape(GradientDrawable.OVAL);
             dot.setColor(c);
@@ -680,15 +695,15 @@ final class OverlayChrome {
         toggle.setClickable(true);
         toggle.setEnabled(!inputLocked);
         toggle.setAlpha(inputLocked ? .4f : 1f);
-        toggle.setContentDescription("손가락으로도 그리기");
+        toggle.setContentDescription(Strings.get(context, "손가락으로도 그리기"));
         LinearLayout text = new LinearLayout(context);
         text.setOrientation(LinearLayout.VERTICAL);
         TextView title = new TextView(context);
-        title.setText("손가락으로도 그리기");
+        title.setText(Strings.get(context, "손가락으로도 그리기"));
         title.setTextSize(13);
         title.setTextColor(palette.ink);
         TextView hint = new TextView(context);
-        hint.setText(finger ? "손가락과 펜 모두 필기됩니다" : "S펜만 필기 · 손가락은 화면 조작");
+        hint.setText(Strings.get(context, finger ? "손가락과 펜 모두 필기됩니다" : "S펜만 필기 · 손가락은 화면 조작"));
         hint.setTextSize(11);
         hint.setTextColor(palette.inkSubtle);
         text.addView(title);
@@ -729,7 +744,7 @@ final class OverlayChrome {
         LinearLayout list = new LinearLayout(context);
         list.setOrientation(LinearLayout.VERTICAL);
         TextView head = new TextView(context);
-        head.setText("프로젝트");
+        head.setText(Strings.get(context, "프로젝트"));
         head.setTextSize(11);
         head.setTextColor(palette.inkSubtle);
         head.setPadding(dp(8), dp(2), dp(8), dp(6));
@@ -778,7 +793,7 @@ final class OverlayChrome {
         }
         if (projects.isEmpty()) {
             TextView empty = new TextView(context);
-            empty.setText("PC에서 프로젝트를 만들어 주세요.");
+            empty.setText(Strings.get(context, "PC에서 프로젝트를 만들어 주세요."));
             empty.setTextSize(13);
             empty.setTextColor(palette.inkSubtle);
             empty.setPadding(dp(8), dp(6), dp(8), dp(6));
@@ -835,6 +850,19 @@ final class OverlayChrome {
         if (pop != Pop.NONE) rebuildPop();
         restyle();
         host.onThemeChanged();
+    }
+
+    private void applyLanguage() {
+        if (closed) return;
+        handle.setContentDescription(Strings.get(context, "FASK 화면 질문 메뉴"));
+        for (int i = 0; i < buttons.size(); i++) labelTool(buttons.get(i), buttonText.get(i)[0], buttonText.get(i)[1]);
+        handleParams.setTitle(Strings.get(context, "FASK 토글"));
+        barParams.setTitle(Strings.get(context, "FASK 도구"));
+        popParams.setTitle(Strings.get(context, "FASK 선택"));
+        relayout();
+        if (pop != Pop.NONE) rebuildPop();
+        restyle();
+        host.onLanguageChanged();
     }
 
     private GradientDrawable rounded(int fill, int radiusDp) {

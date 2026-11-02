@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import type { CapturePreview, CaptureRect } from '../../../preload/personal'
 import { errorText } from './common'
+import { useT } from '../../../shared/i18n/react'
 
 const initial: CaptureRect = { x: 0.1, y: 0.12, width: 0.8, height: 0.76 }
 export default function CaptureEditor(): React.JSX.Element {
+  const t = useT()
   const [preview, setPreview] = useState<CapturePreview | null>(null)
   const [rect, setRect] = useState(initial)
   const [error, setError] = useState('')
@@ -114,14 +116,14 @@ export default function CaptureEditor(): React.JSX.Element {
           >
             <span className="capture-size">
               {Math.round(rect.width * preview.display.width)} ×{' '}
-              {Math.round(rect.height * preview.display.height)} · 안쪽만 캡처
+              {Math.round(rect.height * preview.display.height)} · {t('안쪽만 캡처')}
             </span>
             {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((mode) => (
               <span
                 key={mode}
                 className={`capture-handle ${mode}`}
                 onPointerDown={(e) => down(e, mode)}
-                aria-label={`${mode} 크기 조절`}
+                aria-label={t('{{mode}} 크기 조절', { mode })}
               />
             ))}
           </div>
@@ -129,20 +131,24 @@ export default function CaptureEditor(): React.JSX.Element {
       )}
       <div className="capture-controls">
         <div>
-          <b>캡처 영역 설정</b>
-          <small>박스를 옮기거나 가장자리를 드래그하세요. 바깥 영역은 전송되지 않습니다.</small>
+          <b>{t('캡처 영역 설정')}</b>
+          <small>
+            {t('박스를 옮기거나 가장자리를 드래그하세요. 바깥 영역은 전송되지 않습니다.')}
+          </small>
         </div>
-        <button onClick={() => setRect({ x: 0, y: 0, width: 1, height: 1 })}>전체 화면</button>
-        <button onClick={() => setRect(initial)}>초기화</button>
-        <button onClick={() => void window.fask.closeCaptureEditor()}>취소 · Esc</button>
+        <button onClick={() => setRect({ x: 0, y: 0, width: 1, height: 1 })}>
+          {t('전체 화면')}
+        </button>
+        <button onClick={() => setRect(initial)}>{t('초기화')}</button>
+        <button onClick={() => void window.fask.closeCaptureEditor()}>{t('취소 · Esc')}</button>
         <button className="primary" onClick={() => void apply()}>
-          적용 · Enter
+          {t('적용 · Enter')}
         </button>
       </div>
       {error && (
         <div className="capture-error">
           {error}
-          <button onClick={() => void window.fask.closeCaptureEditor()}>닫기</button>
+          <button onClick={() => void window.fask.closeCaptureEditor()}>{t('닫기')}</button>
         </div>
       )}
     </div>

@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
+import { useT } from '../../../shared/i18n/react'
 
 /** Models often emit \(..\) / \[..\]; remark-math only knows $..$ / $$..$$. Skip code spans/blocks. */
 function normalizeMath(text: string): string {
@@ -21,10 +22,11 @@ function normalizeMath(text: string): string {
 }
 
 function CodeBlock({ children }: { children?: React.ReactNode }): React.JSX.Element {
+  const t = useT()
   const ref = useRef<HTMLPreElement>(null)
   return (
     <div className="markdown-code">
-      <CopyButton text={() => ref.current?.textContent ?? ''} label="코드 복사" />
+      <CopyButton text={() => ref.current?.textContent ?? ''} label={t('코드 복사')} />
       <pre ref={ref}>{children}</pre>
     </div>
   )
@@ -38,6 +40,7 @@ export default function MarkdownAnswer({
   children: string
   preview?: boolean
 }): React.JSX.Element {
+  const t = useT()
   return (
     <div className={preview ? 'markdown-answer markdown-answer-preview' : 'markdown-answer'}>
       <ReactMarkdown
@@ -54,7 +57,9 @@ export default function MarkdownAnswer({
               </a>
             ),
           img: ({ alt }) => (
-            <span className="markdown-image-label">[이미지: {alt || '외부 이미지'}]</span>
+            <span className="markdown-image-label">
+              {t('[이미지: {{alt}}]', { alt: alt || t('외부 이미지') })}
+            </span>
           ),
           table: ({ children }) => (
             <div className="markdown-table">
@@ -64,7 +69,7 @@ export default function MarkdownAnswer({
           ...(preview
             ? {
                 input: ({ checked }: { checked?: boolean }) => (
-                  <span aria-label={checked ? '완료' : '미완료'}>{checked ? '☑' : '☐'}</span>
+                  <span aria-label={checked ? t('완료') : t('미완료')}>{checked ? '☑' : '☐'}</span>
                 )
               }
             : { pre: CodeBlock })

@@ -16,12 +16,15 @@ import QuestionDetail from './QuestionDetail'
 import Settings from './Settings'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
 import { questionTree } from './questionTree'
+import { useT } from '../../../shared/i18n/react'
+import { i18n } from '../../../shared/i18n'
 import './personal.css'
 
 type ItemKind = 'profile' | 'workspace' | 'project' | 'concept' | 'question'
 
 export default function Dashboard(): React.JSX.Element {
   const { data, refresh, error } = useSnapshot()
+  const t = useT()
   const [search, setSearch] = useSearchParams()
   const navigate = useNavigate()
   const projectId = search.get('project') || '',
@@ -135,7 +138,7 @@ export default function Dashboard(): React.JSX.Element {
       window.removeEventListener('resize', dismiss)
     }
   }, [context])
-  if (!data) return <div className="fask-loading">{error || '나의 질문 공간을 열고 있습니다…'}</div>
+  if (!data) return <div className="fask-loading">{error || t('나의 질문 공간을 열고 있습니다…')}</div>
   return (
     <div className="fask-app">
       <aside className="fask-sidebar">
@@ -143,9 +146,9 @@ export default function Dashboard(): React.JSX.Element {
           <span>f</span> FASK <small>PERSONAL</small>
         </div>
         <label className="sidebar-label">
-          프로필
+          {t('프로필')}
           <select
-            aria-label="프로필"
+            aria-label={t('프로필')}
             onContextMenu={(e) =>
               openContext(
                 e,
@@ -173,16 +176,16 @@ export default function Dashboard(): React.JSX.Element {
           </select>
         </label>
         <button className="sidebar-add" onClick={() => beginCreate('profile')}>
-          ＋ 프로필 추가
+          {t('＋ 프로필 추가')}
         </button>
         <div className="sidebar-heading">
           WORKSPACE
-          <button aria-label="워크스페이스 추가" onClick={() => beginCreate('workspace')}>
+          <button aria-label={t('워크스페이스 추가')} onClick={() => beginCreate('workspace')}>
             ＋
           </button>
         </div>
         <select
-          aria-label="워크스페이스"
+          aria-label={t('워크스페이스')}
           onContextMenu={(e) => {
             if (workspace) openContext(e, 'workspace', workspace.id, workspace.name)
           }}
@@ -202,14 +205,14 @@ export default function Dashboard(): React.JSX.Element {
         {workspace?.remote && (
           <span className="sidebar-rename">
             🌐 {workspace.remote.name} ·{' '}
-            {
+            {t(
               {
                 online: '온라인',
                 offline: '오프라인 (변경 불가)',
                 revoked: '연결 해제됨',
                 blocked: '인증서 불일치'
               }[workspace.remote.status]
-            }
+            )}
           </span>
         )}
         {workspace && (
@@ -218,13 +221,13 @@ export default function Dashboard(): React.JSX.Element {
             disabled={locked}
             onClick={() => beginRename('workspace', workspace.id, workspace.name)}
           >
-            워크스페이스 이름 변경 ✎
+            {t('워크스페이스 이름 변경 ✎')}
           </button>
         )}
         <div className="sidebar-heading">
           PROJECTS
           <button
-            aria-label="프로젝트 추가"
+            aria-label={t('프로젝트 추가')}
             disabled={locked}
             onClick={() => beginCreate('project', workspace?.id)}
           >
@@ -252,22 +255,22 @@ export default function Dashboard(): React.JSX.Element {
         </nav>
         <div className="sidebar-bottom">
           <div className="local-status">
-            <i /> 로컬에 저장 중
-            <small>이미지 {(data.storageBytes / 1024 / 1024).toFixed(1)} MB</small>
+            <i /> {t('로컬에 저장 중')}
+            <small>{t('이미지 {{size}} MB', { size: (data.storageBytes / 1024 / 1024).toFixed(1) })}</small>
           </div>
-          <button onClick={() => setSettingsOpen(true)}>⚙ 설정 · AI 연결</button>
+          <button onClick={() => setSettingsOpen(true)}>{t('⚙ 설정 · AI 연결')}</button>
           <small>
             {shortcut?.accelerator?.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + ') ||
-              '단축키 등록 불가 · 다른 앱 점유 확인'}
+              t('단축키 등록 불가 · 다른 앱 점유 확인')}
             <br />
-            {shortcut?.fallback ? '대체 단축키 · ' : ''}화면 질문 열기 / 패널 토글
+            {shortcut?.fallback ? t('대체 단축키 · 화면 질문 열기 / 패널 토글') : t('화면 질문 열기 / 패널 토글')}
           </small>
         </div>
       </aside>
       <main className="fask-main">
-        <nav className="breadcrumb" aria-label="상위 경로">
+        <nav className="breadcrumb" aria-label={t('상위 경로')}>
           <button
-            aria-label="이전 화면"
+            aria-label={t('이전 화면')}
             disabled={!window.history.state?.idx}
             onClick={() => navigate(-1)}
           >
@@ -280,7 +283,7 @@ export default function Dashboard(): React.JSX.Element {
               setCompose(false)
             }}
           >
-            내 공간
+            {t('내 공간')}
           </button>
           {scope !== 'home' && workspace && (
             <>
@@ -322,14 +325,14 @@ export default function Dashboard(): React.JSX.Element {
             </span>
             <h1>
               {scope === 'home'
-                ? '내 공간'
+                ? t('내 공간')
                 : scope === 'workspace'
                   ? workspace?.name
-                  : project?.name || '프로젝트를 만들어 보세요'}
+                  : project?.name || t('프로젝트를 만들어 보세요')}
               {scope === 'project' && project && (
                 <button
                   className="title-rename"
-                  aria-label="프로젝트 이름 변경"
+                  aria-label={t('프로젝트 이름 변경')}
                   onClick={() => beginRename('project', project.id, project.name)}
                 >
                   ✎
@@ -338,8 +341,8 @@ export default function Dashboard(): React.JSX.Element {
             </h1>
             <p>
               {scope === 'project'
-                ? '질문하고, 연결하고, 나의 지식으로.'
-                : '생각을 이어갈 프로젝트를 선택하세요.'}
+                ? t('질문하고, 연결하고, 나의 지식으로.')
+                : t('생각을 이어갈 프로젝트를 선택하세요.')}
             </p>
           </div>
           <div className="button-row">
@@ -349,14 +352,14 @@ export default function Dashboard(): React.JSX.Element {
                   disabled={!project}
                   onClick={() => void run(() => window.fask.exportContext(project!.id))}
                 >
-                  기억 내보내기 ↗
+                  {t('기억 내보내기 ↗')}
                 </button>
                 <button
                   className="primary"
                   disabled={!project}
                   onClick={() => void run(() => window.fask.openOverlay(project!.id))}
                 >
-                  ▧ 화면에서 질문
+                  {t('▧ 화면에서 질문')}
                 </button>
               </>
             ) : (
@@ -370,7 +373,7 @@ export default function Dashboard(): React.JSX.Element {
                   )
                 }
               >
-                ＋ {scope === 'home' ? '워크스페이스' : '프로젝트'} 만들기
+                {scope === 'home' ? t('＋ 워크스페이스 만들기') : t('＋ 프로젝트 만들기')}
               </button>
             )}
           </div>
@@ -395,15 +398,15 @@ export default function Dashboard(): React.JSX.Element {
                 <h2>{item.name}</h2>
                 <small>
                   {scope === 'home'
-                    ? `${data.projects.filter((p) => p.workspaceId === item.id).length}개 프로젝트`
-                    : `${data.questions.filter((q) => q.projectId === item.id).length}개 질문`}
+                    ? t('{{n}}개 프로젝트', { n: data.projects.filter((p) => p.workspaceId === item.id).length })
+                    : t('{{n}}개 질문', { n: data.questions.filter((q) => q.projectId === item.id).length })}
                 </small>
                 <b>↗</b>
               </button>
             ))}
             {!(scope === 'home' ? data.workspaces : projects).length && (
               <div className="empty-state">
-                <h2>새 프로젝트를 만들어 시작하세요.</h2>
+                <h2>{t('새 프로젝트를 만들어 시작하세요.')}</h2>
               </div>
             )}
           </section>
@@ -412,19 +415,19 @@ export default function Dashboard(): React.JSX.Element {
             <div className="project-stats">
               <div>
                 <b>{questions.length}</b>
-                <span>쌓인 질문</span>
+                <span>{t('쌓인 질문')}</span>
               </div>
               <div>
                 <b>{concepts.length}</b>
-                <span>연결된 개념</span>
+                <span>{t('연결된 개념')}</span>
               </div>
               <div>
                 <b>{questions.filter((q) => q.important).length}</b>
-                <span>중요한 기억</span>
+                <span>{t('중요한 기억')}</span>
               </div>
               <div className="connection-note">
                 <i className={data.settings.model ? 'connected' : ''} />
-                {data.settings.model || 'AI 연결을 설정해 주세요'}
+                {data.settings.model || t('AI 연결을 설정해 주세요')}
               </div>
             </div>
             {(notice || error) && (
@@ -447,7 +450,7 @@ export default function Dashboard(): React.JSX.Element {
                     className={view === id ? 'active' : ''}
                     onClick={() => setView(id)}
                   >
-                    {label}
+                    {t(label)}
                   </button>
                 ))}
               </div>
@@ -458,7 +461,7 @@ export default function Dashboard(): React.JSX.Element {
                   setSelectedId('')
                 }}
               >
-                ＋ 새 질문
+                {t('＋ 새 질문')}
               </button>
             </div>
             {compose && project && (
@@ -475,33 +478,33 @@ export default function Dashboard(): React.JSX.Element {
             )}
             <div className="filter-row">
               <input
-                aria-label="기록 검색"
-                placeholder="⌕ 질문, 답변, 메모 검색"
+                aria-label={t('기록 검색')}
+                placeholder={t('⌕ 질문, 답변, 메모 검색')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
               <select
-                aria-label="질문 필터"
+                aria-label={t('질문 필터')}
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               >
-                <option value="all">모든 질문</option>
-                <option value="simple">간단한 질문</option>
-                <option value="complex">복잡한 질문</option>
-                <option value="unknown">복잡도 미확정</option>
-                <option value="important">중요한 기억</option>
-                <option value="unfiled">미분류</option>
-                <option value="failed">요청 실패</option>
+                <option value="all">{t('모든 질문')}</option>
+                <option value="simple">{t('간단한 질문')}</option>
+                <option value="complex">{t('복잡한 질문')}</option>
+                <option value="unknown">{t('복잡도 미확정')}</option>
+                <option value="important">{t('중요한 기억')}</option>
+                <option value="unfiled">{t('미분류')}</option>
+                <option value="failed">{t('요청 실패')}</option>
               </select>
-              <span>{filtered.length}개 기록</span>
+              <span>{t('{{n}}개 기록', { n: filtered.length })}</span>
             </div>
             <div className={`knowledge-area ${selected ? 'has-detail' : ''}`}>
               <section className="records-panel">
                 {view === 'graph' && project && graphRoot ? (
                   <>
                     <div className="graph-actions">
-                      <span>개념을 펼치고 질문을 연결하세요</span>
-                      <button onClick={() => beginCreate('concept', project.id)}>＋ 개념</button>
+                      <span>{t('개념을 펼치고 질문을 연결하세요')}</span>
+                      <button onClick={() => beginCreate('concept', project.id)}>{t('＋ 개념')}</button>
                     </div>
                     <MindMap
                       key={project.id}
@@ -539,7 +542,7 @@ export default function Dashboard(): React.JSX.Element {
                             new Date(filtered[index - 1].createdAt).toDateString() !==
                               new Date(q.createdAt).toDateString()) && (
                             <h3 className="day-label">
-                              {new Date(q.createdAt).toLocaleDateString('ko-KR', {
+                              {new Date(q.createdAt).toLocaleDateString(i18n.language === 'en' ? 'en-US' : 'ko-KR', {
                                 year: 'numeric',
                                 month: 'long',
                                 day: 'numeric',
@@ -558,19 +561,19 @@ export default function Dashboard(): React.JSX.Element {
                           <div className="question-meta">
                             <span>
                               {questionComplexity(q) === 'complex'
-                                ? '깊이 탐구'
+                                ? t('깊이 탐구')
                                 : questionComplexity(q) === 'simple'
-                                  ? '빠른 질문'
-                                  : '미확정'}
+                                  ? t('빠른 질문')
+                                  : t('미확정')}
                             </span>
                             <time>{dateLabel(q.createdAt)}</time>
-                            {q.turns.length > 1 && <span>대화 {q.turns.length}개</span>}
+                            {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
                             {q.important && <span>★</span>}
                           </div>
                           <h3>{questionHeading(q)}</h3>
                           {view !== 'list' && (
                             <MarkdownAnswer preview>
-                              {lastTurn(q).answer || lastTurn(q).error || '아직 답변이 없습니다.'}
+                              {lastTurn(q).answer || t(lastTurn(q).error || '아직 답변이 없습니다.')}
                             </MarkdownAnswer>
                           )}
                           <div className="question-footer">
@@ -578,10 +581,10 @@ export default function Dashboard(): React.JSX.Element {
                               {q.conceptIds
                                 .map((id) => concepts.find((c) => c.id === id)?.name)
                                 .filter(Boolean)
-                                .join(' · ') || '미분류'}
+                                .join(' · ') || t('미분류')}
                             </span>
                             <small>
-                              {statuses[questionStatus(q)]} {questionImages(q).length ? '· ▧' : ''}
+                              {t(statuses[questionStatus(q)])} {questionImages(q).length ? '· ▧' : ''}
                             </small>
                           </div>
                         </button>
@@ -593,16 +596,16 @@ export default function Dashboard(): React.JSX.Element {
                     <div>✳</div>
                     <h2>
                       {query || filter !== 'all'
-                        ? '일치하는 기록이 없습니다'
-                        : '첫 번째 궁금함을 남겨보세요'}
+                        ? t('일치하는 기록이 없습니다')
+                        : t('첫 번째 궁금함을 남겨보세요')}
                     </h2>
                     <p>
-                      화면에 표시하고 질문하거나, 생각을 글로 남기세요.
+                      {t('화면에 표시하고 질문하거나, 생각을 글로 남기세요.')}
                       <br />
-                      질문과 답변은 이 프로젝트에 차곡차곡 쌓입니다.
+                      {t('질문과 답변은 이 프로젝트에 차곡차곡 쌓입니다.')}
                     </p>
                     <button className="primary" onClick={() => setCompose(true)}>
-                      ＋ 새 질문
+                      {t('＋ 새 질문')}
                     </button>
                   </div>
                 )}
@@ -640,7 +643,7 @@ export default function Dashboard(): React.JSX.Element {
         <div
           className="item-context-menu"
           role="menu"
-          aria-label="항목 메뉴"
+          aria-label={t('항목 메뉴')}
           style={{ left: context.x, top: context.y }}
         >
           <small>{context.name}</small>
@@ -652,7 +655,7 @@ export default function Dashboard(): React.JSX.Element {
               setContext(null)
             }}
           >
-            편집 · 이름 바꾸기
+            {t('편집 · 이름 바꾸기')}
           </button>
           {context.kind === 'question' && (
             <button
@@ -664,7 +667,7 @@ export default function Dashboard(): React.JSX.Element {
                 setContext(null)
               }}
             >
-              다른 프로젝트로 이동
+              {t('다른 프로젝트로 이동')}
             </button>
           )}
           <button
@@ -684,7 +687,7 @@ export default function Dashboard(): React.JSX.Element {
               })
             }}
           >
-            삭제
+            {t('삭제')}
           </button>
         </div>
       )}
@@ -712,21 +715,22 @@ export default function Dashboard(): React.JSX.Element {
           >
             <span className="eyebrow">MAKE ROOM FOR YOUR IDEAS</span>
             <h2>
-              {
-                {
-                  profile: '프로필',
-                  workspace: '워크스페이스',
-                  project: '프로젝트',
-                  concept: '개념',
-                  question: '질문'
-                }[create.kind]
-              }{' '}
-              {create.id ? '이름 변경' : '만들기'}
+              {t(create.id ? '{{kind}} 이름 변경' : '{{kind}} 만들기', {
+                kind: t(
+                  {
+                    profile: '프로필',
+                    workspace: '워크스페이스',
+                    project: '프로젝트',
+                    concept: '개념',
+                    question: '질문'
+                  }[create.kind]
+                )
+              })}
             </h2>
             <input
-              aria-label="이름"
+              aria-label={t('이름')}
               autoFocus
-              placeholder="이름을 입력하세요"
+              placeholder={t('이름을 입력하세요')}
               value={name}
               maxLength={200}
               onChange={(e) => setName(e.target.value)}
@@ -734,10 +738,10 @@ export default function Dashboard(): React.JSX.Element {
             {notice && <p className="error">{notice}</p>}
             <div className="button-row">
               <button type="button" onClick={() => setCreate(null)}>
-                취소
+                {t('취소')}
               </button>
               <button className="primary" disabled={!name.trim()}>
-                {create.id ? '저장' : '만들기'}
+                {create.id ? t('저장') : t('만들기')}
               </button>
             </div>
           </form>
@@ -758,15 +762,15 @@ export default function Dashboard(): React.JSX.Element {
             }}
           >
             <span className="eyebrow">MOVE QUESTION</span>
-            <h2>다른 프로젝트로 이동</h2>
+            <h2>{t('다른 프로젝트로 이동')}</h2>
             <p>{move.name}</p>
             <select
-              aria-label="이동할 프로젝트"
+              aria-label={t('이동할 프로젝트')}
               autoFocus
               value={moveTarget}
               onChange={(e) => setMoveTarget(e.target.value)}
             >
-              <option value="">프로젝트 선택</option>
+              <option value="">{t('프로젝트 선택')}</option>
               {data.workspaces.map((w) => {
                 const current = data.questions.find((q) => q.id === move.id)?.projectId
                 const targets = data.projects.filter((p) => p.workspaceId === w.id && p.id !== current)
@@ -786,10 +790,10 @@ export default function Dashboard(): React.JSX.Element {
             {notice && <p className="error">{notice}</p>}
             <div className="button-row">
               <button type="button" onClick={() => setMove(null)}>
-                취소
+                {t('취소')}
               </button>
               <button className="primary" disabled={!moveTarget}>
-                이동
+                {t('이동')}
               </button>
             </div>
           </form>
@@ -811,12 +815,13 @@ function ConceptEditor({
   const [name, setName] = useState(concept.name),
     [parent, setParent] = useState(concept.parentId || ''),
     [target, setTarget] = useState('')
+  const t = useT()
   return (
     <div className="concept-editor">
-      <h3>개념 정리</h3>
-      <input aria-label="개념 이름" value={name} onChange={(e) => setName(e.target.value)} />
-      <select aria-label="상위 개념" value={parent} onChange={(e) => setParent(e.target.value)}>
-        <option value="">프로젝트 바로 아래</option>
+      <h3>{t('개념 정리')}</h3>
+      <input aria-label={t('개념 이름')} value={name} onChange={(e) => setName(e.target.value)} />
+      <select aria-label={t('상위 개념')} value={parent} onChange={(e) => setParent(e.target.value)}>
+        <option value="">{t('프로젝트 바로 아래')}</option>
         {concepts
           .filter((c) => c.id !== concept.id)
           .map((c) => (
@@ -828,10 +833,10 @@ function ConceptEditor({
       <button
         onClick={() => void run(() => window.fask.editConcept(concept.id, name, parent || null))}
       >
-        이름·위치 저장
+        {t('이름·위치 저장')}
       </button>
-      <select aria-label="병합 대상" value={target} onChange={(e) => setTarget(e.target.value)}>
-        <option value="">병합할 개념 선택</option>
+      <select aria-label={t('병합 대상')} value={target} onChange={(e) => setTarget(e.target.value)}>
+        <option value="">{t('병합할 개념 선택')}</option>
         {concepts
           .filter((c) => c.id !== concept.id)
           .map((c) => (
@@ -844,7 +849,7 @@ function ConceptEditor({
         disabled={!target}
         onClick={() => void run(() => window.fask.mergeConcept(concept.id, target))}
       >
-        선택한 개념으로 병합
+        {t('선택한 개념으로 병합')}
       </button>
     </div>
   )

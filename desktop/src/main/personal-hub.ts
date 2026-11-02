@@ -9,6 +9,7 @@ import { createHash, randomBytes, webcrypto } from 'node:crypto'
 import 'reflect-metadata'
 import * as x509 from '@peculiar/x509'
 import type { HubAddress } from '../preload/personal'
+import { t } from '../shared/i18n'
 
 export interface HubTls {
   cert: string
@@ -198,9 +199,9 @@ export class PersonalHub {
           port,
           error:
             code === 'EADDRINUSE'
-              ? `${address}: 포트 ${port}을 사용할 수 없습니다.`
+              ? t('{{address}}: 포트 {{port}}을 사용할 수 없습니다.', { address, port })
               : code === 'EADDRNOTAVAIL'
-                ? `${address}: 현재 네트워크에 없는 주소입니다.`
+                ? t('{{address}}: 현재 네트워크에 없는 주소입니다.', { address })
                 : `${address}: ${e instanceof Error ? e.message : String(e)}`
         })
       }

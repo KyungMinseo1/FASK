@@ -5,6 +5,7 @@ import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
 import { useApi } from './api'
 import { dateLabel } from './common'
+import { useT } from '../../../shared/i18n/react'
 
 type Run = (fn: () => Promise<unknown>) => Promise<void>
 
@@ -23,33 +24,32 @@ export default function QuestionDetail({
   onCreateConcept: (name: string) => Promise<void>
   onContinue?: () => void
 }): React.JSX.Element {
+  const t = useT()
   const api = useApi()
   const [memo, setMemo] = useState(q.memo)
   return (
     <aside className="question-detail">
       <header>
         <span className="eyebrow">QUESTION NOTES</span>
-        <button onClick={onClose}>닫기 ×</button>
+        <button onClick={onClose}>{t('닫기 ×')}</button>
       </header>
       <div className="detail-title">
         <h2>{questionHeading(q)}</h2>
         <button
           className={q.important ? 'star active' : 'star'}
-          aria-label="중요 표시"
-          onClick={() =>
-            void run(() => api.updateQuestion(q.id, { important: !q.important }))
-          }
+          aria-label={t('중요 표시')}
+          onClick={() => void run(() => api.updateQuestion(q.id, { important: !q.important }))}
         >
           {q.important ? '★' : '☆'}
         </button>
       </div>
       <p className="detail-meta">
-        {dateLabel(q.createdAt)} · 대화 {q.turns.length}개
+        {dateLabel(q.createdAt)} · {t('대화 {{count}}개', { count: q.turns.length })}
       </p>
       {q.turns.map((t, i) => (
         <TurnView key={t.id} questionId={q.id} turn={t} index={i} run={run} />
       ))}
-      <h3>연결된 개념</h3>
+      <h3>{t('연결된 개념')}</h3>
       <div className="concept-checks">
         {concepts.map((c) => (
           <label key={c.id}>
@@ -72,7 +72,7 @@ export default function QuestionDetail({
       </div>
       {q.suggestions.length > 0 && (
         <div className="suggestions">
-          <small>새 개념 제안 · 클릭하면 연결</small>
+          <small>{t('새 개념 제안 · 클릭하면 연결')}</small>
           {q.suggestions.map((s) => (
             <button key={s} onClick={() => void run(() => onCreateConcept(s))}>
               ＋ {s}
@@ -81,19 +81,19 @@ export default function QuestionDetail({
         </div>
       )}
       <label className="memo-label">
-        나의 메모
+        {t('나의 메모')}
         <textarea
           value={memo}
           onChange={(e) => setMemo(e.target.value)}
-          placeholder="확인한 사실, 결정, 다음 할 일…"
+          placeholder={t('확인한 사실, 결정, 다음 할 일…')}
         />
       </label>
       <button onClick={() => void run(() => api.updateQuestion(q.id, { memo }))}>
-        메모 저장
+        {t('메모 저장')}
       </button>
       {onContinue && (
         <button className="reply-button" onClick={onContinue}>
-          이 대화에 이어서 질문 ↗
+          {t('이 대화에 이어서 질문 ↗')}
         </button>
       )}
     </aside>
@@ -111,6 +111,7 @@ function TurnView({
   index: number
   run: Run
 }): React.JSX.Element {
+  const tr = useT()
   const api = useApi()
   const [image, setImage] = useState<string | null>(null)
   useEffect(() => {
@@ -128,19 +129,19 @@ function TurnView({
   }, [api, t.attachment])
   return (
     <section className="detail-turn">
-      <span className="eyebrow">질문 {index + 1}</span>
+      <span className="eyebrow">{tr('질문 {{n}}', { n: index + 1 })}</span>
       <p className="turn-question">{t.sent}</p>
       {t.refined && (
         <details>
-          <summary>원래 질문</summary>
+          <summary>{tr('원래 질문')}</summary>
           <p>{t.raw}</p>
         </details>
       )}
       {t.attachment && image && (
         <div className="detail-capture">
-          <img src={image} alt="질문에 사용한 캡처" />
+          <img src={image} alt={tr('질문에 사용한 캡처')} />
           <button onClick={() => void run(() => api.clearAttachment(questionId, t.id))}>
-            보관 이미지 제거
+            {tr('보관 이미지 제거')}
           </button>
         </div>
       )}
@@ -153,18 +154,18 @@ function TurnView({
       <div className="detail-answer">
         {t.answer && (
           <div className="answer-head">
-            <CopyButton text={() => t.answer} label="답변 복사" />
+            <CopyButton text={() => t.answer} label={tr('답변 복사')} />
           </div>
         )}
-        <MarkdownAnswer>{t.answer || '아직 답변이 없습니다.'}</MarkdownAnswer>
+        <MarkdownAnswer>{t.answer || tr('아직 답변이 없습니다.')}</MarkdownAnswer>
       </div>
       {t.error && <p className="notice error">{t.error}</p>}
       {t.status === 'running' && (
-        <button onClick={() => void run(() => api.cancel(t.id))}>답변 생성 중지</button>
+        <button onClick={() => void run(() => api.cancel(t.id))}>{tr('답변 생성 중지')}</button>
       )}
       <details>
-        <summary>모델 추천 근거</summary>
-        <p>{t.actualModel || t.model || '모델 미지정'}</p>
+        <summary>{tr('모델 추천 근거')}</summary>
+        <p>{t.actualModel || t.model || tr('모델 미지정')}</p>
         <p>{t.routingReason}</p>
       </details>
     </section>

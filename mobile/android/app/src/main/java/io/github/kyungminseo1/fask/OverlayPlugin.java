@@ -323,7 +323,7 @@ public final class OverlayPlugin extends Plugin {
                         @Override public void onToggleReady() {}
                         @Override public void onStateChanged() { if (previewBridge != null) previewBridge.onOverlayChanged(); }
                         @Override public void onGeometryChanged(OverlayGeometry.GeometrySnapshot geometry) {}
-                        @Override public void onOpenApp() { Toast.makeText(app, "미리보기: 앱 열기", Toast.LENGTH_SHORT).show(); }
+                        @Override public void onOpenApp() { Toast.makeText(app, Strings.get(app, "미리보기: 앱 열기"), Toast.LENGTH_SHORT).show(); }
                         @Override public void onStop() { closePreview(); }
                         @Override public void onWindowFailure() { closePreview(); }
                         @Override public void onProjectPicker() { if (previewBridge != null) previewBridge.openProjectPicker(); }
@@ -398,6 +398,14 @@ public final class OverlayPlugin extends Plugin {
         if (!"light".equals(pref) && !"dark".equals(pref)) pref = "system";
         getContext().getSharedPreferences(OverlayChrome.THEME_PREFS, Context.MODE_PRIVATE)
             .edit().putString(OverlayChrome.THEME_KEY, pref).apply();
+        call.resolve();
+    }
+
+    /** The app's UI language ('ko' default, 'en') for native overlay text; a live overlay relabels itself. */
+    @PluginMethod
+    public void setLanguage(PluginCall call) {
+        String lang = Strings.normalize(call.getString("lang", "ko"));
+        Strings.prefs(getContext()).edit().putString(Strings.KEY, lang).apply();
         call.resolve();
     }
 

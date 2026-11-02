@@ -7,8 +7,11 @@ import { HashRouter } from 'react-router'
 import App from './App'
 import { ApiContext } from './personal/api'
 import { initTheme } from './personal/theme'
+import { initLanguage, resolveLanguage } from '../../shared/i18n'
 
 initTheme()
+initLanguage()
+void window.fask?.setUiLanguage?.(resolveLanguage())
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ApiContext.Provider value={window.fask}>

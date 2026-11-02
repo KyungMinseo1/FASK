@@ -24,7 +24,9 @@ export default defineConfig({
       'katex',
       '@xyflow/react',
       'd3-hierarchy',
-      '@cloudflare/opaque-ts'
+      '@cloudflare/opaque-ts',
+      'i18next',
+      'react-i18next'
     ]
   },
   server: { host: '127.0.0.1', port: 5173, fs: { allow: ['..'] } },

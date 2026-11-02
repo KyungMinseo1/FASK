@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Snapshot } from '../../../preload/personal'
 import { useApi } from './api'
+import { i18n, t } from '../../../shared/i18n'
 
 export function errorText(error: unknown): string {
-  return error instanceof Error
-    ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-    : String(error)
+  return t(
+    error instanceof Error
+      ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+      : String(error)
+  )
 }
 export function useSnapshot(): {
   data: Snapshot | null
@@ -43,7 +46,7 @@ export function useSnapshot(): {
   return { data, refresh, error }
 }
 export function dateLabel(value: string): string {
-  return new Date(value).toLocaleString('ko-KR', {
+  return new Date(value).toLocaleString(i18n.language === 'en' ? 'en-US' : 'ko-KR', {
     month: 'long',
     day: 'numeric',
     hour: '2-digit',
