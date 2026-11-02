@@ -1,3 +1,5 @@
+import { t } from '../shared/i18n'
+
 export function normalizeEndpoint(value: string): string {
   let url: URL
   try {
@@ -50,7 +52,7 @@ function statusError(status: number): Error {
         : status === 429
           ? '한도에 도달했습니다. 프록시에서 상태를 확인해 주세요.'
           : 'EasyCLIProxyAPI의 실행 상태와 모델 연결을 확인해 주세요.'
-  return new Error(`로컬 API 오류 (${status}). ${hint}`)
+  return new Error(t('로컬 API 오류 ({{status}}). {{hint}}', { status, hint: t(hint) }))
 }
 export async function streamChat(
   endpoint: string,

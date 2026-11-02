@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router'
 import type { PeerStatus } from '@desktop/preload/personal'
+import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 
 const PEER_STATUS: Record<PeerStatus, string> = {
@@ -12,11 +13,12 @@ const PEER_STATUS: Record<PeerStatus, string> = {
 export default function Home(): React.JSX.Element {
   const { data } = useMobile()
   const navigate = useNavigate()
+  const t = useT()
   return (
     <>
       <header className="mobile-top">
         <h1>FASK</h1>
-        <button onClick={() => navigate('/settings')}>설정</button>
+        <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className="mobile-body">
         {data.workspaces.map((w) => {
@@ -26,7 +28,7 @@ export default function Home(): React.JSX.Element {
               <h2>{w.remote ? `🌐 ${w.name}` : w.name}</h2>
               {w.remote && (
                 <small className="mobile-remote-status">
-                  {w.remote.name} · {PEER_STATUS[w.remote.status]}
+                  {w.remote.name} · {t(PEER_STATUS[w.remote.status])}
                 </small>
               )}
               {data.projects
@@ -42,7 +44,9 @@ export default function Home(): React.JSX.Element {
                   >
                     <span className="space-icon">◈</span>
                     <h3>{p.name}</h3>
-                    <small>{data.questions.filter((q) => q.projectId === p.id).length}개 질문</small>
+                    <small>
+                      {t('{{n}}개 질문', { n: data.questions.filter((q) => q.projectId === p.id).length })}
+                    </small>
                     <b>↗</b>
                   </button>
                 ))}
@@ -51,7 +55,7 @@ export default function Home(): React.JSX.Element {
         })}
         {!data.projects.length && (
           <div className="empty-state">
-            <h2>PC에서 프로젝트를 만들어 주세요.</h2>
+            <h2>{t('PC에서 프로젝트를 만들어 주세요.')}</h2>
           </div>
         )}
       </main>

@@ -17,6 +17,7 @@ import Composer from '@desktop/renderer/src/personal/Composer'
 import MarkdownAnswer from '@desktop/renderer/src/personal/MarkdownAnswer'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import { questionTree } from '@desktop/renderer/src/personal/questionTree'
+import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
 import { isAndroidOverlay, isOverlayCancellation, overlayControl, type OverlayStatus } from '../overlay/control'
@@ -48,6 +49,7 @@ export default function ProjectScreen(): React.JSX.Element {
   const { projectId = '', questionId } = useParams()
   const { data } = useMobile()
   const navigate = useNavigate()
+  const t = useT()
   const wide = useWide()
   const project = data.projects.find((p) => p.id === projectId)
   const [query, setQuery] = useState(''),
@@ -67,8 +69,8 @@ export default function ProjectScreen(): React.JSX.Element {
     <section className="mobile-list">
       <div className="filter-row">
         <input
-          aria-label="기록 검색"
-          placeholder="⌕ 질문, 답변, 메모 검색"
+          aria-label={t('기록 검색')}
+          placeholder={t('⌕ 질문, 답변, 메모 검색')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -80,16 +82,16 @@ export default function ProjectScreen(): React.JSX.Element {
             className={filter === id ? 'active' : ''}
             onClick={() => setFilter(id)}
           >
-            {label}
+            {t(label)}
           </button>
         ))}
       </div>
       <div className="segmented">
         <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
-          목록
+          {t('목록')}
         </button>
         <button className={view === 'graph' ? 'active' : ''} onClick={() => setView('graph')}>
-          개념 그래프
+          {t('개념 그래프')}
         </button>
       </div>
       {view === 'graph' ? (
@@ -115,7 +117,7 @@ export default function ProjectScreen(): React.JSX.Element {
         </div>
       ) : (
         <div className="empty-state">
-          <h2>{query || filter !== 'all' ? '일치하는 기록이 없습니다' : '첫 질문을 남겨 보세요'}</h2>
+          <h2>{query || filter !== 'all' ? t('일치하는 기록이 없습니다') : t('첫 질문을 남겨 보세요')}</h2>
         </div>
       )}
     </section>
@@ -124,18 +126,18 @@ export default function ProjectScreen(): React.JSX.Element {
     <Detail key={questionId} projectId={projectId} questionId={questionId} />
   ) : (
     <div className="empty-state">
-      <h2>질문을 선택하세요</h2>
+      <h2>{t('질문을 선택하세요')}</h2>
     </div>
   )
   return (
     <>
       <header className="mobile-top">
-        <button aria-label="뒤로" onClick={() => navigate(questionId && !wide ? `/p/${projectId}` : '/')}>
+        <button aria-label={t('뒤로')} onClick={() => navigate(questionId && !wide ? `/p/${projectId}` : '/')}>
           ←
         </button>
         <h1>{project.name}</h1>
         {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} questionId={questionId} />}
-        <button onClick={() => navigate('/settings')}>설정</button>
+        <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className={wide ? 'mobile-body project-split' : 'mobile-body'}>
         {wide ? (
@@ -152,7 +154,7 @@ export default function ProjectScreen(): React.JSX.Element {
       {(!questionId || wide) && (
         <div className="mobile-fab">
           <button className="primary" onClick={() => navigate(`/p/${projectId}/new`)}>
-            ＋ 새 질문
+            {t('＋ 새 질문')}
           </button>
         </div>
       )}
@@ -177,6 +179,7 @@ function ScreenQuestionControl({
   questionId?: string
 }): React.JSX.Element {
   const mobile = useMobile()
+  const t = useT()
   const current = useRef({ mobile, projectId, questionId })
   current.current = { mobile, projectId, questionId }
   const [status, setStatus] = useState<OverlayStatus | null>(null)
@@ -217,22 +220,21 @@ function ScreenQuestionControl({
       }
       const initial = current.current
       if (initial.mobile.conn.state !== 'online')
-        throw new Error('PC에 연결된 상태에서 화면 질문을 시작해 주세요.')
+        throw new Error(t('PC에 연결된 상태에서 화면 질문을 시작해 주세요.'))
       if (!initial.mobile.data.projects.some((item) => item.id === projectId) ||
           (questionId && !initial.mobile.data.questions.some(
             (item) => item.id === questionId && item.projectId === projectId
-          ))) throw new Error('현재 화면에 프로젝트 또는 질문이 없습니다. 다시 열어 주세요.')
+          ))) throw new Error(t('현재 화면에 프로젝트 또는 질문이 없습니다. 다시 열어 주세요.'))
       if (!window.confirm(
-        '다른 앱 위에 FASK 토글을 표시하고 이번 세션 동안 전체 디스플레이를 공유합니다. ' +
-        '전역 펜 좌표를 맞추려면 전체 화면 공유가 필요합니다. ' +
-        '전체 화면을 자동 전송하지 않으며, 질문 전송 시 선택한 영역만 첨부합니다. ' +
-        '보호된 화면은 캡처되지 않거나 검게 보일 수 있습니다. 계속할까요?'
+        t(
+          '다른 앱 위에 FASK 토글을 표시하고 이번 세션 동안 전체 디스플레이를 공유합니다. 전역 펜 좌표를 맞추려면 전체 화면 공유가 필요합니다. 전체 화면을 자동 전송하지 않으며, 질문 전송 시 선택한 영역만 첨부합니다. 보호된 화면은 캡처되지 않거나 검게 보일 수 있습니다. 계속할까요?'
+        )
       )) return
       if (!state.overlayAllowed) {
         await overlayControl.requestOverlayPermission()
         if (mounted.current) {
           setStatus(await overlayControl.status())
-          setMessage('다른 앱 위에 표시 권한을 허용한 뒤 화면 위에서 질문 버튼을 다시 눌러 주세요.')
+          setMessage(t('다른 앱 위에 표시 권한을 허용한 뒤 화면 위에서 질문 버튼을 다시 눌러 주세요.'))
         }
         return
       }
@@ -242,16 +244,16 @@ function ScreenQuestionControl({
           pairing.token !== expected.token || pairing.port !== expected.port ||
           JSON.stringify(pairing.addresses) !== JSON.stringify(expected.addresses) ||
           JSON.stringify(pairing.relay ?? null) !== JSON.stringify(expected.relay ?? null))
-        throw new Error('페어링이 변경되었습니다. 연결 상태를 확인해 주세요.')
+        throw new Error(t('페어링이 변경되었습니다. 연결 상태를 확인해 주세요.'))
       // A cached snapshot must not authorize a new screen-sharing session.
       const response = await nativeTransport.request(
         pairing, initial.mobile.client.address(), 'POST', '/rpc/snapshot', '{"args":[]}', 15_000
       )
       if (response.status < 200 || response.status >= 300)
-        throw new Error('PC의 최신 프로젝트 정보를 확인할 수 없습니다.')
+        throw new Error(t('PC의 최신 프로젝트 정보를 확인할 수 없습니다.'))
       const envelope: unknown = JSON.parse(response.body)
       if (!envelope || typeof envelope !== 'object' || !('result' in envelope))
-        throw new Error('PC의 프로젝트 응답을 읽을 수 없습니다.')
+        throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
       const latest = envelope.result
       if (!latest || typeof latest !== 'object' ||
           !('activeProfileId' in latest) || typeof latest.activeProfileId !== 'string' ||
@@ -259,13 +261,13 @@ function ScreenQuestionControl({
           !('projects' in latest) || !Array.isArray(latest.projects) ||
           !('workspaces' in latest) || !Array.isArray(latest.workspaces) ||
           !('questions' in latest) || !Array.isArray(latest.questions))
-        throw new Error('PC의 프로젝트 응답을 읽을 수 없습니다.')
+        throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
       const now = current.current
       if (!mounted.current) return
       if (now.mobile.client !== initial.mobile.client || now.projectId !== initial.projectId ||
           now.questionId !== initial.questionId || now.mobile.conn.state !== 'online' ||
           now.mobile.data.activeProfileId !== initial.mobile.data.activeProfileId)
-        throw new Error('현재 화면이나 연결이 변경되었습니다. 다시 시작해 주세요.')
+        throw new Error(t('현재 화면이나 연결이 변경되었습니다. 다시 시작해 주세요.'))
       const profileId = latest.activeProfileId
       const project = latest.projects.find((item) => item.id === projectId)
       if (profileId !== initial.mobile.data.activeProfileId ||
@@ -273,10 +275,10 @@ function ScreenQuestionControl({
           !project || !latest.workspaces.some(
             (item) => item.id === project.workspaceId && item.profileId === profileId
           ))
-        throw new Error('현재 프로필에 프로젝트가 없습니다. 프로젝트를 다시 열어 주세요.')
+        throw new Error(t('현재 프로필에 프로젝트가 없습니다. 프로젝트를 다시 열어 주세요.'))
       if (questionId && !latest.questions.some(
         (item) => item.id === questionId && item.projectId === projectId
-      )) throw new Error('현재 프로젝트에 질문이 없습니다. 질문을 다시 열어 주세요.')
+      )) throw new Error(t('현재 프로젝트에 질문이 없습니다. 질문을 다시 열어 주세요.'))
       await overlayControl.start({ pairing, profileId, projectId, ...(questionId ? { questionId } : {}) })
       if (mounted.current) setStatus(await overlayControl.status())
     } catch (error) {
@@ -292,7 +294,7 @@ function ScreenQuestionControl({
   return (
     <div>
       <button disabled={busy || !status} onClick={() => void act()}>
-        {busy ? '처리 중…' : status?.running ? '화면 질문 실행 중 / 종료' : '화면 위에서 질문'}
+        {busy ? t('처리 중…') : status?.running ? t('화면 질문 실행 중 / 종료') : t('화면 위에서 질문')}
       </button>
       {message && <p role="status">{message}</p>}
     </div>
@@ -300,11 +302,12 @@ function ScreenQuestionControl({
 }
 
 function Navigate404(): React.JSX.Element {
+  const t = useT()
   return (
     <main className="mobile-body">
       <div className="empty-state">
-        <h2>프로젝트를 찾을 수 없습니다.</h2>
-        <Link to="/">처음으로</Link>
+        <h2>{t('프로젝트를 찾을 수 없습니다.')}</h2>
+        <Link to="/">{t('처음으로')}</Link>
       </div>
     </main>
   )
@@ -326,6 +329,7 @@ function QuestionSheet({
   const { data, refresh } = useMobile()
   const api = useApi()
   const navigate = useNavigate()
+  const t = useT()
   const [mode, setMode] = useState<SheetMode>('actions')
   const workspaceId = data.projects.find((p) => p.id === projectId)?.workspaceId
   const owner = data.workspaces.find((w) => w.id === workspaceId)?.remote?.peerId
@@ -352,28 +356,28 @@ function QuestionSheet({
         <strong>{questionHeading(q)}</strong>
         {mode === 'actions' && (
           <>
-            <button onClick={() => setMode('rename')}>이름 바꾸기</button>
-            <button onClick={() => setMode('move')}>다른 프로젝트로 이동</button>
+            <button onClick={() => setMode('rename')}>{t('이름 바꾸기')}</button>
+            <button onClick={() => setMode('move')}>{t('다른 프로젝트로 이동')}</button>
             <button className="danger" onClick={() => setMode('delete')}>
-              삭제
+              {t('삭제')}
             </button>
           </>
         )}
         {mode === 'rename' && (
           <>
-            <input aria-label="질문 이름" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+            <input aria-label={t('질문 이름')} value={name} autoFocus onChange={(e) => setName(e.target.value)} />
             <button
               className="primary"
               disabled={busy || !name.trim()}
               onClick={() => void run(() => api.rename('question', q.id, name.trim()))}
             >
-              저장
+              {t('저장')}
             </button>
           </>
         )}
         {mode === 'delete' && (
           <>
-            <p>이 질문을 삭제할까요?</p>
+            <p>{t('이 질문을 삭제할까요?')}</p>
             <button
               className="danger"
               disabled={busy}
@@ -386,7 +390,7 @@ function QuestionSheet({
                 )
               }
             >
-              삭제
+              {t('삭제')}
             </button>
           </>
         )}
@@ -418,7 +422,7 @@ function QuestionSheet({
           })}
         {error && <p className="notice error">{error}</p>}
         <button disabled={busy} onClick={onClose}>
-          취소
+          {t('취소')}
         </button>
       </div>
     </div>
@@ -438,6 +442,7 @@ function QuestionCard({
   onOpen: () => void
   onMenu: () => void
 }): React.JSX.Element {
+  const t = useT()
   const complexity = questionComplexity(q)
   const press = useRef<{ timer: number; x: number; y: number } | null>(null)
   const longPressed = useRef(false)
@@ -476,24 +481,24 @@ function QuestionCard({
       }}
     >
       <div className="question-meta">
-        <span>{complexity === 'complex' ? '깊이 탐구' : complexity === 'simple' ? '빠른 질문' : '미확정'}</span>
+        <span>{t(complexity === 'complex' ? '깊이 탐구' : complexity === 'simple' ? '빠른 질문' : '미확정')}</span>
         <time>{dateLabel(q.createdAt)}</time>
-        {q.turns.length > 1 && <span>대화 {q.turns.length}개</span>}
+        {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
         {q.important && <span>★</span>}
       </div>
       <h3>{questionHeading(q)}</h3>
       <MarkdownAnswer preview>
-        {lastTurn(q).answer || lastTurn(q).error || '아직 답변이 없습니다.'}
+        {lastTurn(q).answer || lastTurn(q).error || t('아직 답변이 없습니다.')}
       </MarkdownAnswer>
       <div className="question-footer">
         <span>
           {q.conceptIds
             .map((id) => concepts.find((c) => c.id === id)?.name)
             .filter(Boolean)
-            .join(' · ') || '미분류'}
+            .join(' · ') || t('미분류')}
         </span>
         <small>
-          {statuses[questionStatus(q)]} {questionImages(q).length ? '· ▧' : ''}
+          {t(statuses[questionStatus(q)])} {questionImages(q).length ? '· ▧' : ''}
         </small>
       </div>
     </button>
@@ -504,6 +509,7 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
   const { data, refresh } = useMobile()
   const api = useApi()
   const navigate = useNavigate()
+  const t = useT()
   const [notice, setNotice] = useState('')
   const question = data.questions.find((q) => q.id === questionId)
   // A turn already running on arrival (e.g. sent from the new-question screen) keeps streaming here.
@@ -513,8 +519,8 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
   if (!question)
     return (
       <div className="empty-state">
-        <h2>삭제되었거나 찾을 수 없는 질문입니다.</h2>
-        <Link to={`/p/${projectId}`}>목록으로</Link>
+        <h2>{t('삭제되었거나 찾을 수 없는 질문입니다.')}</h2>
+        <Link to={`/p/${projectId}`}>{t('목록으로')}</Link>
       </div>
     )
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
@@ -548,7 +554,7 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
         settings={data.settings}
         questionId={question.id}
         recentQuestion={running}
-        mediaActions={mediaActions}
+        mediaActions={mediaActions()}
         persistDraft={false}
         onCompleted={() => void refresh()}
       />

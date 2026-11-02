@@ -1,4 +1,5 @@
 import { Camera, MediaTypeSelection } from '@capacitor/camera'
+import { t } from '@desktop/shared/i18n'
 
 const MAX_EDGE = 2048
 
@@ -13,7 +14,7 @@ export async function downscaleToFile(blob: Blob, name: string): Promise<File> {
   bitmap.close()
   const jpeg = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error('이미지를 변환할 수 없습니다.'))),
+      (b) => (b ? resolve(b) : reject(new Error(t('이미지를 변환할 수 없습니다.')))),
       'image/jpeg',
       0.9
     )
@@ -47,7 +48,8 @@ export const choosePhoto = (): Promise<File[]> =>
     })
     return fromWebPath(results[0]?.webPath, 'photo.jpg')
   })
-export const mediaActions = [
-  { label: '📷 촬영', pick: takePhoto },
-  { label: '🖼 사진', pick: choosePhoto }
+/** Labels are translated at call time so they follow the current UI language. */
+export const mediaActions = (): { label: string; pick: () => Promise<File[]> }[] => [
+  { label: t('📷 촬영'), pick: takePhoto },
+  { label: t('🖼 사진'), pick: choosePhoto }
 ]

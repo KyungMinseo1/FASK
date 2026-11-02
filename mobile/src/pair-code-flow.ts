@@ -12,6 +12,7 @@ import {
 } from '@desktop/shared/pair-code'
 import { parsePairing } from './hub'
 import { pairPost, parseRelayUrl, RELAY_ADDRESS, type PairEndpoint, type PairResponse } from './transport'
+import { t } from '@desktop/shared/i18n'
 
 export type CodeTarget = { kind: 'direct'; address: string } | { kind: 'relay' }
 
@@ -36,7 +37,7 @@ export async function pairWithCode(
     if (!isTailscaleTarget(address)) throw new Error(TAILSCALE_ADDRESS_ERROR)
     endpoint = { address }
   } else {
-    if (!deps.relayUrl) throw new Error('이 빌드에는 릴레이 주소가 설정되어 있지 않습니다.')
+    if (!deps.relayUrl) throw new Error(t('이 빌드에는 릴레이 주소가 설정되어 있지 않습니다.'))
     // Same derivation as the PC's relayRoom(key): base64url(sha256(key)).
     const room = b64u(await sha256(await pairRelayKey(rendezvous)))
     endpoint = { address: RELAY_ADDRESS, relay: { url: deps.relayUrl, room } }
@@ -47,7 +48,7 @@ export async function pairWithCode(
     'mobile',
     '휴대폰'
   )
-  if (payload.kind !== 'mobile') throw new Error('요청 형식이 잘못되었습니다.')
+  if (payload.kind !== 'mobile') throw new Error(t('요청 형식이 잘못되었습니다.'))
   if (parsePairing(payload.pairing).fingerprint !== fingerprint) throw new Error(PAIR_CERT_CHANGED)
   return payload.pairing
 }

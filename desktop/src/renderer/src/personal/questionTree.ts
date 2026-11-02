@@ -1,6 +1,7 @@
 import type { Concept, Question, Snapshot } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import type { MindNode } from '../lib/trees'
+import { t } from '../../../shared/i18n'
 
 /** Concept tree of a project with question leaves; leaf ids are `q:<questionId>:<parent>`. */
 export function questionTree(data: Snapshot, projectId: string, questions: Question[]): MindNode {
@@ -28,7 +29,7 @@ export function questionTree(data: Snapshot, projectId: string, questions: Quest
   })
   return {
     id: `project:${projectId}`,
-    label: data.projects.find((p) => p.id === projectId)?.name || '프로젝트',
+    label: data.projects.find((p) => p.id === projectId)?.name || t('프로젝트'),
     kind: 'root',
     children: [
       ...concepts
@@ -36,7 +37,7 @@ export function questionTree(data: Snapshot, projectId: string, questions: Quest
         .map((c) => node(c, new Set())),
       {
         id: 'unfiled',
-        label: '미분류',
+        label: t('미분류'),
         kind: 'group',
         children: questions.filter((q) => !q.conceptIds.length).map((q) => leaf(q, 'unfiled'))
       }

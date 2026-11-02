@@ -181,6 +181,7 @@ final class OverlayWebBridge {
             o.put("captureRevision", captureRevision);
             o.put("mode", overlay.getMode().name());
             o.put("theme", overlay.isDarkTheme() ? "dark" : "light");
+            o.put("lang", Strings.language(context));
             RectF region = ink.getRegion();
             if (region != null) o.put("region", new JSONObject()
                 .put("width", Math.round(region.width())).put("height", Math.round(region.height())));

@@ -10,6 +10,7 @@ import type {
   WeekRef
 } from '../api/types'
 import { QUESTION_TYPE_CODES, QUESTION_TYPE_LABEL } from './questionTypes'
+import { t } from '../../../shared/i18n'
 
 export type MindNodeKind = 'root' | 'week' | 'topic' | 'concept' | 'type' | 'group' | 'question'
 
@@ -53,7 +54,8 @@ function withCounts(node: MindNode): { leaves: number; own: number } {
   return { leaves, own }
 }
 
-const weekLabel = (w: { week_no: number; title: string }): string => `${w.week_no}주차 · ${w.title}`
+const weekLabel = (w: { week_no: number; title: string }): string =>
+  t('{{n}}주차 · {{title}}', { n: w.week_no, title: w.title })
 
 function sortedNodes(nodes: NodeOut[]): NodeOut[] {
   return [...nodes].sort((a, b) => a.position - b.position || a.id - b.id)
@@ -75,7 +77,7 @@ function buildWeekNode(week: WeekOut, questions: TeacherQuestionOut[] | undefine
     id: `week-${week.id}`,
     label: weekLabel(week),
     kind: 'week',
-    badge: week.is_lecture ? undefined : '수업 없음',
+    badge: week.is_lecture ? undefined : t('수업 없음'),
     children: []
   }
   const byId = new Map<number, MindNode>()
@@ -102,7 +104,10 @@ function buildWeekNode(week: WeekOut, questions: TeacherQuestionOut[] | undefine
   if (questions) {
     for (const q of questions) {
       if (q.assigned_week.id !== week.id) continue
-      const leaf = teacherLeaf(q, q.off_week ? `${q.session_week_no}주차 수업에서` : undefined)
+      const leaf = teacherLeaf(
+        q,
+        q.off_week ? t('{{n}}주차 수업에서', { n: q.session_week_no }) : undefined
+      )
       const last = q.concept_path[q.concept_path.length - 1]
       const target = (last && byId.get(last.id)) || weekNode
       target.children.push(leaf)
@@ -194,17 +199,17 @@ export function buildLiveConceptTree(
       const target =
         q.concept_path.length > 0
           ? alongPath(root, q.concept_path)
-          : childOf(root, 'group-unclassified', () => ({ label: '미분류', kind: 'group' }))
+          : childOf(root, 'group-unclassified', () => ({ label: t('미분류'), kind: 'group' }))
       target.children.push(teacherLeaf(q))
     } else {
       const others = childOf(root, 'group-other-weeks', () => ({
-        label: '다른 주차',
+        label: t('다른 주차'),
         kind: 'group'
       }))
       const week = weekChild(others, q.assigned_week)
       weekNoById.set(week.id, q.assigned_week.week_no)
       alongPath(week, q.concept_path).children.push(
-        teacherLeaf(q, `→ ${q.assigned_week.week_no}주차`)
+        teacherLeaf(q, t('→ {{n}}주차', { n: q.assigned_week.week_no }))
       )
     }
   }
@@ -227,7 +232,7 @@ function typeTree(rootId: string, rootLabel: string, leaves: TypeLeaf[]): MindNo
     kind: 'root',
     children: QUESTION_TYPE_CODES.map((code) => ({
       id: `type-${code}`,
-      label: QUESTION_TYPE_LABEL[code],
+      label: t(QUESTION_TYPE_LABEL[code]),
       kind: 'type' as const,
       children: []
     }))
@@ -235,11 +240,11 @@ function typeTree(rootId: string, rootLabel: string, leaves: TypeLeaf[]): MindNo
   for (const leaf of leaves) {
     let target: MindNode
     if (leaf.pending) {
-      target = childOf(root, 'group-pending', () => ({ label: '분류 중', kind: 'group' }))
+      target = childOf(root, 'group-pending', () => ({ label: t('분류 중'), kind: 'group' }))
     } else if (leaf.type) {
       target = root.children.find((c) => c.id === `type-${leaf.type}`)!
     } else {
-      target = childOf(root, 'group-unclassified', () => ({ label: '미분류', kind: 'group' }))
+      target = childOf(root, 'group-unclassified', () => ({ label: t('미분류'), kind: 'group' }))
     }
     target.children.push(leaf.node)
   }
@@ -254,7 +259,7 @@ export function buildTypeTree(rootLabel: string, questions: TeacherQuestionOut[]
     questions.map((q) => ({
       type: q.question_type,
       pending: false,
-      node: teacherLeaf(q, q.off_week ? `→ ${q.assigned_week.week_no}주차` : undefined)
+      node: teacherLeaf(q, q.off_week ? t('→ {{n}}주차', { n: q.assigned_week.week_no }) : undefined)
     }))
   )
 }
@@ -267,7 +272,7 @@ function studentLeaf(q: StudentQuestionOut): MindNode {
     label,
     detail: q.refined_text,
     kind: 'question',
-    badge: q.off_week ? `${q.session_week.week_no}주차 수업에서` : undefined,
+    badge: q.off_week ? t('{{n}}주차 수업에서', { n: q.session_week.week_no }) : undefined,
     children: []
   }
 }
@@ -293,7 +298,7 @@ export function buildStudentTree(
   const weekNoById = new Map<string, number>()
   for (const q of questions) {
     if (q.status === 'pending') {
-      childOf(root, 'group-pending', () => ({ label: '분류 중', kind: 'group' })).children.push(
+      childOf(root, 'group-pending', () => ({ label: t('분류 중'), kind: 'group' })).children.push(
         studentLeaf(q)
       )
       continue

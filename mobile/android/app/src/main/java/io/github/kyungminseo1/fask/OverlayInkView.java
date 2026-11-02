@@ -92,7 +92,7 @@ public final class OverlayInkView extends View {
         super(context);
         this.listener = listener;
         setFocusableInTouchMode(true);
-        setContentDescription("FASK 펜 및 캡처 영역 편집");
+        setContentDescription(Strings.get(context, "FASK 펜 및 캡처 영역 편집"));
         addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> reportGeometry());
         getViewTreeObserver().addOnGlobalLayoutListener(this::reportGeometry);
     }
@@ -221,10 +221,11 @@ public final class OverlayInkView extends View {
         float top = toolBounds.bottom - (float) geometry.inkOriginPx.y + geometry.displayBoundsPx.top - dp(60);
         cancelButton.set(center - buttonWidth - dp(6), top, center - dp(6), top + dp(48));
         confirmButton.set(center + dp(6), top, center + dp(6) + buttonWidth, top + dp(48));
-        drawButton(canvas, cancelButton, "취소", true);
-        drawButton(canvas, confirmButton, "확인", draft != null && validRegion(draft));
+        Context context = getContext();
+        drawButton(canvas, cancelButton, Strings.get(context, "취소"), true);
+        drawButton(canvas, confirmButton, Strings.get(context, "확인"), draft != null && validRegion(draft));
         paint.setColor(0xffffffff); paint.setTextSize(dp(15)); paint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText("드래그하여 영역 선택 · 가장자리로 크기 조절", displayX(getWidth() / 2f), displayY(Math.max(dp(28), top - dp(16))), paint);
+        canvas.drawText(Strings.get(context, "드래그하여 영역 선택 · 가장자리로 크기 조절"), displayX(getWidth() / 2f), displayY(Math.max(dp(28), top - dp(16))), paint);
     }
 
     private void drawButton(Canvas canvas, RectF local, String text, boolean enabled) {

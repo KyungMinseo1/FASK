@@ -21,6 +21,7 @@ import type {
   Workspace
 } from '../preload/personal'
 import { mergeLegacyQuestions, questionImages, type LegacyQuestion } from '../shared/questions'
+import { t } from '../shared/i18n'
 
 export const defaults: LocalSettings = {
   endpoint: 'http://127.0.0.1:8317/v1',
@@ -95,7 +96,9 @@ export class PersonalStore {
       } catch (e) {
         this.db.close()
         throw new Error(
-          `업그레이드 전 백업을 만들 수 없습니다: ${e instanceof Error ? e.message : String(e)}`
+          t('업그레이드 전 백업을 만들 수 없습니다: {{error}}', {
+            error: e instanceof Error ? e.message : String(e)
+          })
         )
       }
     }

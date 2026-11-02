@@ -42,7 +42,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         void onProjectSelected(String projectId);
     }
 
-    private static final String GEOMETRY_CHANGED = "화면 구성이 바뀌었습니다. 영역을 다시 선택해 주세요.";
     /** Last confirmed capture region as display fractions plus the rotation it was chosen in. */
     private static final String REGION_PREFS = "overlay_region";
     private final Context context;
@@ -55,6 +54,8 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
     private final WindowManager.LayoutParams panelParams;
     private final LinearLayout panelHeader, panelRow;
     private final TextView panelEyebrow, panelTitle, panelFold;
+    /** Current project's name for the panel header; null shows the generic title. */
+    private String panelProject;
     private final View panelHeaderRule, panelEdgeBar;
     private final FrameLayout panelEdge;
     private final SharedPreferences regionPrefs;
@@ -101,7 +102,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         this.rotation = rotation;
         this.readerGeneration = readerGeneration;
         ink = new OverlayInkView(context, this);
-        inkParams = params(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, true, "FASK 편집");
+        inkParams = params(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, true, Strings.get(context, "FASK 편집"));
         inkParams.flags |= WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
         if (Build.VERSION.SDK_INT >= 28) inkParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         if (Build.VERSION.SDK_INT >= 30) inkParams.setFitInsetsTypes(0);
@@ -124,6 +125,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             @Override public void onPenColor(int color) { ink.setPenColor(color); }
             @Override public void onFingerDrawing(boolean enabled) { ink.setFingerDrawing(enabled); }
             @Override public void onThemeChanged() { if (closed) return; stylePanel(); listener.onStateChanged(); }
+            @Override public void onLanguageChanged() { if (closed) return; labelPanel(); ink.invalidate(); listener.onStateChanged(); }
         });
 
         // Mirrors the desktop .overlay-panel: header (eyebrow, project, 접기 ×), content, side width grip.
@@ -143,7 +145,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         panelEyebrow.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         heading.addView(panelEyebrow);
         panelTitle = new TextView(context);
-        panelTitle.setText("화면 질문");
         panelTitle.setTextSize(13);
         panelTitle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         panelTitle.setSingleLine(true);
@@ -152,11 +153,9 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         heading.addView(panelTitle);
         panelHeader.addView(heading, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         panelFold = new TextView(context);
-        panelFold.setText("접기 ×");
         panelFold.setTextSize(12);
         panelFold.setGravity(Gravity.CENTER);
         panelFold.setPadding(dp(10), dp(6), dp(10), dp(6));
-        panelFold.setContentDescription("질문 창 접기");
         panelFold.setOnClickListener(v -> perform(this::hidePanel));
         panelHeader.addView(panelFold, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         panelColumn.addView(panelHeader, new LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -169,7 +168,6 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         panelRow.addView(panelColumn, new LinearLayout.LayoutParams(0, -1, 1));
         // Width-only grip on the side away from the nearer screen edge (see placePanelEdge).
         panelEdge = new FrameLayout(context);
-        panelEdge.setContentDescription("질문 창 너비 조절");
         panelEdgeBar = new View(context);
         panelEdge.addView(panelEdgeBar, new FrameLayout.LayoutParams(dp(4), dp(40), Gravity.CENTER));
         panelRow.addView(panelEdge, new LinearLayout.LayoutParams(dp(14), -1));
@@ -180,7 +178,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             v.setSystemGestureExclusionRects(java.util.Collections.singletonList(new Rect(0, mid - half, r - l, mid + half)));
         });
         panel.addView(panelRow, new FrameLayout.LayoutParams(-1, -1));
-        panelParams = params(dp(420), dp(640), true, "FASK 질문");
+        panelParams = params(dp(420), dp(640), true, Strings.get(context, "FASK 질문"));
         panelParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         // Tapping the app behind the panel folds it, like clicking outside the desktop panel.
         panelParams.flags |= WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
@@ -191,6 +189,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         panelParams.x = dp(12); panelParams.y = dp(12);
         installDrag(panelHeader, panelParams, false);
         installDrag(panelEdge, panelParams, true);
+        labelPanel();
         stylePanel();
         refreshSafeBounds();
         clampAll();
@@ -225,7 +224,18 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         checkThread();
         if (closed) return;
         chrome.setProjects(projects, currentId, lockReason);
-        for (OverlayChrome.Project p : projects) if (p.id.equals(currentId)) panelTitle.setText(p.name);
+        for (OverlayChrome.Project p : projects) if (p.id.equals(currentId)) panelProject = p.name;
+        labelPanel();
+    }
+    /** Native panel text in the app's UI language; the project name is data and stays as-is. */
+    private void labelPanel() {
+        panelTitle.setText(panelProject != null ? panelProject : Strings.get(context, "화면 질문"));
+        panelFold.setText(Strings.get(context, "접기 ×"));
+        panelFold.setContentDescription(Strings.get(context, "질문 창 접기"));
+        panelEdge.setContentDescription(Strings.get(context, "질문 창 너비 조절"));
+        panelParams.setTitle(Strings.get(context, "FASK 질문"));
+        inkParams.setTitle(Strings.get(context, "FASK 편집"));
+        ink.setContentDescription(Strings.get(context, "FASK 펜 및 캡처 영역 편집"));
     }
     /** Same tokens as the native toolbar, so the panel follows the app theme on every open. */
     private void stylePanel() {
@@ -292,7 +302,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             chrome.isBarShown(), panel.isAttachedToWindow(), observer);
         captureVisibility = state;
         setCaptureLocked(true);
-        WindowManager.LayoutParams observation = params(1, WindowManager.LayoutParams.MATCH_PARENT, false, "FASK 캡처 전환");
+        WindowManager.LayoutParams observation = params(1, WindowManager.LayoutParams.MATCH_PARENT, false, Strings.get(context, "FASK 캡처 전환"));
         observation.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
         observation.alpha = 0;
         observation.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
@@ -485,7 +495,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         ink.setGeometry(next);
         ink.invalidateGeometry();
         restoreSavedRegion();
-        Toast.makeText(context, GEOMETRY_CHANGED, Toast.LENGTH_SHORT).show();
+        Toast.makeText(context, Strings.get(context, OverlayCaptureController.GEOMETRY_MESSAGE), Toast.LENGTH_SHORT).show();
         listener.onGeometryChanged(next);
         if (mode == Mode.PEN || mode == Mode.ERASER || mode == Mode.REGION) setMode(Mode.IDLE);
     }

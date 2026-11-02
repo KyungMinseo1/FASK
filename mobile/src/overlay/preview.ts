@@ -3,23 +3,25 @@
 import type { Question, Snapshot, StreamEvent, Turn, TurnState } from '@desktop/preload/personal'
 import type { HubClient } from '../hub'
 import type { Bootstrap } from './bridge'
+import { t } from '@desktop/shared/i18n'
 
-const ANSWER =
-  '미리보기 답변입니다. 실제 연결에서는 PC의 FASK가 선택한 영역과 필기를 함께 보고 답변합니다.\n\n' +
-  '- 질문을 보내면 이렇게 답변이 스트리밍됩니다.\n- 이어서 질문하면 같은 대화에 기록됩니다.'
+const ANSWER = (): string =>
+  t(
+    '미리보기 답변입니다. 실제 연결에서는 PC의 FASK가 선택한 영역과 필기를 함께 보고 답변합니다.\n\n- 질문을 보내면 이렇게 답변이 스트리밍됩니다.\n- 이어서 질문하면 같은 대화에 기록됩니다.'
+  )
 
 export function createPreviewClient(boot: Bootstrap): HubClient {
   const data: Snapshot = {
-    profiles: [{ id: boot.profileId, name: '미리보기' }],
+    profiles: [{ id: boot.profileId, name: t('미리보기') }],
     activeProfileId: boot.profileId,
     workspaces: [
-      { id: 'preview-w1', profileId: boot.profileId, name: '2학기' },
-      { id: 'preview-w2', profileId: boot.profileId, name: '개인' }
+      { id: 'preview-w1', profileId: boot.profileId, name: t('2학기') },
+      { id: 'preview-w2', profileId: boot.profileId, name: t('개인') }
     ],
     projects: [
-      { id: 'preview-1', workspaceId: 'preview-w1', name: '자료구조', description: '' },
-      { id: 'preview-2', workspaceId: 'preview-w1', name: '운영체제', description: '' },
-      { id: 'preview-3', workspaceId: 'preview-w2', name: '선형대수 스터디', description: '' }
+      { id: 'preview-1', workspaceId: 'preview-w1', name: t('자료구조'), description: '' },
+      { id: 'preview-2', workspaceId: 'preview-w1', name: t('운영체제'), description: '' },
+      { id: 'preview-3', workspaceId: 'preview-w2', name: t('선형대수 스터디'), description: '' }
     ],
     concepts: [],
     questions: [],
@@ -106,7 +108,7 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       q.turns.push(turn)
       const questionId = q.id
       if (!input.saveOnly) {
-        const chunks = ANSWER.match(/[^]{1,12}/g) ?? []
+        const chunks = ANSWER().match(/[^]{1,12}/g) ?? []
         chunks.forEach((delta, i) =>
           setTimeout(() => {
             turn.answer += delta
@@ -127,11 +129,17 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     },
     cancel: async () => {},
     turnState: async (questionId, turnId): Promise<TurnState> => {
-      const t = data.questions.find((q) => q.id === questionId)?.turns.find((x) => x.id === turnId)
-      if (!t) throw new Error('질문을 찾을 수 없습니다.')
-      return { answer: t.answer, revision: t.revision, status: t.status, error: t.error, actualModel: t.actualModel }
+      const turn = data.questions.find((q) => q.id === questionId)?.turns.find((x) => x.id === turnId)
+      if (!turn) throw new Error(t('질문을 찾을 수 없습니다.'))
+      return {
+        answer: turn.answer,
+        revision: turn.revision,
+        status: turn.status,
+        error: turn.error,
+        actualModel: turn.actualModel
+      }
     },
-    refine: async (raw) => `${raw.trim()} (미리보기에서 다듬은 질문)`,
+    refine: async (raw) => t('{{text}} (미리보기에서 다듬은 질문)', { text: raw.trim() }),
     attachment: async () => null,
     clearAttachment: async () => {},
     onStream: (cb) => {

@@ -597,6 +597,37 @@ button.danger {
 .records-panel .react-flow {
   background: var(--canvas);
 }
+/* React Flow controls: theme-aware so the +/-/fit icons stay visible in dark mode */
+.records-panel .react-flow__controls {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: none;
+}
+.records-panel .react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-muted);
+}
+.records-panel .react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+.records-panel .react-flow__controls-button:hover {
+  background: var(--surface-4);
+  color: var(--ink);
+}
+.records-panel .react-flow__controls-button svg {
+  display: block;
+  flex: 0 0 14px;
+  width: 14px !important;
+  min-width: 14px;
+  height: 14px !important;
+  max-width: none !important;
+  max-height: none !important;
+  fill: currentColor;
+}
 .records-panel .bg-amber-500 {
   background: #8b7acb;
 }
@@ -1311,7 +1342,7 @@ button.danger {
   right: 18px;
   top: 50%;
   transform: translateY(-50%);
-  width: 64px;
+  width: 80px;
   padding: 6px;
   border-radius: var(--r-xl);
   border: 1px solid var(--hairline-strong);
@@ -1375,8 +1406,11 @@ button.danger {
   color: var(--ink);
 }
 .overlay-toolbar button small {
+  max-width: 100%;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1.15;
+  text-align: center;
 }
 .overlay-toolbar button.active {
   background: var(--primary-soft);

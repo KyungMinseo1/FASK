@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { is } from '@electron-toolkit/utils'
 import type { CapturePreview, CaptureRegion, CaptureRect } from '../preload/personal'
 import type { PersonalStore } from './personal-store'
+import { t } from '../shared/i18n'
 
 export class PersonalCapture {
   overlay: BrowserWindow | null = null
@@ -59,7 +60,7 @@ export class PersonalCapture {
   displays(): { id: number; label: string; width: number; height: number }[] {
     return screen.getAllDisplays().map((d, i) => ({
       id: d.id,
-      label: d.label || `모니터 ${i + 1}`,
+      label: d.label || t('모니터 {{n}}', { n: i + 1 }),
       width: d.bounds.width,
       height: d.bounds.height
     }))
@@ -79,7 +80,7 @@ export class PersonalCapture {
     this.releasingFocus = false
     const bounds = win.getBounds()
     this.regions = [
-      { x: bounds.width - 90, y: Math.max(0, bounds.height / 2 - 280), width: 85, height: 560 }
+      { x: bounds.width - 106, y: Math.max(0, bounds.height / 2 - 280), width: 101, height: 560 }
     ]
     this.accepting = false
     win.setIgnoreMouseEvents(true, { forward: true })

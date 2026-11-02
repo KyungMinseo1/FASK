@@ -1,4 +1,5 @@
 import type { QuestionType } from '../api/types'
+import { t } from '../../../shared/i18n'
 
 export const QUESTION_TYPE_LABEL: Record<QuestionType, string> = {
   info_seeking: '정보 수집형',
@@ -38,7 +39,7 @@ export const QUESTION_TYPE_CODES: QuestionType[] = [
 export const UNCLASSIFIED_TYPE_CLASS = 'bg-gray-100 border-gray-300 text-gray-700'
 
 export function questionTypeLabel(code: QuestionType | null | undefined): string {
-  return code ? QUESTION_TYPE_LABEL[code] : '미분류'
+  return t(code ? QUESTION_TYPE_LABEL[code] : '미분류')
 }
 
 export function questionTypeClass(code: QuestionType | null | undefined): string {

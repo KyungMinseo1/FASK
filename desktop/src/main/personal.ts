@@ -27,6 +27,7 @@ import {
   type WireMessage
 } from './local-api'
 import { cleanTitle, questionHeading, questionImages } from '../shared/questions'
+import { i18n, t } from '../shared/i18n'
 import type {
   AskInput,
   AskResult,
@@ -716,6 +717,10 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   })
   handle('displays', () => capture.displays())
   handle('open-editor', (id: number) => capture.edit(id))
+  handle('ui-language', async (lang: unknown) => {
+    if (lang !== 'ko' && lang !== 'en') throw new Error('요청 형식이 잘못되었습니다.')
+    await i18n.changeLanguage(lang)
+  })
   handle('preview', () => {
     if (!capture.preview) throw new Error('편집 미리보기가 없습니다.')
     return capture.preview
@@ -743,7 +748,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     const questions = store.list<Question>('question').filter((q) => q.projectId === projectId)
     const concepts = store.list<Concept>('concept').filter((c) => c.projectId === projectId)
     const result = await dialog.showSaveDialog({
-      title: '프로젝트 기억 내보내기',
+      title: t('프로젝트 기억 내보내기'),
       defaultPath: `${project.name.replace(/[<>:"/\\|?*]/g, '_')}-context.md`,
       filters: [{ name: 'Markdown', extensions: ['md'] }]
     })
@@ -761,7 +766,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   handle('backup', async () => {
     if (controllers.size) throw new Error('진행 중인 요청을 마친 뒤 백업해 주세요.')
     const result = await dialog.showSaveDialog({
-      title: '현재 프로필 백업 (이미지 포함, 접속 키 제외)',
+      title: t('현재 프로필 백업 (이미지 포함, 접속 키 제외)'),
       defaultPath: 'fask-backup.json',
       filters: [{ name: 'FASK backup', extensions: ['json'] }]
     })
@@ -786,7 +791,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     if (controllers.size || capture.overlay || capture.editor)
       throw new Error('요청과 오버레이를 닫고 복원해 주세요.')
     const result = await dialog.showOpenDialog({
-      title: '새 프로필로 복원',
+      title: t('새 프로필로 복원'),
       properties: ['openFile'],
       filters: [{ name: 'FASK backup', extensions: ['json'] }]
     })
@@ -964,7 +969,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           recommended: kind !== 'other',
           selected: selected.includes(address),
           listening: hub.running && !!result && !result.error,
-          error: current.includes(address) ? (result?.error ?? '') : '현재 네트워크에 없는 주소입니다.'
+          error: current.includes(address) ? (result?.error ?? '') : t('현재 네트워크에 없는 주소입니다.')
         }
       })
       .sort((a, b) => HUB_KIND_ORDER[a.kind] - HUB_KIND_ORDER[b.kind])

@@ -260,6 +260,7 @@ export interface PersonalApi extends KnowledgeApi {
   setHubAddresses(addresses: string[]): Promise<HubStatus>
   resetHubPairing(): Promise<HubStatus>
   setHubRelay(enabled: boolean, url: string): Promise<HubStatus>
+  setUiLanguage(lang: 'ko' | 'en'): Promise<void>
   peerCodeBegin(): Promise<PeerCode>
   peerCodeStatus(): Promise<PeerCodeStatus | null>
   peerCodeCancel(): Promise<void>

@@ -2,6 +2,7 @@
 // session; the page only correlates replies, applies per-operation timeouts and drops anything
 // that belongs to another (older) session.
 import type { HubIdentity } from '../transport'
+import { t } from '@desktop/shared/i18n'
 
 export type Op =
   | 'bootstrap'
@@ -26,6 +27,8 @@ export type OverlayState = {
   region?: { width: number; height: number }
   mode: string
   theme: 'light' | 'dark'
+  /** Resolved UI language from the app (FaskOverlay.setLanguage); the panel's origin has no shared localStorage. */
+  lang?: 'ko' | 'en'
 }
 export type Bootstrap = OverlayState & {
   identity: HubIdentity
@@ -114,16 +117,16 @@ export function createBridge(port: Port) {
     const push = { event: m.event, payload: (m.payload ?? {}) as never } as Push
     if (push.event === 'sessionInvalidated') {
       disposed = true
-      failAll('CLOSED', '화면 질문 세션이 종료되었습니다.')
+      failAll('CLOSED', t('화면 질문 세션이 종료되었습니다.'))
     }
     for (const cb of listeners) cb(push)
   }
   function call<T>(op: Op, payload: Record<string, unknown> = {}): Promise<T> {
-    if (disposed) return Promise.reject(new BridgeError('CLOSED', '화면 질문 세션이 종료되었습니다.'))
+    if (disposed) return Promise.reject(new BridgeError('CLOSED', t('화면 질문 세션이 종료되었습니다.')))
     const id = crypto.randomUUID()
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (settle(id)) reject(new BridgeError('TIMEOUT', '화면 질문 응답이 지연되고 있습니다.'))
+        if (settle(id)) reject(new BridgeError('TIMEOUT', t('화면 질문 응답이 지연되고 있습니다.')))
       }, timeoutFor(op, payload))
       pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
       port.postMessage(JSON.stringify({ v: 1, id, sessionId, op, payload }))
@@ -142,7 +145,7 @@ export function createBridge(port: Port) {
     },
     dispose(): void {
       disposed = true
-      failAll('CLOSED', '화면 질문 세션이 종료되었습니다.')
+      failAll('CLOSED', t('화면 질문 세션이 종료되었습니다.'))
       listeners.clear()
     }
   }

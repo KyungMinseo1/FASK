@@ -40,11 +40,11 @@
 1. Open **Releases** and choose a release with a Windows installer.
 2. Under **Assets**, download the `setup.exe` installer. The configured filename is `fask-<version>-setup.exe`.
 3. Run the installer and launch **FASK**.
-4. Follow [Getting started](#getting-started) to connect your local AI proxy.
+4. Follow [Getting started](#getting-started) to connect an OpenAI-compatible API.
 
 The Windows installer is the planned distribution format. If a release does not yet contain the installer, wait for it to be uploaded; GitHub's **Source code** ZIP/TAR files are not installers.
 
-**No FASK login, Node.js, Python, or separate database installation is required for the installed app.** AI answers do require a running OpenAI-compatible local proxy and a connected provider account/model.
+**No FASK login, Node.js, Python, or separate database installation is required for the installed app.** AI answers do require an OpenAI-compatible API endpoint (and an API key if the service needs one).
 
 ## What you can do
 
@@ -59,12 +59,13 @@ The Windows installer is the planned distribution format. If a release does not 
 
 ### 1. Connect AI
 
-1. Connect your provider account in **EasyCLIProxyAPI** and start its local proxy.
-2. Open FASK **Settings · AI connection** and enter the OpenAI-compatible endpoint, for example `http://127.0.0.1:8317/v1`.
-3. If required, enter the proxy's **local access key**—not a provider API key or management key.
-4. Select **Check connection · Load models**, choose default/fast/deep-reasoning models, and save.
+FASK works with any **OpenAI-compatible API** (the `/v1/models` and `/v1/chat/completions` endpoints), such as the OpenAI API or a compatible gateway or local server.
 
-Provider sign-in and account routing are managed by the proxy, not FASK. Local browsing and manual organization work without an AI connection.
+1. Open FASK **Settings · AI connection** and enter the endpoint, for example `https://api.openai.com/v1` or `http://127.0.0.1:8317/v1`.
+2. Enter the **API key** if the service requires one. It is stored encrypted with the OS credential store and is never included in backups.
+3. Select **Check connection · Load models**, choose default/fast/deep-reasoning models, and save.
+
+Local browsing and manual organization work without an AI connection.
 
 ### 2. Set your capture area
 
@@ -123,7 +124,7 @@ Moving the pointer outside an open panel does not close it. With the panel close
 | Default Windows folder | `%APPDATA%/fask/personal/` |
 | Profile separation | Logical scopes inside one local database, not OS-level isolation |
 | 1.1.0 upgrade | Merges each 1.0.x conversation into one question on first launch; the untouched pre-upgrade database is kept as `fask-pre-1.1.0.sqlite` next to `fask.sqlite` |
-| AI requests | Sent through your configured local proxy to its provider; local storage does **not** mean offline AI |
+| AI requests | Sent to the OpenAI-compatible endpoint you configure; local storage does **not** mean offline AI |
 
 Raw answers are preserved as Markdown. No separate classroom backend is needed.
 
@@ -135,7 +136,7 @@ Raw answers are preserved as Markdown. No separate classroom backend is needed.
 
 ### Run from source
 
-Prerequisites: **Node.js 22.13+**, npm, and a running local AI proxy if you want model responses. SQLite is provided by Electron's built-in `node:sqlite`; no Python or database server is needed.
+Prerequisites: **Node.js 22.13+**, npm, and an OpenAI-compatible API endpoint if you want model responses. SQLite is provided by Electron's built-in `node:sqlite`; no Python or database server is needed.
 
 ```powershell
 git clone https://github.com/KyungMinseo1/FASK.git
@@ -144,7 +145,7 @@ npm ci
 npm run dev
 ```
 
-The development version runs the same personal app from source. This does not replace the proxy/account configuration in [Getting started](#getting-started).
+The development version runs the same personal app from source. This does not replace the AI connection setup in [Getting started](#getting-started).
 
 ### Checks & Windows packaging
 
@@ -161,7 +162,7 @@ Run from `desktop/`:
 
 Upload the generated `fask-<version>-setup.exe` to the GitHub release's **Assets**. Users should download that installer, not the source archive.
 
-The integrated smoke uses a local test proxy and a deterministic capture fixture, not a real provider account or unrelated desktop content. Multi-monitor/DPI configurations and per-account image support still need environment-specific verification.
+The integrated smoke uses a local fake OpenAI-compatible server and a deterministic capture fixture, not a real provider account or unrelated desktop content. Multi-monitor/DPI configurations and per-account image support still need environment-specific verification.
 
 <details>
 <summary><strong>Repository structure</strong></summary>

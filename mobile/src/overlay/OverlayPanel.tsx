@@ -6,6 +6,8 @@ import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import ProjectPicker from '@desktop/renderer/src/personal/ProjectPicker'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
+import { t } from '@desktop/shared/i18n'
+import { useT } from '@desktop/shared/i18n/react'
 import type { HubClient, HubConn } from '../hub'
 import type { Bootstrap, Bridge, OverlayState } from './bridge'
 
@@ -19,12 +21,12 @@ export function contextProblem(
   questionId: string | undefined
 ): string {
   if (data.activeProfileId !== ctx.profileId)
-    return 'PC에서 프로필이 바뀌었습니다. 앱에서 화면 질문을 다시 시작해 주세요.'
+    return t('PC에서 프로필이 바뀌었습니다. 앱에서 화면 질문을 다시 시작해 주세요.')
   if (!data.projects.some((p) => p.id === ctx.projectId))
-    return '프로젝트가 삭제되었습니다. 앱에서 화면 질문을 다시 시작해 주세요.'
+    return t('프로젝트가 삭제되었습니다. 앱에서 화면 질문을 다시 시작해 주세요.')
   if (questionId) {
     const q = data.questions.find((x) => x.id === questionId)
-    if (q && q.projectId !== ctx.projectId) return '다른 프로젝트의 질문입니다.'
+    if (q && q.projectId !== ctx.projectId) return t('다른 프로젝트의 질문입니다.')
   }
   return ''
 }
@@ -44,6 +46,7 @@ export default function OverlayPanel({
   unpaired: string
 }): React.JSX.Element {
   const api = useApi() as HubClient
+  useT()
   const [data, setData] = useState(initial)
   const [overlay, setOverlay] = useState<OverlayState>(boot)
   const [projectId, setProjectId] = useState(boot.projectId)
@@ -87,7 +90,7 @@ export default function OverlayPanel({
         // The Composer stays mounted; reconnecting replays missed stream/state through onChanged.
         api.reconnect()
         void refresh()
-      } else if (push.event === 'sessionInvalidated') setBlocked('화면 질문이 종료되었습니다.')
+      } else if (push.event === 'sessionInvalidated') setBlocked(t('화면 질문이 종료되었습니다.'))
       else if (push.event === 'projectPicker') setPicker(true)
       else if (push.event === 'selectProject') void switchRef.current(push.payload.projectId)
     })
@@ -166,8 +169,8 @@ export default function OverlayPanel({
   const [confirmNew, setConfirmNew] = useState(false)
   useEffect(() => {
     if (!confirmNew) return
-    const t = setTimeout(() => setConfirmNew(false), 3000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setConfirmNew(false), 3000)
+    return () => clearTimeout(timer)
   }, [confirmNew])
   const newConversation = (): void => {
     if (locked) return
@@ -203,7 +206,7 @@ export default function OverlayPanel({
   }
   const switchRef = useRef(switchProject)
   switchRef.current = switchProject
-  const lockReason = locked ? '답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.' : null
+  const lockReason = locked ? t('답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.') : null
   const projectsKey = JSON.stringify([data.projects, data.workspaces, projectId, lockReason, notice])
   // The native toolbar's project popover mirrors this list; resent after every switch attempt.
   useEffect(() => {
@@ -235,7 +238,7 @@ export default function OverlayPanel({
             workspaces={data.workspaces}
             projects={data.projects}
             currentId={projectId}
-            disabledReason={locked ? '답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.' : undefined}
+            disabledReason={lockReason ?? undefined}
             onSelect={(id) => void switchProject(id)}
           />
         </div>
@@ -243,27 +246,28 @@ export default function OverlayPanel({
       <div className="overlay-panel-content">
         {unpaired && <p className="notice error">{unpaired}</p>}
         {conn.state === 'offline' && (
-          <p className="notice">PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.</p>
+          <p className="notice">{t('PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.')}</p>
         )}
         {conn.state === 'blocked' && (
-          <p className="notice error">인증서가 일치하지 않는 연결을 차단했습니다.</p>
+          <p className="notice error">{t('인증서가 일치하지 않는 연결을 차단했습니다.')}</p>
         )}
         {blocked && <p className="notice error">{blocked}</p>}
         <small className="overlay-capture-note">
           {overlay.region
-            ? `캡처 영역 ${overlay.region.width}×${overlay.region.height}px`
-            : '영역 미설정 · 화면 첨부 전에 영역을 선택하세요'}
-          {overlay.hasInk ? ' · 필기 있음' : ''} · 캡처 포함을 선택하면 질문 전송 시 촬영합니다.
+            ? t('캡처 영역 {{width}}×{{height}}px', overlay.region)
+            : t('영역 미설정 · 화면 첨부 전에 영역을 선택하세요')}
+          {overlay.hasInk ? t(' · 필기 있음') : ''}
+          {t(' · 캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}
           <button
             disabled={locked}
             onClick={() => void bridge.call('selectRegion').catch((e) => setNotice(errorText(e)))}
           >
-            영역 선택
+            {t('영역 선택')}
           </button>
         </small>
         {question && (
           <details open={historyOpen} onToggle={(e) => setHistoryOpen(e.currentTarget.open)}>
-            <summary>대화 기록</summary>
+            <summary>{t('대화 기록')}</summary>
           <QuestionDetail
             question={question}
             concepts={data.concepts.filter((c) => c.projectId === projectId)}
@@ -301,7 +305,7 @@ export default function OverlayPanel({
         )}
         {questionId && (
           <button className="overlay-new" disabled={locked} onClick={newConversation}>
-            {confirmNew ? '다시 눌러 새 대화 시작' : '새 대화 시작'}
+            {confirmNew ? t('다시 눌러 새 대화 시작') : t('새 대화 시작')}
           </button>
         )}
         {notice && <p className="notice error">{notice}</p>}

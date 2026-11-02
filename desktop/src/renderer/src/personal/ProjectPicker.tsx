@@ -1,4 +1,5 @@
 import type { Project, Workspace } from '../../../preload/personal'
+import { useT } from '../../../shared/i18n/react'
 
 /** Projects grouped by workspace; shared by the desktop overlay and the Android panel. */
 export default function ProjectPicker({
@@ -15,10 +16,13 @@ export default function ProjectPicker({
   disabledReason?: string
   onSelect: (projectId: string) => void
 }): React.JSX.Element {
+  const t = useT()
   return (
-    <div className="project-picker" role="listbox" aria-label="프로젝트 선택">
+    <div className="project-picker" role="listbox" aria-label={t('프로젝트 선택')}>
       {disabledReason && <small className="project-picker-note">{disabledReason}</small>}
-      {projects.length === 0 && <small className="project-picker-note">프로젝트가 없습니다.</small>}
+      {projects.length === 0 && (
+        <small className="project-picker-note">{t('프로젝트가 없습니다.')}</small>
+      )}
       {workspaces.map((w) => {
         const list = projects.filter((p) => p.workspaceId === w.id)
         if (!list.length) return null

@@ -19,6 +19,7 @@ import {
   type HubTransport,
   type Pairing
 } from './transport'
+import { t } from '@desktop/shared/i18n'
 
 export type HubConn = { state: 'online' | 'offline' | 'blocked'; savedAt?: string }
 export type HubClient = KnowledgeApi & {
@@ -28,14 +29,13 @@ export type HubClient = KnowledgeApi & {
   close(): void
 }
 
-const PAIRING_ERROR = 'FASK 페어링 QR이 아닙니다.'
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
 export function parsePairing(text: string): Pairing {
   let url: URL
   try {
     url = new URL(text.trim())
   } catch {
-    throw new Error(PAIRING_ERROR)
+    throw new Error(t('FASK 페어링 QR이 아닙니다.'))
   }
   const q = url.searchParams
   const port = Number(q.get('p'))
@@ -57,7 +57,7 @@ export function parsePairing(text: string): Pairing {
     !(addresses.length || relay) ||
     !addresses.every((a) => IPV4.test(a))
   )
-    throw new Error(PAIRING_ERROR)
+    throw new Error(t('FASK 페어링 QR이 아닙니다.'))
   return relay
     ? { addresses: [...addresses, RELAY_ADDRESS], port, fingerprint, token, relay }
     : { addresses, port, fingerprint, token }
@@ -162,7 +162,7 @@ export function createHubClient<P extends HubIdentity>(
   let memorySnapshot: { snapshot: Snapshot; savedAt: string } | undefined
   const streamSubs = new Set<(e: StreamEvent) => void>()
   const changedSubs = new Set<() => void>()
-  const closedError = (): HubError => new HubError('연결이 해제되었습니다.', 'CLOSED')
+  const closedError = (): HubError => new HubError(t('연결이 해제되었습니다.'), 'CLOSED')
   const ordered = (): string[] => [active, ...p.addresses.filter((a) => a !== active)]
 
   async function rpc(name: string, args: unknown[]): Promise<unknown> {
@@ -211,7 +211,7 @@ export function createHubClient<P extends HubIdentity>(
       // The hub processed the request; resending it elsewhere could apply it twice.
       const message = field('error')
       throw new Error(
-        typeof message === 'string' ? message : `요청이 실패했습니다. (${res.status})`
+        typeof message === 'string' ? message : t('요청이 실패했습니다. ({{status}})', { status: res.status })
       )
     }
     // A forged certificate never deletes the pairing: that would let a hostile network

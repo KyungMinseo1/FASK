@@ -4,6 +4,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerPersonal, type PersonalRuntime } from './personal'
+import { t } from '../shared/i18n'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -64,8 +65,8 @@ app.whenReady().then(() => {
   } catch (e) {
     // The schema migration rolls back on failure and the pre-upgrade copy stays on disk.
     dialog.showErrorBox(
-      'FASK 데이터 업그레이드 실패',
-      `${e instanceof Error ? e.message : String(e)}\n\n기존 데이터는 변경되지 않았습니다.`
+      t('FASK 데이터 업그레이드 실패'),
+      `${e instanceof Error ? e.message : String(e)}\n\n${t('기존 데이터는 변경되지 않았습니다.')}`
     )
     app.quit()
     return

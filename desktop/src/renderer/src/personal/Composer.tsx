@@ -17,6 +17,7 @@ import { errorText } from './common'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
 import { useApi } from './api'
+import { useT } from '../../../shared/i18n/react'
 
 // personal.ts `ask` throws these before recordAsk stores anything; every other failure is
 // treated as "result unknown" (the hub wraps handler errors as HTTP 400 either way).
@@ -71,12 +72,13 @@ export default function Composer({
   mediaActions,
   persistDraft = true
 }: Props): React.JSX.Element {
+  const t = useT()
   const api = useApi()
   const draftKey = `fask:draft:${profileId}:${projectId}`
   const recentTurn = recentQuestion ? lastTurn(recentQuestion) : undefined
   const [raw, setRaw] = useState(
-    () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
-  ),
+      () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
+    ),
     [refined, setRefined] = useState(''),
     [chosenModel, setModel] = useState('')
   const model = chosenModel || settings.model
@@ -112,10 +114,10 @@ export default function Composer({
     try {
       const parsed = await Promise.all(files.map(readAttachment))
       if (parsed.filter((f) => f.image).length > 1)
-        throw new Error('이미지는 한 번에 한 장씩 첨부해 주세요.')
+        throw new Error(t('이미지는 한 번에 한 장씩 첨부해 주세요.'))
       const textFiles = [...documents, ...parsed.flatMap((f) => (f.document ? [f.document] : []))]
       if (textFiles.length > 5 || textFiles.reduce((sum, d) => sum + d.text.length, 0) > 100000)
-        throw new Error('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.')
+        throw new Error(t('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.'))
       setDocuments(textFiles)
       const picture = parsed.find((f) => f.image)?.image
       if (picture) {
@@ -201,7 +203,7 @@ export default function Composer({
       const qid = question.current
       notify(() => callbacks.current.onCompleted?.(qid, { turnId, status: 'completed' }))
     } else if (r.finished.status !== 'saved')
-      setError(r.finished.error || '요청이 실패했습니다.')
+      setError(r.finished.error || t('요청이 실패했습니다.'))
   }
   const resync = async (): Promise<void> => {
     if (syncing.current) {
@@ -234,10 +236,7 @@ export default function Composer({
   }
   useEffect(() => {
     const offStream = api.onStream((event) => {
-      if (
-        event.requestId !== request.current &&
-        !(turn.current && event.turnId === turn.current)
-      )
+      if (event.requestId !== request.current && !(turn.current && event.turnId === turn.current))
         return
       // Events can arrive before the ask response; adopt the turn from the request ID.
       if (!turn.current) {
@@ -300,7 +299,7 @@ export default function Composer({
     } catch (e) {
       if (op !== operation.current) return
       const message = errorText(e)
-      if (REJECTED.some((m) => message.includes(m))) {
+      if (REJECTED.some((m) => message.includes(m) || message.includes(t(m)))) {
         // Rejected before recordAsk: nothing was stored, so the draft simply stays editable.
         setUnresolved(false)
         if (!turn.current) setRunning(false)
@@ -316,7 +315,7 @@ export default function Composer({
       setUnresolved(true)
       if (turn.current) void resync()
       else setRunning(false)
-      setError(`전송 결과를 확인하지 못했습니다. ${message}`)
+      setError(t('전송 결과를 확인하지 못했습니다. {{message}}', { message }))
       return
     } finally {
       if (op === operation.current) setBusy(false)
@@ -420,12 +419,12 @@ export default function Composer({
       }}
     >
       <div className="composer-label">
-        <b>{questionId ? '이 질문에 이어서 질문' : '새 질문'}</b>
-        <span>프로젝트에 자동 저장</span>
+        <b>{questionId ? t('이 질문에 이어서 질문') : t('새 질문')}</b>
+        <span>{t('프로젝트에 자동 저장')}</span>
       </div>
       {recentTurn && (
         <div className="recent-question">
-          <small>최근 질문</small>
+          <small>{t('최근 질문')}</small>
           <p>{recentTurn.sent}</p>
         </div>
       )}
@@ -433,13 +432,21 @@ export default function Composer({
         <div className="live-answer">
           <div className="answer-head">
             <span className="eyebrow">
-              {running ? '답변 작성 중' : actualModel ? `이번 답변 · ${actualModel}` : '이번 답변'}
+              {running
+                ? t('답변 작성 중')
+                : actualModel
+                  ? t('이번 답변 · {{model}}', { model: actualModel })
+                  : t('이번 답변')}
             </span>
-            {!running && live.answer && <CopyButton text={() => live.answer} label="답변 복사" />}
+            {!running && live.answer && (
+              <CopyButton text={() => live.answer} label={t('답변 복사')} />
+            )}
           </div>
           <MarkdownAnswer>
             {live.answer ||
-              (capturing ? '현재 화면을 캡처하고 있습니다…' : '모델 응답을 기다리고 있습니다…')}
+              (capturing
+                ? t('현재 화면을 캡처하고 있습니다…')
+                : t('모델 응답을 기다리고 있습니다…'))}
           </MarkdownAnswer>
         </div>
       )}
@@ -449,7 +456,7 @@ export default function Composer({
         multiple
         accept={attachmentAccept}
         style={{ display: 'none' }}
-        aria-label="파일 및 이미지 선택"
+        aria-label={t('파일 및 이미지 선택')}
         onChange={(e) => {
           void attach([...(e.target.files ?? [])])
           e.target.value = ''
@@ -457,8 +464,8 @@ export default function Composer({
       />
       <textarea
         ref={questionInput}
-        aria-label="질문"
-        placeholder="지금 궁금한 것을 적어보세요…"
+        aria-label={t('질문')}
+        placeholder={t('지금 궁금한 것을 적어보세요…')}
         value={raw}
         disabled={locked}
         onChange={(e) => {
@@ -474,7 +481,7 @@ export default function Composer({
       />
       {image && (
         <div className="capture-thumb">
-          <img src={image} alt="전송할 캡처" />
+          <img src={image} alt={t('전송할 캡처')} />
           <button
             disabled={locked}
             onClick={() => {
@@ -482,7 +489,7 @@ export default function Composer({
               setRefined('')
             }}
           >
-            이미지 제거
+            {t('이미지 제거')}
           </button>
         </div>
       )}
@@ -492,7 +499,7 @@ export default function Composer({
             <span key={`${d.name}:${index}`}>
               ▤ {d.name}
               <button
-                aria-label={`${d.name} 제거`}
+                aria-label={t('{{name}} 제거', { name: d.name })}
                 disabled={locked}
                 onClick={() => {
                   setDocuments((ds) => ds.filter((_, i) => i !== index))
@@ -507,38 +514,38 @@ export default function Composer({
       )}
       {refined && (
         <label className="refine-review">
-          다듬은 질문 · 수정 후 전송
+          {t('다듬은 질문 · 수정 후 전송')}
           <textarea
             value={refined}
             onChange={(e) => setRefined(e.target.value)}
             disabled={locked}
           />
           <button disabled={locked} onClick={() => setRefined('')}>
-            원문 사용으로 되돌리기
+            {t('원문 사용으로 되돌리기')}
           </button>
         </label>
       )}
       {settings.routing !== 'manual' && (
         <div className="recommendation">
-          {settings.routing === 'auto' ? '자동 선택' : '추천'} ·{' '}
-          {recommendation || '설정에서 모델을 선택하세요'}{' '}
+          {settings.routing === 'auto' ? t('자동 선택') : t('추천')} ·{' '}
+          {recommendation || t('설정에서 모델을 선택하세요')}{' '}
           <span>
             {image || includeCapture
-              ? '이미지 난이도 미확정'
+              ? t('이미지 난이도 미확정')
               : complex
-                ? '여러 단계의 추론'
-                : '간단한 설명 · 로컬 규칙'}
+                ? t('여러 단계의 추론')
+                : t('간단한 설명 · 로컬 규칙')}
           </span>
           {settings.routing === 'recommend' && recommendation && (
             <button disabled={locked} onClick={() => setModel(recommendation)}>
-              사용
+              {t('사용')}
             </button>
           )}
         </div>
       )}
       <div className="composer-actions">
         <button disabled={locked} onClick={() => fileInput.current?.click()}>
-          ＋ 파일·이미지
+          {t('＋ 파일·이미지')}
         </button>
         {mediaActions?.map((action) => (
           <button
@@ -558,7 +565,7 @@ export default function Composer({
           <label className={`capture-toggle ${includeCapture ? 'checked' : ''}`}>
             <input
               type="checkbox"
-              aria-label="화면 캡처 포함"
+              aria-label={t('화면 캡처 포함')}
               checked={includeCapture}
               disabled={locked}
               onChange={(e) => {
@@ -567,25 +574,25 @@ export default function Composer({
                 if (e.target.checked) setImage('')
               }}
             />
-            화면 캡처 포함
+            {t('화면 캡처 포함')}
           </label>
         )}
         <button disabled={locked || !canRefine} onClick={() => void refine()}>
-          질문 다듬기
+          {t('질문 다듬기')}
         </button>
         <select
-          aria-label="사용 모델"
+          aria-label={t('사용 모델')}
           value={model}
           disabled={locked || settings.routing === 'auto'}
           onChange={(e) => setModel(e.target.value)}
         >
-          <option value="">모델 선택</option>
+          <option value="">{t('모델 선택')}</option>
           {[...new Set([...settings.models, settings.model, model].filter(Boolean))].map((m) => (
             <option key={m}>{m}</option>
           ))}
         </select>
         <button disabled={locked || !canRefine} onClick={() => void send(true)}>
-          저장만
+          {t('저장만')}
         </button>
         {running ? (
           <button
@@ -593,23 +600,23 @@ export default function Composer({
             disabled={capturing}
             onClick={() => void api.cancel(request.current || turn.current)}
           >
-            {capturing ? '화면 캡처 중…' : '중지'}
+            {capturing ? t('화면 캡처 중…') : t('중지')}
           </button>
         ) : (
           <button className="primary" disabled={locked || !hasInput} onClick={() => void send()}>
             {busy
-              ? '처리 중…'
+              ? t('처리 중…')
               : settings.refine && !refined && canRefine
-                ? '다듬고 검토'
-                : '질문하기 ↗'}
+                ? t('다듬고 검토')
+                : t('질문하기 ↗')}
           </button>
         )}
       </div>
       {unresolved && (
         <div className="notice error" role="status">
-          전송 결과를 확인하지 못했습니다.{' '}
+          {t('전송 결과를 확인하지 못했습니다.')}{' '}
           <button disabled={busy} onClick={replay}>
-            같은 요청 다시 확인
+            {t('같은 요청 다시 확인')}
           </button>
         </div>
       )}
@@ -621,12 +628,15 @@ export default function Composer({
       <small className="composer-hint">
         {onCapture && includeCapture && (
           <>
-            질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 저장만·다듬기에서는
-            캡처하지 않습니다.
+            {t(
+              '질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 저장만·다듬기에서는 캡처하지 않습니다.'
+            )}
             <br />
           </>
         )}
-        이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Ctrl + Enter로 전송
+        {t(
+          '이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Ctrl + Enter로 전송'
+        )}
       </small>
     </div>
   )

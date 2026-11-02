@@ -2,13 +2,14 @@
 // certificate pin stay in the native session.
 import { HubError, toHubError, type HubIdentity, type HubTransport } from '../transport'
 import { BridgeError, type Bridge } from './bridge'
+import { t } from '@desktop/shared/i18n'
 
 const codeOf = (e: unknown): unknown =>
   e instanceof BridgeError || e instanceof HubError ? e.code : undefined
 
 const asHubError = (e: unknown): HubError => {
   const code = codeOf(e)
-  if (code === 'CLOSED') return new HubError('연결이 해제되었습니다.', 'CLOSED')
+  if (code === 'CLOSED') return new HubError(t('연결이 해제되었습니다.'), 'CLOSED')
   return toHubError(code)
 }
 

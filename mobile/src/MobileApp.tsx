@@ -16,10 +16,13 @@ import ProjectScreen from './screens/ProjectScreen'
 import Share from './screens/Share'
 import { clearPairing, loadPairing, snapshotCache } from './storage'
 import { isDevWeb, transport, type Pairing } from './transport'
+import { t } from '@desktop/shared/i18n'
+import { useT } from '@desktop/shared/i18n/react'
 import { onOverlayRevoked, overlayRevoked, stopOverlay } from './overlay/control'
 
 export default function MobileApp(): React.JSX.Element {
   const navigate = useNavigate()
+  useT()
   // undefined: still reading secure storage.
   const [pairing, setPairing] = useState<Pairing | null | undefined>(undefined)
   const [client, setClient] = useState<HubClient | null>(null)
@@ -51,7 +54,7 @@ export default function MobileApp(): React.JSX.Element {
       .then(async (p) => {
         // A screen-question session saw this token revoked while the app was away.
         if (p && (await overlayRevoked(p.fingerprint))) {
-          await unpairRef.current('페어링이 해제되었습니다. 다시 연결해 주세요.')
+          await unpairRef.current(t('페어링이 해제되었습니다. 다시 연결해 주세요.'))
           return
         }
         setPairing(p)
@@ -90,7 +93,7 @@ export default function MobileApp(): React.JSX.Element {
                 : new File([blob], f.name, { type: f.mimeType })
             )
           } catch {
-            errors.push(`${f.name}: 공유 파일을 읽을 수 없습니다.`)
+            errors.push(t('{{name}}: 공유 파일을 읽을 수 없습니다.', { name: f.name }))
           }
         }
         setShare({ id: crypto.randomUUID(), raw: (event.texts ?? []).join('\n'), files })
@@ -101,7 +104,7 @@ export default function MobileApp(): React.JSX.Element {
     return () => void handle.then((h) => h.remove())
   }, [navigate])
 
-  if (pairing === undefined) return <div className="fask-loading">FASK를 여는 중…</div>
+  if (pairing === undefined) return <div className="fask-loading">{t('FASK를 여는 중…')}</div>
   if (!pairing || !client)
     return (
       <div className="fask-app fask-mobile">
@@ -133,7 +136,8 @@ export default function MobileApp(): React.JSX.Element {
 }
 
 function DevBanner(): React.JSX.Element {
-  return <div className="mobile-banner dev">개발 모드: 인증서 고정 없이 연결합니다</div>
+  const t = useT()
+  return <div className="mobile-banner dev">{t('개발 모드: 인증서 고정 없이 연결합니다')}</div>
 }
 
 function Shell({
@@ -154,6 +158,7 @@ function Shell({
   unpair: (message: string) => Promise<void>
 }): React.JSX.Element {
   const navigate = useNavigate()
+  const t = useT()
   const { data, refresh, error } = useSnapshot()
   const lastProfile = useRef('')
   useEffect(() => {
@@ -161,14 +166,14 @@ function Shell({
     // Old screens hold IDs from the previous profile; send the user back to the start.
     if (lastProfile.current && lastProfile.current !== data.activeProfileId) {
       navigate('/', { replace: true })
-      setNotice('PC에서 프로필이 바뀌어 처음 화면으로 이동했습니다.')
+      setNotice(t('PC에서 프로필이 바뀌어 처음 화면으로 이동했습니다.'))
     }
     lastProfile.current = data.activeProfileId
-  }, [data, navigate, setNotice])
+  }, [data, navigate, setNotice, t])
   useEffect(() => {
     const check = async (): Promise<boolean> => {
       if (!(await overlayRevoked(pairing.fingerprint))) return false
-      await unpair('페어링이 해제되었습니다. 다시 연결해 주세요.')
+      await unpair(t('페어링이 해제되었습니다. 다시 연결해 주세요.'))
       return true
     }
     const handle = App.addListener('resume', () => {
@@ -189,8 +194,8 @@ function Shell({
   // Safety net: never leave the button stuck if no status change arrives.
   useEffect(() => {
     if (!retrying) return
-    const t = setTimeout(() => setRetrying(false), 15000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setRetrying(false), 15000)
+    return () => clearTimeout(timer)
   }, [retrying])
   const retry = (): void => {
     setRetrying(true)
@@ -199,23 +204,23 @@ function Shell({
   const retryButton = (
     <button disabled={retrying} onClick={retry}>
       {retrying && <span className="mobile-spinner" aria-hidden />}
-      {retrying ? '연결 중…' : '다시 시도'}
+      {retrying ? t('연결 중…') : t('다시 시도')}
     </button>
   )
 
   const banner =
     conn.state === 'offline' ? (
       <div className="mobile-banner offline" role="status">
-        PC에 연결할 수 없습니다 · {conn.savedAt ? dateLabel(conn.savedAt) : '저장된'} 기록을
-        표시합니다
+        {conn.savedAt
+          ? t('PC에 연결할 수 없습니다 · {{date}} 기록을 표시합니다', { date: dateLabel(conn.savedAt) })
+          : t('PC에 연결할 수 없습니다 · 저장된 기록을 표시합니다')}
         {retryButton}
       </div>
     ) : conn.state === 'blocked' ? (
       <div className="mobile-banner blocked" role="alert">
-        인증서가 일치하지 않는 연결을 차단했습니다. PC에서 연결을 초기화했다면 새 QR로 다시
-        연결해 주세요.
+        {t('인증서가 일치하지 않는 연결을 차단했습니다. PC에서 연결을 초기화했다면 새 QR로 다시 연결해 주세요.')}
         {retryButton}
-        <button onClick={() => navigate('/pair')}>다시 연결</button>
+        <button onClick={() => navigate('/pair')}>{t('다시 연결')}</button>
       </div>
     ) : null
   return (
@@ -229,7 +234,7 @@ function Shell({
         </div>
       )}
       {!data ? (
-        <div className="fask-loading">{error || 'PC의 기록을 불러오는 중…'}</div>
+        <div className="fask-loading">{error || t('PC의 기록을 불러오는 중…')}</div>
       ) : (
         <MobileContext.Provider value={{ data, refresh, client, pairing, conn, share, unpair }}>
           {/* Remount everything when the PC switches profile so no stale draft or ID survives. */}

@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { MindNodeKind } from '../../lib/trees'
 import type { MindFlowNode } from './layout'
+import { useT } from '../../../../shared/i18n/react'
 
 /** Invisible handle pinned to the circle centre so straight edges run centre-to-centre. */
 const centerHandle: React.CSSProperties = {
@@ -41,6 +42,7 @@ function circleStyle(kind: MindNodeKind, depth: number, color: string): React.CS
 }
 
 export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.JSX.Element {
+  const t = useT()
   const { mind, depth, diameter, color, expanded, open, selected, dragging, dropTarget, marked } =
     data
   const hiddenChildren = mind.children.length > 0 && !expanded ? mind.children.length : 0
@@ -84,7 +86,7 @@ export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.J
       {mind.count != null && mind.count > 0 && (
         <span
           className="absolute -right-1.5 -top-1.5 flex items-center gap-0.5 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold leading-4 text-white shadow-sm"
-          title={`질문 ${mind.count}개`}
+          title={t('질문 {{count}}개', { count: mind.count })}
         >
           <span className="text-[9px]">💬</span>
           {mind.count}

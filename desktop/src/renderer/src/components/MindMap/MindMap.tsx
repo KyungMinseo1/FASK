@@ -16,6 +16,7 @@ import {
 import type { MindNode } from '../../lib/trees'
 import { layoutMindMap, type MindFlowNode } from './layout'
 import MindNodeView from './MindNodeView'
+import { useT } from '../../../../shared/i18n/react'
 
 export interface MindMapProps {
   root: MindNode
@@ -74,6 +75,7 @@ function MindMapInner({
   canMove,
   canDrop
 }: MindMapProps): React.JSX.Element {
+  const t = useT()
   const { fitView } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   // Only the root and its direct children are visible initially (max-depth = 1).
@@ -230,8 +232,8 @@ function MindMapInner({
           }`}
         >
           {shift
-            ? '노드를 끌어서 옮길 묶음 위에 놓으세요'
-            : 'Shift + 드래그로 노드를 다른 묶음으로 이동'}
+            ? t('노드를 끌어서 옮길 묶음 위에 놓으세요')
+            : t('Shift + 드래그로 노드를 다른 묶음으로 이동')}
         </div>
       )}
     </ReactFlow>
