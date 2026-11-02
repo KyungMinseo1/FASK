@@ -1,20 +1,35 @@
 <div align="center">
 
-# FASK
+<img src="desktop/build/icon.png" alt="FASK 로고" width="112" height="112" />
 
-### 화면에서 질문하고, 배운 것을 내 지식으로.
+<h1>FASK</h1>
 
-화면 위의 질문부터 AI 답변, 연결된 지식까지 담는 개인용 데스크톱 워크스페이스입니다.
+<p><strong>화면에서 질문하고, 배운 것을 내 지식으로.</strong></p>
 
-[![Windows](https://img.shields.io/badge/Windows-Desktop-0078D4)](https://github.com/KyungMinseo1/FASK/releases)
-[![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-47848F)](desktop/package.json)
-[![Local storage](https://img.shields.io/badge/Storage-Local%20SQLite-6B8E23)](#데이터와-개인정보)
+<p>화면 위의 질문부터 AI 답변, 연결된 지식까지 담는 개인용 데스크톱 워크스페이스입니다.</p>
 
-**[Releases에서 다운로드](https://github.com/KyungMinseo1/FASK/releases)** · [시작하기](#시작하기) · [개발자 가이드](#개발자-가이드)
+<p>
+  <a href="https://github.com/KyungMinseo1/FASK/releases"><img alt="Windows" src="https://img.shields.io/badge/Windows-desktop-7769F0?style=flat-square&logo=windows&logoColor=white" /></a>
+  <a href="mobile/"><img alt="Android" src="https://img.shields.io/badge/Android-companion-7769F0?style=flat-square&logo=android&logoColor=white" /></a>
+  <a href="desktop/package.json"><img alt="Electron" src="https://img.shields.io/badge/Electron-React%20·%20TypeScript-2B2D42?style=flat-square&logo=electron&logoColor=white" /></a>
+  <a href="#데이터와-개인정보"><img alt="Local SQLite" src="https://img.shields.io/badge/Storage-local%20SQLite-2B2D42?style=flat-square&logo=sqlite&logoColor=white" /></a>
+</p>
 
-[English](README.md) | **한국어**
+<p>
+  <a href="https://github.com/KyungMinseo1/FASK/releases"><strong>다운로드</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#시작하기">시작하기</a>
+  &nbsp;·&nbsp;
+  <a href="#개발자-가이드">개발자 가이드</a>
+</p>
+
+<sub><a href="README.md">English</a> &nbsp;|&nbsp; <strong>한국어</strong></sub>
 
 </div>
+
+<br />
+
+> 화면에 **표시**하고 &nbsp;→&nbsp; 그 자리에서 **질문**하고 &nbsp;→&nbsp; 답변을 맥락과 함께 **보관**합니다.
 
 ---
 
@@ -39,8 +54,6 @@ Windows 설치 파일을 배포할 예정입니다. 아직 설치 파일이 없�
 | 질문에 포함할 화면 영역을 직접 선택 | **Markdown·LaTeX**를 지원하는 실시간 답변 |
 | 이미지와 텍스트·코드 파일 첨부 | 질문 검색, 메모 작성, 개념 연결 |
 | 화면을 떠나지 않고 대화 이어가기 · 이어서 한 질문은 하나의 질문으로 저장 | 개념 그래프 탐색과 Markdown 기억 내보내기 |
-
-**사용 흐름:** 프로젝트 선택 → 화면에 표시 → 질문 → 답변과 맥락을 함께 저장.
 
 ## 시작하기
 
@@ -173,15 +186,11 @@ desktop/                     Electron + React + TypeScript + Tailwind
     lib/, api/types.ts       트리 도우미와 공용 타입
   tests/                     단위 테스트와 Electron 스모크
   build/, resources/         아이콘·entitlements·아이콘 생성 스크립트
-docs/                        개인용 설계와 현재 구현 계약
+mobile/                      Capacitor 기반 Android 동반 앱
+relay/                       종단 간 암호화 원격 연결용 Cloudflare 중계 서버
 graphify-out/                코드 그래프 분석 결과
 ```
 
 </details>
 
-### 설계 문서
-
-- [개인용 계획](docs/PERSONAL_APP_PLAN.md) — 설계와 목표 범위
-- [구현 계약](docs/PERSONAL_IMPLEMENTATION.md) — 현재 동작·저장소·IPC
-
-MCP, 임베딩 검색, JEV는 후속 범위이며 현재 제공하는 기능은 아닙니다.
+> MCP, 임베딩 검색, JEV는 후속 범위이며 현재 제공하는 기능은 아닙니다.
