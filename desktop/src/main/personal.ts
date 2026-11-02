@@ -1,9 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage } from 'electron'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { networkInterfaces } from 'node:os'
-import { createHubCertificate, PersonalHub, type HubListenResult, type HubTls } from './personal-hub'
-import { HubRelay, normalizeRelayUrl, relayRoom } from './personal-relay'
+import { hostname, networkInterfaces } from 'node:os'
+import {
+  addressKind,
+  createHubCertificate,
+  PersonalHub,
+  type HubCaller,
+  type HubListenResult,
+  type HubTls
+} from './personal-hub'
+import { HubRelay, normalizeRelayUrl, RELAY_REPLACED, relayRoom } from './personal-relay'
+import { HUB_PORT, pairWithHost, PeerConnection, type PeerLink } from './personal-peers'
+import { PairError, PairingHost } from './peer-pairing'
+import { checkPeerCall, RemoteRouter, UNSUPPORTED } from './personal-routing'
+import { isTailscaleTarget, pairRelayKey, TAILSCALE_ADDRESS_ERROR, type PairPayload } from '../shared/pair-code'
 import { PersonalStore } from './personal-store'
 import { PersonalCapture } from './personal-capture'
 import { validateBackup } from './personal-backup'
@@ -40,8 +51,6 @@ const ANNOTATION_INSTRUCTION = `이번 질문의 이미지에는 사용자가 �
 4. 표시가 여러 곳이면 각각 나눠 설명하고 표시들 사이의 관계(비교, 원인과 결과, 순서)를 밝힌다.
 5. 표시한 의도(설명 요청, 오류 지적, 비교 등)를 판단하기 어렵거나 표시한 내용이 잘 보이지 않으면 추측으로 길게 답하지 않는다. 가장 가능성 높은 해석으로 짧게 답한 뒤 "혹시 ~이 궁금하신 건가요?" 형식의 확인 질문을 1~2개 덧붙인다.
 6. 펜 표시 자체의 색이나 모양은 묘사하지 않는다.`
-// Fixed so the pairing QR stays valid across restarts.
-const HUB_PORT = 47615
 // Build-time default relay (release builds set MAIN_VITE_FASK_RELAY_URL); Settings can override it.
 const DEFAULT_RELAY_URL = normalizeRelayUrl(import.meta.env.MAIN_VITE_FASK_RELAY_URL ?? '') ?? ''
 const HUB_METHODS: ReadonlySet<string> = new Set([
@@ -58,14 +67,15 @@ const HUB_METHODS: ReadonlySet<string> = new Set([
   'turn-state',
   'refine',
   'attachment',
-  'clear-attachment'
+  'clear-attachment',
+  'peer-leave'
 ])
 const HUB_KIND_ORDER: Record<HubAddress['kind'], number> = { tailscale: 0, lan: 1, other: 2 }
-function addressKind(address: string): HubAddress['kind'] {
-  const [a, b] = address.split('.').map(Number)
-  if (a === 100 && b >= 64 && b <= 127) return 'tailscale'
-  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return 'lan'
-  return 'other'
+interface PeerGrant {
+  id: string
+  name: string
+  tokenHash: string
+  createdAt: number
 }
 
 export interface PersonalRuntime {
@@ -96,28 +106,87 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     settings: { ...s.settings, endpoint: '', hasKey: false, regions: [], displayId: undefined },
     storageBytes: 0
   })
-  const hubInvoke = async (name: string, args: unknown[]): Promise<unknown> => {
+  const hubInvoke = async (caller: HubCaller, name: string, args: unknown[]): Promise<unknown> => {
+    if (caller.kind === 'peer') {
+      // Local data only: a peer never sees or reaches this PC's own linked PCs.
+      if (name === 'snapshot') return mobileSnapshot(localSnapshot())
+      if (name === 'peer-leave') {
+        revokeGrant(caller.id)
+        return null
+      }
+      checkPeerCall((kind, id) => store.record(kind, id), name, args)
+      const handler = handlers.get(name)
+      if (!handler) throw new Error(UNSUPPORTED)
+      return handler(...args)
+    }
+    if (name === 'peer-leave') throw new Error(UNSUPPORTED)
     if (['create', 'rename', 'remove'].includes(name) && args[0] === 'profile')
       throw new Error('모바일에서는 프로필을 변경할 수 없습니다.')
     // Parentless creation (workspace) skips the profile-scope check, so only concepts are allowed.
     if (name === 'create' && args[0] !== 'concept')
       throw new Error('모바일에서는 개념만 만들 수 있습니다.')
-    const handler = handlers.get(name)
-    if (!handler) throw new Error('지원하지 않는 요청입니다.')
-    if (name === 'snapshot') return mobileSnapshot(await handler())
-    return handler(...args)
+    if (!handlers.has(name)) throw new Error(UNSUPPORTED)
+    if (name === 'snapshot') return mobileSnapshot(mergedSnapshot())
+    return router.route(name, args)
   }
-  const hub = new PersonalHub(hubInvoke, HUB_METHODS, app.getVersion())
+  const pairing = new PairingHost(hostname())
+  const hub = new PersonalHub(hubInvoke, HUB_METHODS, app.getVersion(), {
+    ke1: (body) => pairing.ke1(body),
+    ke3: async (body) => {
+      const result = await pairing.ke3(body, pairPayload)
+      // The code is spent; the rendezvous room closes once this response had time to leave.
+      const generation = pairGeneration
+      setTimeout(() => generation === pairGeneration && pairStop(), 2000)
+      return result
+    }
+  })
   const hubRelay = new HubRelay((stream) => hub.inject(stream))
-  const changed = (): void => {
+  // Rendezvous for code pairing: a separate room derived from the code's public part.
+  const pairRelay = new HubRelay((stream) => hub.inject(stream, 'pair'))
+  let pairTimer: NodeJS.Timeout | null = null
+  let pairGeneration = 0
+  const pairStop = (): void => {
+    clearTimeout(pairTimer ?? undefined)
+    pairTimer = null
+    pairRelay.stop()
+    pairing.cancel()
+  }
+  /** `remote` marks events relayed from linked PCs; peers of this PC never receive those. */
+  const changed = (remote = false): void => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send('personal:changed')
-    hub.broadcast('changed', {})
+    hub.broadcast('changed', {}, remote ? 'remote' : 'local')
   }
-  const emit = (event: StreamEvent): void => {
+  const emit = (event: StreamEvent, remote = false): void => {
     for (const win of BrowserWindow.getAllWindows()) win.webContents.send('personal:stream', event)
-    hub.broadcast('stream', event)
+    hub.broadcast('stream', event, remote ? 'remote' : 'local')
   }
-  const capture = new PersonalCapture(store, main, changed)
+  // ── Linked PCs (this PC as client) ── host data stays in memory, never on disk.
+  const peers = new Map<string, PeerConnection>()
+  const router = new RemoteRouter(
+    () => peers.values(),
+    (id) => !!store.db.prepare('SELECT 1 FROM records WHERE id=?').get(id),
+    (name, args) => {
+      const handler = handlers.get(name)
+      if (!handler) throw new Error(UNSUPPORTED)
+      return handler(...args)
+    }
+  )
+  const connectPeer = (link: PeerLink): void => {
+    peers.get(link.id)?.close()
+    const conn = new PeerConnection(
+      link,
+      () => {
+        router.rebuild()
+        changed(true)
+      },
+      (event) => {
+        router.noteStream(link.id, event)
+        emit(event, true)
+      }
+    )
+    peers.set(link.id, conn)
+  }
+  const capture = new PersonalCapture(store, main, () => changed())
   let lastProjectId = ''
   const quickQuestion = (): void => {
     if (capture.editor) {
@@ -159,7 +228,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         ![main(), capture.overlay, capture.editor].includes(win)
       )
         throw new Error('허용되지 않은 요청입니다.')
-      return fn(...args)
+      return router.route(name, args)
     })
   }
   const textCall = async (
@@ -241,14 +310,16 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     })
     changed()
   }
-  handle('snapshot', () => ({
+  const localSnapshot = (): Snapshot => ({
     ...store.snapshot(),
     recentQuestions: Object.fromEntries(
       store
         .list<Project>('project')
-        .flatMap((p) => (recentQuestions.has(p.id) ? [[p.id, recentQuestions.get(p.id)]] : []))
+        .flatMap((p) => (recentQuestions.has(p.id) ? [[p.id, recentQuestions.get(p.id) ?? '']] : []))
     )
-  }))
+  })
+  const mergedSnapshot = (): Snapshot => router.merge(localSnapshot())
+  handle('snapshot', () => mergedSnapshot())
   handle('clear-recent', (id: string) => {
     store.record('project', id)
     recentQuestions.delete(id)
@@ -828,6 +899,10 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     writeSecret('hub:token', randomBytes(32).toString('base64url'))
     writeSecret('hub:tls', JSON.stringify(tls))
     writeSecret('hub:relay-key', randomBytes(32).toString('base64url'))
+    // A new certificate invalidates every linked PC's pin, so their grants go too.
+    for (const grant of grants()) hub.disconnect(grant.id)
+    writeSecret('hub:peers', '[]')
+    pairStop()
   }
   const relayUrl = (): string => normalizeRelayUrl(store.pref('hub:relay-url') || DEFAULT_RELAY_URL) ?? ''
   const relayActive = (): boolean => store.pref('hub:relay') === '1' && !!relayUrl()
@@ -849,10 +924,12 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     return next
   }
   const stopHub = async (): Promise<void> => {
+    pairStop()
     hubRelay.stop()
     await hub.stop()
     hubResults = []
     hubError = ''
+    mobileTokenHash = null
   }
   const startHub = async (): Promise<void> => {
     await stopHub()
@@ -865,7 +942,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     try {
       if (!store.pref('hub:token') || !store.pref('hub:tls')) await resetHubSecrets()
       if (!store.pref('hub:relay-key')) writeSecret('hub:relay-key', randomBytes(32).toString('base64url'))
-      hubResults = await hub.start(addresses, HUB_PORT, readSecret('hub:token'), hubTls())
+      mobileTokenHash = sha256(readSecret('hub:token'))
+      hubResults = await hub.start(addresses, HUB_PORT, hubAuth, hubTls())
       if (relayActive()) hubRelay.start(relayUrl(), readSecret('hub:relay-key'))
     } catch (e) {
       hubError = e instanceof Error ? e.message : String(e)
@@ -958,6 +1036,149 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       return hubStatus()
     })
   )
+  // ── Peer PCs authorized on this hub ── only token hashes are stored.
+  const sha256 = (value: string): Buffer => createHash('sha256').update(value).digest()
+  let mobileTokenHash: Buffer | null = null
+  let grantCache: PeerGrant[] | null = null
+  const grants = (): PeerGrant[] => {
+    if (!grantCache) {
+      const value: unknown = JSON.parse(readSecret('hub:peers') || '[]')
+      grantCache = Array.isArray(value) ? (value as PeerGrant[]) : []
+    }
+    return grantCache
+  }
+  const saveGrants = (list: PeerGrant[]): void => {
+    writeSecret('hub:peers', JSON.stringify(list))
+    grantCache = list
+  }
+  const hubAuth = (bearer: string): HubCaller | null => {
+    const hash = sha256(bearer)
+    if (mobileTokenHash && timingSafeEqual(hash, mobileTokenHash)) return { kind: 'mobile' }
+    for (const grant of grants())
+      if (timingSafeEqual(hash, Buffer.from(grant.tokenHash, 'hex'))) return { kind: 'peer', id: grant.id }
+    return null
+  }
+  const revokeGrant = (id: string): void => {
+    saveGrants(grants().filter((g) => g.id !== id))
+    hub.disconnect(id)
+    changed()
+  }
+  const tailscaleListening = (): string[] =>
+    hubResults.filter((r) => !r.error && addressKind(r.address) === 'tailscale').map((r) => r.address)
+  const relayServing = (): boolean => relayActive() && hubRelay.state !== 'off'
+  const pairPayload = (kind: 'pc' | 'mobile', name: string): PairPayload => {
+    if (kind === 'mobile') {
+      const uri = hubStatus().pairing
+      if (!uri) throw new PairError(410, '연결 코드가 없거나 만료되었습니다.')
+      setImmediate(() => changed())
+      return { kind: 'mobile', pairing: uri }
+    }
+    const token = randomBytes(32).toString('base64url')
+    const grant: PeerGrant = {
+      id: randomUUID(),
+      name: name.trim() || '다른 PC',
+      tokenHash: sha256(token).toString('hex'),
+      createdAt: Date.now()
+    }
+    saveGrants([...grants(), grant])
+    setImmediate(() => changed())
+    return {
+      kind: 'pc',
+      peerId: grant.id,
+      token,
+      certPem: hubTls().cert,
+      hostName: hostname(),
+      addresses: tailscaleListening(),
+      relay: relayServing() ? { url: relayUrl(), room: relayRoom(readSecret('hub:relay-key')) } : null
+    }
+  }
+  handle('peer-code-begin', () =>
+    hubTask(async () => {
+      const addresses = tailscaleListening()
+      const relay = relayServing()
+      if (store.pref('hub:enabled') !== '1' || (!addresses.length && !relay))
+        throw new Error('먼저 기기 연결을 켜고 Tailscale 주소나 릴레이를 사용해 주세요.')
+      pairStop()
+      const generation = ++pairGeneration
+      const { code, rendezvous, expiresAt } = await pairing.begin(hubTls().fingerprint)
+      if (relay) pairRelay.start(relayUrl(), await pairRelayKey(rendezvous))
+      pairTimer = setTimeout(() => {
+        if (generation !== pairGeneration) return
+        pairStop()
+        changed()
+      }, expiresAt - Date.now())
+      return { code, expiresAt, addresses, relay }
+    })
+  )
+  handle('peer-code-status', () => {
+    const status = pairing.status()
+    if (!status) return null
+    if (pairRelay.state === 'error' && pairRelay.error === RELAY_REPLACED) {
+      pairStop()
+      throw new Error('연결 코드 대기가 중단되었습니다. 새 코드를 만들어 주세요.')
+    }
+    return { ...status, waiting: pairRelay.state }
+  })
+  handle('peer-code-cancel', () => {
+    pairStop()
+    changed()
+  })
+  handle('peer-grants', () => grants().map(({ id, name, createdAt }) => ({ id, name, createdAt })))
+  handle('peer-grant-revoke', (id: unknown) => {
+    if (typeof id !== 'string') throw new Error('요청 형식이 잘못되었습니다.')
+    revokeGrant(id)
+  })
+  // ── Links to other PCs (this PC as client) ──
+  const links = (): PeerLink[] => {
+    const value: unknown = JSON.parse(readSecret('peer:links') || '[]')
+    return Array.isArray(value) ? (value as PeerLink[]) : []
+  }
+  handle('peer-pair', async (target: unknown, code: unknown) => {
+    if (typeof code !== 'string' || !target || typeof target !== 'object' || !('kind' in target))
+      throw new Error('요청 형식이 잘못되었습니다.')
+    let link: PeerLink
+    if (target.kind === 'direct') {
+      const address = 'address' in target && typeof target.address === 'string' ? target.address.trim() : ''
+      if (!isTailscaleTarget(address)) throw new Error(TAILSCALE_ADDRESS_ERROR)
+      link = await pairWithHost({ kind: 'direct', address }, code, hostname())
+    } else if (target.kind === 'relay') {
+      const url = normalizeRelayUrl(relayUrl())
+      if (!url) throw new Error('중계 서버 주소를 입력하세요.')
+      link = await pairWithHost({ kind: 'relay', url }, code, hostname())
+    } else throw new Error('요청 형식이 잘못되었습니다.')
+    const stale = links().filter((l) => l.fingerprint === link.fingerprint || l.id === link.id)
+    for (const old of stale) {
+      peers.get(old.id)?.close()
+      peers.delete(old.id)
+    }
+    writeSecret('peer:links', JSON.stringify([...links().filter((l) => !stale.includes(l)), link]))
+    connectPeer(link)
+    router.rebuild()
+    changed()
+  })
+  handle('peer-links', () =>
+    links().map((l) => ({
+      id: l.id,
+      name: l.name,
+      paths: [...(l.addresses.length ? ['tailscale' as const] : []), ...(l.relay ? ['relay' as const] : [])],
+      status: peers.get(l.id)?.status ?? 'offline'
+    }))
+  )
+  handle('peer-unlink', async (id: unknown) => {
+    if (typeof id !== 'string') throw new Error('요청 형식이 잘못되었습니다.')
+    const conn = peers.get(id)
+    await conn?.rpc('peer-leave', []).catch(() => {})
+    conn?.close()
+    peers.delete(id)
+    writeSecret('peer:links', JSON.stringify(links().filter((l) => l.id !== id)))
+    router.rebuild()
+    changed()
+  })
+  try {
+    for (const link of links()) connectPeer(link)
+  } catch (e) {
+    console.warn('linked PCs unavailable:', e)
+  }
   if (store.pref('hub:enabled') === '1') void hubTask(startHub)
   return {
     capture,
@@ -967,6 +1188,9 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     },
     close: () => {
       for (const item of controllers.values()) item.controller.abort()
+      for (const conn of peers.values()) conn.close()
+      peers.clear()
+      pairStop()
       hubRelay.stop()
       void hub.stop()
       store.close()

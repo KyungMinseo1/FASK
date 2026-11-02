@@ -42,7 +42,34 @@ export interface Workspace {
   id: string
   profileId: string
   name: string
+  /** Set when the workspace lives on a linked PC (read through this PC). */
+  remote?: { peerId: string; name: string; status: PeerStatus }
 }
+export type PeerStatus = 'online' | 'offline' | 'revoked' | 'blocked'
+export interface PeerLinkInfo {
+  id: string
+  name: string
+  paths: ('tailscale' | 'relay')[]
+  status: PeerStatus
+}
+export interface PeerGrantInfo {
+  id: string
+  name: string
+  createdAt: number
+}
+export interface PeerCode {
+  /** 8 characters, display as RRRP-PPPP. */
+  code: string
+  expiresAt: number
+  addresses: string[]
+  relay: boolean
+}
+export interface PeerCodeStatus {
+  code: string
+  expiresAt: number
+  waiting: HubRelayStatus['state']
+}
+export type PeerTarget = { kind: 'direct'; address: string } | { kind: 'relay' }
 export interface Project {
   id: string
   workspaceId: string
@@ -233,6 +260,14 @@ export interface PersonalApi extends KnowledgeApi {
   setHubAddresses(addresses: string[]): Promise<HubStatus>
   resetHubPairing(): Promise<HubStatus>
   setHubRelay(enabled: boolean, url: string): Promise<HubStatus>
+  peerCodeBegin(): Promise<PeerCode>
+  peerCodeStatus(): Promise<PeerCodeStatus | null>
+  peerCodeCancel(): Promise<void>
+  peerGrants(): Promise<PeerGrantInfo[]>
+  peerGrantRevoke(id: string): Promise<void>
+  peerPair(target: PeerTarget, code: string): Promise<void>
+  peerLinks(): Promise<PeerLinkInfo[]>
+  peerUnlink(id: string): Promise<void>
 }
 declare global {
   interface Window {

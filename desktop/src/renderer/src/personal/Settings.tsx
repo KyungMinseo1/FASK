@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
-import type { DisplayInfo, HubStatus, LocalSettings } from '../../../preload/personal'
+import type {
+  DisplayInfo,
+  HubStatus,
+  LocalSettings,
+  PeerCode,
+  PeerGrantInfo,
+  PeerLinkInfo,
+  PeerStatus
+} from '../../../preload/personal'
 import { errorText } from './common'
 import { readTheme, setTheme, type ThemePref } from './theme'
 
@@ -17,6 +25,7 @@ export default function Settings({
   const [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false)
   const [theme, setThemeState] = useState(readTheme)
+  const share = usePeerCode()
   useEffect(() => {
     void window.fask
       .displays()
@@ -247,7 +256,8 @@ export default function Settings({
             </label>
             <small>이 기기에만 적용되며 바로 바뀝니다.</small>
           </section>
-          <MobileHubSection />
+          <MobileHubSection share={share} />
+          <PeerSection share={share} />
           <section>
             <h3>백업과 복원</h3>
             <p>
@@ -294,8 +304,263 @@ export default function Settings({
   )
 }
 
+const STATUS_LABEL: Record<PeerStatus, string> = {
+  online: '온라인',
+  offline: '오프라인',
+  revoked: '연결 해제됨',
+  blocked: '인증서 불일치'
+}
+
+interface PeerShare {
+  code: PeerCode | null
+  now: number
+  error: string
+  busy: boolean
+  begin(): Promise<void>
+  cancel(): Promise<void>
+}
+
+/** One pairing code shared by the mobile and PC sections. */
+function usePeerCode(): PeerShare {
+  const [code, setCode] = useState<PeerCode | null>(null),
+    [now, setNow] = useState(() => Date.now()),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false)
+  const active = !!code
+  useEffect(() => {
+    const sync = (): void => {
+      void window.fask
+        .peerCodeStatus()
+        .then((s) =>
+          setCode((c) =>
+            s
+              ? { addresses: [], relay: false, ...c, code: s.code, expiresAt: s.expiresAt }
+              : null
+          )
+        )
+        .catch((e) => {
+          // The rendezvous wait was taken over; the host already dropped the code.
+          setCode(null)
+          setError(errorText(e))
+        })
+    }
+    sync()
+    const off = window.fask.onChanged(sync)
+    // Relay takeovers send no change event, so poll while a code is shown.
+    const poll = active ? setInterval(sync, 5000) : null
+    return () => {
+      off()
+      clearInterval(poll ?? undefined)
+    }
+  }, [active])
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [active])
+  const act = async (fn: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return {
+    code,
+    now,
+    error,
+    busy,
+    begin: () =>
+      act(async () => {
+        const c = await window.fask.peerCodeBegin()
+        setNow(Date.now())
+        setCode(c)
+      }),
+    cancel: () =>
+      act(async () => {
+        await window.fask.peerCodeCancel()
+        setCode(null)
+      })
+  }
+}
+
+function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
+  const { code, now, error, busy } = share
+  const left = code ? Math.max(0, Math.ceil((code.expiresAt - now) / 1000)) : 0
+  const urgent = left > 0 && left <= 60
+  return (
+    <div className="peer-code">
+      {code ? (
+        <div className={`peer-code-card${left === 0 ? ' expired' : urgent ? ' urgent' : ''}`}>
+          <span className="peer-code-value" aria-label="기기 연결 코드">
+            {code.code.slice(0, 4)}
+            <i>-</i>
+            {code.code.slice(4)}
+          </span>
+          <span className="peer-code-timer">
+            {left > 0
+              ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`
+              : '코드가 만료되었습니다'}
+          </span>
+          {left > 0 && code.expiresAt > now && (
+            <span className="peer-code-progress">
+              <span style={{ width: `${Math.min(100, (left / 300) * 100)}%` }} />
+            </span>
+          )}
+          {(code.addresses.length > 0 || code.relay) && (
+            <span className="peer-code-paths">
+              {code.addresses.length > 0 && <span className="pill">Tailscale {code.addresses.join(', ')}</span>}
+              {code.relay && <span className="pill">릴레이</span>}
+            </span>
+          )}
+          <button disabled={busy} onClick={() => void share.cancel()}>
+            취소
+          </button>
+        </div>
+      ) : (
+        <button className="primary peer-code-start" disabled={busy} onClick={() => void share.begin()}>
+          기기 연결 코드 만들기
+        </button>
+      )}
+      {error && <p className="error">{error}</p>}
+    </div>
+  )
+}
+
+function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
+  const [grants, setGrants] = useState<PeerGrantInfo[]>([]),
+    [links, setLinks] = useState<PeerLinkInfo[]>([]),
+    [mode, setMode] = useState<'direct' | 'relay'>('direct'),
+    [address, setAddress] = useState(''),
+    [code, setCode] = useState(''),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false)
+  useEffect(() => {
+    const load = (): void => {
+      void window.fask
+        .peerGrants()
+        .then(setGrants)
+        .catch(() => {})
+      void window.fask
+        .peerLinks()
+        .then(setLinks)
+        .catch(() => {})
+    }
+    load()
+    return window.fask.onChanged(load)
+  }, [])
+  const act = async (fn: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+      setGrants(await window.fask.peerGrants())
+      setLinks(await window.fask.peerLinks())
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="hub-settings">
+      <h3>다른 PC 연결</h3>
+      <p>이 PC의 워크스페이스를 다른 PC와 공유하려면 연결 코드를 만들어 상대 PC에 입력하세요.</p>
+      <PeerCodeBox share={share} />
+      <h4>연결된 PC</h4>
+      {grants.length ? (
+        <ul className="peer-list">
+          {grants.map((g) => (
+            <li key={g.id}>
+              <span className="peer-avatar">💻</span>
+              <span className="peer-info">
+                <strong>{g.name}</strong>
+                <small>{new Date(g.createdAt).toLocaleString()}</small>
+              </span>
+              <button
+                className="danger"
+                disabled={busy}
+                onClick={() => void act(() => window.fask.peerGrantRevoke(g.id))}
+              >
+                해제
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <small className="peer-empty">연결된 PC가 없습니다.</small>
+      )}
+      <h4>다른 PC에 연결</h4>
+      <div className="segmented" role="radiogroup" aria-label="연결 경로">
+        <label className={mode === 'direct' ? 'on' : ''}>
+          <input type="radio" checked={mode === 'direct'} onChange={() => setMode('direct')} />
+          Tailscale 주소
+        </label>
+        <label className={mode === 'relay' ? 'on' : ''}>
+          <input type="radio" checked={mode === 'relay'} onChange={() => setMode('relay')} />
+          릴레이
+        </label>
+      </div>
+      <div className="peer-connect">
+        {mode === 'direct' && (
+          <input
+            aria-label="Tailscale 주소"
+            placeholder="100.x.y.z 또는 이름.ts.net"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+        )}
+        <input
+          className="peer-code-input"
+          aria-label="연결 코드"
+          placeholder="XXXX-XXXX"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
+        <button
+          className="primary"
+          disabled={busy || !code.trim() || (mode === 'direct' && !address.trim())}
+          onClick={() =>
+            void act(async () => {
+              await window.fask.peerPair(
+                mode === 'direct' ? { kind: 'direct', address: address.trim() } : { kind: 'relay' },
+                code
+              )
+              setCode('')
+            })
+          }
+        >
+          {busy ? '연결 중…' : '연결'}
+        </button>
+      </div>
+      {error && <p className="error">{error}</p>}
+      {links.length > 0 && (
+        <ul className="peer-list">
+          {links.map((l) => (
+            <li key={l.id}>
+              <span className="peer-avatar">🌐</span>
+              <span className="peer-info">
+                <strong>{l.name}</strong>
+                <small>{l.paths.map((p) => (p === 'tailscale' ? 'Tailscale' : '릴레이')).join(' · ')}</small>
+              </span>
+              <span className={`status-pill ${l.status}`}>{STATUS_LABEL[l.status]}</span>
+              <button disabled={busy} onClick={() => void act(() => window.fask.peerUnlink(l.id))}>
+                연결 해제
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 /** Applies immediately, independent of "설정 저장". */
-function MobileHubSection(): React.JSX.Element {
+function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
   const [status, setStatus] = useState<HubStatus | null>(null),
     [qr, setQr] = useState(''),
     [error, setError] = useState(''),
@@ -411,6 +676,7 @@ function MobileHubSection(): React.JSX.Element {
           {status.relay.state === 'error' && <p className="error">{status.relay.error}</p>}
           {status.error && <p className="error">{status.error}</p>}
           {pairing && qr && <img className="hub-qr" src={qr} alt="모바일 연결 QR 코드" />}
+          <PeerCodeBox share={share} />
           <button disabled={busy} onClick={() => void apply(() => window.fask.resetHubPairing())}>
             연결 초기화 · 모든 기기 해제
           </button>

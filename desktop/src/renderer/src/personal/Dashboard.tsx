@@ -58,6 +58,7 @@ export default function Dashboard(): React.JSX.Element {
     [moveTarget, setMoveTarget] = useState('')
   const workspace = data?.workspaces.find((w) => w.id === workspaceId) ?? data?.workspaces[0]
   const projects = data?.projects.filter((p) => p.workspaceId === workspace?.id) ?? []
+  const locked = !!workspace?.remote && workspace.remote.status !== 'online'
   const project = projects.find((p) => p.id === projectId) ?? projects[0]
   useEffect(() => {
     if (project && scope === 'project') void window.fask.activateProject(project.id).catch(() => {})
@@ -194,13 +195,27 @@ export default function Dashboard(): React.JSX.Element {
         >
           {data.workspaces.map((w) => (
             <option key={w.id} value={w.id}>
-              {w.name}
+              {w.remote ? `🌐 ${w.name}` : w.name}
             </option>
           ))}
         </select>
+        {workspace?.remote && (
+          <span className="sidebar-rename">
+            🌐 {workspace.remote.name} ·{' '}
+            {
+              {
+                online: '온라인',
+                offline: '오프라인 (변경 불가)',
+                revoked: '연결 해제됨',
+                blocked: '인증서 불일치'
+              }[workspace.remote.status]
+            }
+          </span>
+        )}
         {workspace && (
           <button
             className="sidebar-rename"
+            disabled={locked}
             onClick={() => beginRename('workspace', workspace.id, workspace.name)}
           >
             워크스페이스 이름 변경 ✎
@@ -208,7 +223,11 @@ export default function Dashboard(): React.JSX.Element {
         )}
         <div className="sidebar-heading">
           PROJECTS
-          <button aria-label="프로젝트 추가" onClick={() => beginCreate('project', workspace?.id)}>
+          <button
+            aria-label="프로젝트 추가"
+            disabled={locked}
+            onClick={() => beginCreate('project', workspace?.id)}
+          >
             ＋
           </button>
         </div>
@@ -343,6 +362,7 @@ export default function Dashboard(): React.JSX.Element {
             ) : (
               <button
                 className="primary"
+                disabled={scope !== 'home' && locked}
                 onClick={() =>
                   beginCreate(
                     scope === 'home' ? 'workspace' : 'project',
@@ -432,7 +452,7 @@ export default function Dashboard(): React.JSX.Element {
                 ))}
               </div>
               <button
-                disabled={!project}
+                disabled={!project || locked}
                 onClick={() => {
                   setCompose((s) => !s)
                   setSelectedId('')

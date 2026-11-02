@@ -207,7 +207,7 @@ export default function OverlayPanel({
   const projectsKey = JSON.stringify([data.projects, data.workspaces, projectId, lockReason, notice])
   // The native toolbar's project popover mirrors this list; resent after every switch attempt.
   useEffect(() => {
-    const groups = new Map(data.workspaces.map((w) => [w.id, w.name]))
+    const groups = new Map(data.workspaces.map((w) => [w.id, w.remote ? `🌐 ${w.name}` : w.name]))
     const projects = [...data.projects]
       .sort((a, b) => (groups.get(a.workspaceId) ?? '').localeCompare(groups.get(b.workspaceId) ?? ''))
       .map((p) => ({ id: p.id, name: p.name, group: groups.get(p.workspaceId) ?? null }))

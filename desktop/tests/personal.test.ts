@@ -10,12 +10,17 @@ import { createHash, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import type { Duplex } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
-import { createHubCertificate, PersonalHub, type HubLimits, type HubTls } from '../src/main/personal-hub'
+import { createHubCertificate, PersonalHub, type HubCaller, type HubLimits, type HubTls } from '../src/main/personal-hub'
 import { HubRelay, RELAY_WINDOW, RelayStream, normalizeRelayUrl, relayRoom } from '../src/main/personal-relay'
 import { DatabaseSync } from 'node:sqlite'
 import { PersonalStore } from '../src/main/personal-store'
 import { normalizeEndpoint, localModels, streamChat } from '../src/main/local-api'
-import type { Project, Question, Turn, TurnState } from '../src/preload/personal'
+import type { PeerStatus, Project, Question, Snapshot, Turn, TurnState } from '../src/preload/personal'
+import { PairingHost } from '../src/main/peer-pairing'
+import { dial, pairWithHost, PeerConnection, type PeerLink } from '../src/main/personal-peers'
+import { checkPeerCall, RemoteRouter } from '../src/main/personal-routing'
+import { pairConfig, pairRelayKey, runPairClient, type PairPayload, type PairPost } from '../src/shared/pair-code'
+import { OpaqueClient } from '@cloudflare/opaque-ts'
 import { validateBackup } from '../src/main/personal-backup'
 import { readAttachment } from '../src/renderer/src/personal/attachments'
 import {
@@ -25,6 +30,19 @@ import {
   normalizeLegacyQuestion,
   reconcileTurnState
 } from '../src/shared/questions'
+
+const NO_PAIR = {
+  ke1: async (): Promise<unknown> => {
+    throw new Error('no pairing')
+  },
+  ke3: async (): Promise<unknown> => {
+    throw new Error('no pairing')
+  }
+}
+const tokenAuth =
+  (token: string) =>
+  (bearer: string): HubCaller | null =>
+    bearer === token ? { kind: 'mobile' } : null
 
 function turn(overrides: Partial<Turn> = {}): Turn {
   return {
@@ -583,11 +601,12 @@ test('reconcileTurnState recovers a lost done and ignores stale states', () => {
 test('mobile hub serves TLS with pinned cert, header-only auth, origin and method allowlist', async () => {
   const tls = await createHubCertificate()
   const hub = new PersonalHub(
-    async (name, args) => ({ name, args }),
+    async (_caller, name, args) => ({ name, args }),
     new Set(['snapshot']),
-    '1.1.0'
+    '1.1.0',
+    NO_PAIR
   )
-  const results = await hub.start(['127.0.0.1'], 0, 'tok', tls)
+  const results = await hub.start(['127.0.0.1'], 0, tokenAuth('tok'), tls)
   try {
     assert.equal(results.length, 1)
     assert.equal(results[0].address, '127.0.0.1')
@@ -693,8 +712,8 @@ test('mobile hub serves TLS with pinned cert, header-only auth, origin and metho
       req.end()
     })
     assert.match(received, /event: stream\ndata: \{"turnId":"x"\}/)
-    const elsewhere = new PersonalHub(async () => null, new Set(), '1.1.0')
-    const missing = await elsewhere.start(['203.0.113.7'], 0, 'tok', tls)
+    const elsewhere = new PersonalHub(async () => null, new Set(), '1.1.0', NO_PAIR)
+    const missing = await elsewhere.start(['203.0.113.7'], 0, tokenAuth('tok'), tls)
     assert.match(missing[0].error, /현재 네트워크에 없는 주소입니다/)
     assert.equal(elsewhere.running, false)
     await elsewhere.stop()
@@ -925,8 +944,8 @@ async function relayedHub(
   limits: HubLimits = RELAY_LIMITS
 ): Promise<{ hub: PersonalHub; relay: FakeRelay; hubRelay: HubRelay; tls: HubTls }> {
   const tls = await createHubCertificate()
-  const hub = new PersonalHub(async (_name, args) => args[0], new Set(['snapshot']), '1.1.0', limits)
-  await hub.start([], 0, 'tok', tls)
+  const hub = new PersonalHub(async (_caller, _name, args) => args[0], new Set(['snapshot']), '1.1.0', NO_PAIR, limits)
+  await hub.start([], 0, tokenAuth('tok'), tls)
   const relay = await fakeRelay()
   const hubRelay = new HubRelay((stream) => hub.inject(stream))
   hubRelay.start(relay.url, RELAY_KEY)
@@ -1142,5 +1161,417 @@ test('relay reconnects after the control socket drops', async () => {
     hubRelay.stop()
     await hub.stop()
     await relay.close()
+  }
+})
+
+// ── Device pairing codes and linked PCs ──
+interface PeerHost {
+  tls: HubTls
+  hub: PersonalHub
+  pairing: PairingHost
+  grants: Map<string, string>
+  questions: Map<string, string>
+  port: number
+  tick: (ms: number) => void
+  restart: () => Promise<unknown>
+}
+async function peerHost(isTailscale: (address: string) => boolean = () => true): Promise<PeerHost> {
+  const tls = await createHubCertificate()
+  let clock = Date.now()
+  const pairing = new PairingHost('host-pc', () => clock)
+  const grants = new Map<string, string>()
+  const questions = new Map([['q1', 'first']])
+  const mint = (name: string): PairPayload => {
+    const token = randomBytes(32).toString('base64url')
+    const id = `peer-${grants.size}-${name}`
+    grants.set(token, id)
+    return { kind: 'pc', peerId: id, token, certPem: tls.cert, hostName: 'host-pc', addresses: ['127.0.0.1'], relay: null }
+  }
+  const hub: PersonalHub = new PersonalHub(
+    async (caller, name, args) => {
+      assert.equal(caller.kind, 'peer')
+      if (name === 'snapshot')
+        return {
+          profiles: [],
+          activeProfileId: 'p',
+          workspaces: [{ id: 'w1', profileId: 'p', name: 'Host WS' }],
+          projects: [{ id: 'pr1', workspaceId: 'w1', name: 'P', description: '' }],
+          concepts: [],
+          questions: [...questions].map(([id, title]) => ({ ...question(id, 'pr1', [turn()]), title })),
+          settings: {},
+          storageBytes: 0
+        }
+      if (name === 'rename') {
+        await new Promise((r) => setTimeout(r, Math.random() * 20))
+        questions.set(String(args[1]), String(args[2]))
+        hub.broadcast('changed', {})
+        return null
+      }
+      throw new Error('지원하지 않는 요청입니다.')
+    },
+    new Set(['snapshot', 'rename']),
+    '1.1.2',
+    {
+      ke1: (b) => pairing.ke1(b),
+      ke3: (b) =>
+        pairing.ke3(b, (kind, name) =>
+          kind === 'mobile' ? { kind: 'mobile', pairing: `fask://pair?v=1&fp=${tls.fingerprint}&t=mobile` } : mint(name)
+        )
+    },
+    undefined,
+    isTailscale
+  )
+  const auth = (bearer: string): HubCaller | null => (grants.has(bearer) ? { kind: 'peer', id: grants.get(bearer)! } : null)
+  const [bound] = await hub.start(['127.0.0.1'], 0, auth, tls)
+  return {
+    tls,
+    hub,
+    pairing,
+    grants,
+    questions,
+    port: bound.port,
+    tick: (ms) => {
+      clock += ms
+    },
+    restart: () => hub.start(['127.0.0.1'], bound.port, auth, tls)
+  }
+}
+/** Unpinned POST to a hub's /pair routes over direct TLS, reporting the observed fingerprint. */
+const directPost =
+  (port: number): PairPost =>
+  (path, body) =>
+    new Promise((resolve, reject) => {
+      const req = httpsRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          path,
+          method: 'POST',
+          rejectUnauthorized: false,
+          agent: false,
+          headers: { 'Content-Type': 'application/json' }
+        },
+        (res) => {
+          const fingerprint = createHash('sha256')
+            .update((res.socket as TLSSocket).getPeerCertificate().raw)
+            .digest('base64url')
+          const chunks: Buffer[] = []
+          res.on('data', (c: Buffer) => chunks.push(c))
+          res.on('end', () =>
+            resolve({ status: res.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString() || 'null'), fingerprint })
+          )
+        }
+      )
+      req.on('error', reject)
+      req.end(JSON.stringify(body))
+    })
+const wrongSecret = (code: string): string => code.slice(0, 3) + (code.slice(3) === '00000' ? '11111' : '00000')
+async function linked(h: PeerHost, name = 'client'): Promise<PeerLink> {
+  const { code } = await h.pairing.begin(h.tls.fingerprint)
+  return pairWithHost({ kind: 'direct', address: '127.0.0.1', port: h.port }, code, name)
+}
+
+test('pair code: direct pairing pins the host and is single use', async () => {
+  const h = await peerHost()
+  try {
+    const { code } = await h.pairing.begin(h.tls.fingerprint)
+    const link = await pairWithHost({ kind: 'direct', address: '127.0.0.1', port: h.port }, code, 'client')
+    assert.equal(link.fingerprint, h.tls.fingerprint)
+    assert.equal(link.name, 'host-pc')
+    const conn = new PeerConnection(link, () => {}, () => {}, h.port)
+    try {
+      const snapshot = (await conn.rpc('snapshot', [])) as Snapshot
+      assert.equal(snapshot.workspaces[0].name, 'Host WS')
+    } finally {
+      conn.close()
+    }
+    await assert.rejects(
+      pairWithHost({ kind: 'direct', address: '127.0.0.1', port: h.port }, code, 'again'),
+      /연결 코드가 없거나 만료되었습니다/
+    )
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('pair code: relay rendezvous pairs; a pairing socket serves nothing else', async () => {
+  const h = await peerHost(() => false)
+  const relay = await fakeRelay()
+  const pairRelay = new HubRelay((s) => h.hub.inject(s, 'pair'))
+  try {
+    const { code, rendezvous } = await h.pairing.begin(h.tls.fingerprint)
+    pairRelay.start(relay.url, await pairRelayKey(rendezvous))
+    await until(() => pairRelay.state === 'online', 3000, 'rendezvous registration')
+    const link = await pairWithHost({ kind: 'relay', url: relay.url }, code, 'client')
+    assert.equal(link.fingerprint, h.tls.fingerprint)
+    const { socket } = await dial({ kind: 'relay', url: relay.url, room: relayRoom(await pairRelayKey(rendezvous)) }, h.tls.fingerprint)
+    const res = await relayHttp(socket, '/rpc/snapshot', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${link.token}`, 'Content-Type': 'application/json' },
+      body: '{"args":[]}'
+    })
+    assert.equal(res.status, 404)
+    socket.destroy()
+  } finally {
+    pairRelay.stop()
+    await h.hub.stop()
+    await relay.close()
+  }
+})
+
+test('pair code: wrong secret, attempt limit, public routing part, phone kind, unknown kind', async () => {
+  const h = await peerHost()
+  const post = directPost(h.port)
+  try {
+    let { code } = await h.pairing.begin(h.tls.fingerprint)
+    for (let i = 0; i < 5; i++)
+      await assert.rejects(runPairClient(post, wrongSecret(code), 'pc', 'c'), /연결 코드가 올바르지 않습니다/)
+    await assert.rejects(runPairClient(post, code, 'pc', 'c'), /연결 코드가 없거나 만료되었습니다/)
+    ;({ code } = await h.pairing.begin(h.tls.fingerprint))
+    const otherRoute = (code[0] === '0' ? '1' : '0') + code.slice(1)
+    const link = await pairWithHost({ kind: 'direct', address: '127.0.0.1', port: h.port }, otherRoute, 'c')
+    assert.equal(link.fingerprint, h.tls.fingerprint)
+    const grants = h.grants.size
+    ;({ code } = await h.pairing.begin(h.tls.fingerprint))
+    const phone = await runPairClient(post, code, 'mobile', '휴대폰')
+    assert.deepEqual(phone.payload, { kind: 'mobile', pairing: `fask://pair?v=1&fp=${h.tls.fingerprint}&t=mobile` })
+    assert.equal(h.grants.size, grants)
+    await h.pairing.begin(h.tls.fingerprint)
+    const tablet = await post('/pair/ke1', { ke1: [1, 2, 3], name: 'x', kind: 'tablet' })
+    assert.equal(tablet.status, 400)
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('pair code: concurrent first messages get at most one session and count against the limit', async () => {
+  const h = await peerHost()
+  const post = directPost(h.port)
+  try {
+    const { code } = await h.pairing.begin(h.tls.fingerprint)
+    const cfg = pairConfig()
+    const ke1s = await Promise.all(
+      Array.from({ length: 10 }, async () => {
+        const ke1 = await new OpaqueClient(cfg).authInit(code.slice(3))
+        assert.ok(!(ke1 instanceof Error))
+        return ke1.serialize()
+      })
+    )
+    const results = await Promise.all(ke1s.map((ke1) => post('/pair/ke1', { ke1, name: 'x', kind: 'pc' })))
+    assert.ok(results.filter((r) => r.status === 200).length <= 1)
+    assert.ok(h.pairing.attemptCount <= 5)
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('pair code: expires after five minutes', async () => {
+  const h = await peerHost()
+  try {
+    const { code } = await h.pairing.begin(h.tls.fingerprint)
+    h.tick(5 * 60_000 + 1)
+    const ke1 = await new OpaqueClient(pairConfig()).authInit(code.slice(3))
+    assert.ok(!(ke1 instanceof Error))
+    const res = await directPost(h.port)('/pair/ke1', { ke1: ke1.serialize(), name: 'x', kind: 'pc' })
+    assert.equal(res.status, 410)
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('pair code: a different channel fingerprint fails; a changed certificate blocks the link', async () => {
+  const h = await peerHost()
+  try {
+    const { code } = await h.pairing.begin(h.tls.fingerprint)
+    const real = directPost(h.port)
+    const forged: PairPost = async (path, body) => ({ ...(await real(path, body)), fingerprint: 'forged' })
+    await assert.rejects(runPairClient(forged, code, 'pc', 'c'), /연결 코드가 올바르지 않습니다/)
+    const link = await linked(h)
+    let changes = 0
+    const conn = new PeerConnection({ ...link, fingerprint: 'tampered' }, () => changes++, () => {}, h.port)
+    try {
+      await until(() => conn.status === 'blocked', 5000, 'blocked status')
+      await assert.rejects(conn.rpc('snapshot', []), /상대 PC 인증서가 바뀌었습니다/)
+      assert.ok(changes > 0)
+    } finally {
+      conn.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('pair code: direct pairing and peer tokens are limited to Tailscale', async () => {
+  const h = await peerHost(() => false)
+  try {
+    await h.pairing.begin(h.tls.fingerprint)
+    const res = await directPost(h.port)('/pair/ke1', { ke1: [1], name: 'x', kind: 'pc' })
+    assert.equal(res.status, 403)
+    assert.deepEqual(res.body, { error: 'Tailscale 또는 릴레이로만 PC 연결을 할 수 있습니다.' })
+    h.grants.set('peer-token', 'peer-x')
+    const conn = new PeerConnection(
+      { id: 'peer-x', name: 'h', fingerprint: h.tls.fingerprint, certPem: h.tls.cert, token: 'peer-token', addresses: ['127.0.0.1'], relay: null },
+      () => {},
+      () => {},
+      h.port
+    )
+    try {
+      await assert.rejects(conn.rpc('snapshot', []), /Tailscale 또는 릴레이로만/)
+    } finally {
+      conn.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('linked PC: revoking the grant ends the event stream and the token', async () => {
+  const h = await peerHost()
+  try {
+    const link = await linked(h)
+    const conn = new PeerConnection(link, () => {}, () => {}, h.port)
+    try {
+      await until(() => conn.status === 'online', 5000, 'online')
+      for (const [token, id] of h.grants) if (id === link.id) h.grants.delete(token)
+      h.hub.disconnect(link.id)
+      await until(() => conn.status === 'revoked', 5000, 'revoked')
+      await assert.rejects(conn.rpc('snapshot', []), /외부 PC에서 연결이 해제되었습니다/)
+      const raw = await new Promise<number>((resolve, reject) => {
+        const req = httpsRequest(
+          {
+            host: '127.0.0.1',
+            port: h.port,
+            path: '/rpc/snapshot',
+            method: 'POST',
+            rejectUnauthorized: false,
+            headers: { Authorization: `Bearer ${link.token}` }
+          },
+          (res) => {
+            res.resume()
+            resolve(res.statusCode ?? 0)
+          }
+        )
+        req.on('error', reject)
+        req.end('{"args":[]}')
+      })
+      assert.equal(raw, 401)
+    } finally {
+      conn.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('peer rules: only records of the active profile; no workspace creation or deletion', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fask-peer-rules-'))
+  const store = new PersonalStore(dir)
+  try {
+    const own = (kind: string, id: string): unknown => store.record(kind, id)
+    const project = store.list<Project>('project')[0]
+    store.put('question', store.active, question('mine', project.id, [turn()]))
+    store.put('question', 'other-profile', question('theirs', project.id, [turn()]))
+    assert.throws(() => checkPeerCall(own, 'create', ['workspace', 'x']), /워크스페이스를 만들 수 없습니다/)
+    assert.throws(() => checkPeerCall(own, 'remove', ['workspace', project.workspaceId]), /워크스페이스를 삭제할 수 없습니다/)
+    assert.throws(() => checkPeerCall(own, 'rename', ['question', 'theirs', 'n']), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'rename', ['profile', store.active, 'n']), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'move-question', ['mine', 'elsewhere']), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'ask', [{ projectId: project.id, questionId: 'theirs' }]), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'switch-profile', ['x']), /지원하지 않는 요청입니다/)
+    checkPeerCall(own, 'rename', ['question', 'mine', 'n'])
+    checkPeerCall(own, 'create', ['project', 'p', project.workspaceId])
+    checkPeerCall(own, 'ask', [{ projectId: project.id, questionId: 'mine' }])
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('linked PC: offline keeps the last snapshot, refuses edits, and reconnects', async () => {
+  const h = await peerHost()
+  try {
+    const link = await linked(h)
+    const conn = new PeerConnection(link, () => router.rebuild(), () => {}, h.port)
+    const router = new RemoteRouter(() => [conn], () => false, () => 'local')
+    try {
+      await until(() => conn.status === 'online' && !!conn.snapshot, 5000, 'online')
+      router.rebuild()
+      await h.hub.stop()
+      await until(() => conn.status === 'offline', 5000, 'offline')
+      assert.equal(conn.snapshot?.workspaces[0].name, 'Host WS')
+      await assert.rejects(router.route('rename', ['question', 'q1', 'x']), /외부 PC가 오프라인이라 사용할 수 없습니다/)
+      await h.restart()
+      await until(() => conn.status === 'online', 10_000, 'reconnect')
+    } finally {
+      conn.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('linked PC routing: merged snapshot marks remote workspaces; calls go to their owner only', async () => {
+  const calls: unknown[][] = []
+  const remote: Snapshot = {
+    profiles: [],
+    activeProfileId: 'host-profile',
+    workspaces: [{ id: 'rw', profileId: 'host-profile', name: 'Remote' }],
+    projects: [{ id: 'rp', workspaceId: 'rw', name: 'P', description: '' }],
+    concepts: [],
+    questions: [question('rq', 'rp', [turn()])],
+    settings: {} as Snapshot['settings'],
+    storageBytes: 0
+  }
+  const peer = {
+    link: { id: 'peer-a', name: 'PC A' },
+    status: 'online' as PeerStatus,
+    snapshot: remote,
+    rpc: async (name: string, args: unknown[]) => {
+      calls.push([name, ...args])
+      return name === 'ask' ? { questionId: 'rq', turnId: 't1' } : null
+    }
+  }
+  const local: unknown[][] = []
+  const router = new RemoteRouter(
+    () => [peer],
+    (id) => id === 'lq' || id === 'lp',
+    (name, args) => local.push([name, ...args])
+  )
+  router.rebuild()
+  const merged = router.merge({ ...remote, activeProfileId: 'mine', workspaces: [], projects: [], questions: [] })
+  assert.deepEqual(merged.workspaces[0].remote, { peerId: 'peer-a', name: 'PC A', status: 'online' })
+  assert.equal(merged.questions[0].id, 'rq')
+  await router.route('rename', ['question', 'rq', 'renamed'])
+  await router.route('rename', ['question', 'lq', 'local'])
+  await router.route('ask', [{ requestId: 'r1', profileId: 'mine', projectId: 'rp', raw: 'q', model: 'mine-model', annotated: true }])
+  await router.route('cancel', ['r1'])
+  assert.deepEqual(calls[0], ['rename', 'question', 'rq', 'renamed'])
+  assert.deepEqual(calls[1], ['ask', { requestId: 'r1', profileId: 'host-profile', projectId: 'rp', raw: 'q', model: '', annotated: true }])
+  assert.deepEqual(calls[2], ['cancel', 'r1'])
+  assert.deepEqual(local, [['rename', 'question', 'lq', 'local']])
+  await assert.rejects(router.route('move-question', ['rq', 'lp']), /로컬과 외부 워크스페이스 사이/)
+  await assert.rejects(router.route('export', ['rp']), /지원하지 않는 기능/)
+  // An id collision with local data hides the remote workspace instead of mixing owners.
+  const colliding = new RemoteRouter(() => [peer], (id) => id === 'rq', () => null)
+  colliding.rebuild()
+  assert.equal(colliding.merge({ ...remote, workspaces: [], projects: [], questions: [] }).workspaces.length, 0)
+})
+
+test('linked PC: concurrent renames from two PCs converge on both', async () => {
+  const h = await peerHost()
+  try {
+    const a = new PeerConnection(await linked(h, 'a'), () => {}, () => {}, h.port)
+    const b = new PeerConnection(await linked(h, 'b'), () => {}, () => {}, h.port)
+    try {
+      await until(() => a.status === 'online' && b.status === 'online', 5000, 'both online')
+      await Promise.all([a.rpc('rename', ['question', 'q1', 'A']), b.rpc('rename', ['question', 'q1', 'B'])])
+      const title = (c: PeerConnection): string | undefined => c.snapshot?.questions[0].title
+      await until(() => title(a) === h.questions.get('q1') && title(b) === h.questions.get('q1'), 5000, 'converged')
+    } finally {
+      a.close()
+      b.close()
+    }
+  } finally {
+    await h.hub.stop()
   }
 })

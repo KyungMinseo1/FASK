@@ -63,6 +63,14 @@
   width: 100%;
   margin-bottom: 8px;
 }
+.fask-mobile .space-card[aria-disabled='true'] {
+  opacity: 0.45;
+}
+.fask-mobile .mobile-remote-status {
+  display: block;
+  margin: -4px 0 8px;
+  color: var(--ink-subtle);
+}
 .fask-mobile .mobile-chips {
   display: flex;
   gap: 6px;
@@ -165,6 +173,25 @@
 .fask-mobile .pair-link textarea {
   min-height: 110px;
   font-size: 14px;
+}
+.fask-mobile fieldset.pair-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.fask-mobile fieldset.pair-link legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.fask-mobile fieldset.pair-link p {
+  margin: 0;
+}
+.fask-mobile fieldset.pair-link label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .fask-mobile .mobile-connection {
   display: grid;

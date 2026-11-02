@@ -23,7 +23,8 @@ export default defineConfig({
       'rehype-katex',
       'katex',
       '@xyflow/react',
-      'd3-hierarchy'
+      'd3-hierarchy',
+      '@cloudflare/opaque-ts'
     ]
   },
   server: { host: '127.0.0.1', port: 5173, fs: { allow: ['..'] } },

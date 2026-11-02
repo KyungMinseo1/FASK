@@ -11,8 +11,8 @@ export type HubIdentity = { addresses: string[]; port: number; fingerprint: stri
 export type Pairing = HubIdentity & { token: string }
 
 /** Accepts only a bare `wss://` origin (or loopback `ws://`) exactly as the PC normalizes it. */
-export function parseRelay(url: unknown, room: unknown): RelayIdentity | null {
-  if (typeof url !== 'string' || typeof room !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(room)) return null
+export function parseRelayUrl(url: unknown): string | null {
+  if (typeof url !== 'string') return null
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -22,7 +22,12 @@ export function parseRelay(url: unknown, room: unknown): RelayIdentity | null {
   const loopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
   if (parsed.protocol !== 'wss:' && !(parsed.protocol === 'ws:' && loopback)) return null
   if (`${parsed.protocol}//${parsed.host}` !== url) return null
-  return { url, room }
+  return url
+}
+export function parseRelay(url: unknown, room: unknown): RelayIdentity | null {
+  if (typeof room !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(room)) return null
+  const origin = parseRelayUrl(url)
+  return origin === null ? null : { url: origin, room }
 }
 /** CLOSED: result arriving after the client was closed; never triggers failover, cache, or status. */
 export type HubErrorCode = 'PIN_MISMATCH' | 'NETWORK' | 'UNAUTHORIZED' | 'CLOSED'
@@ -90,6 +95,10 @@ interface FaskHubPlugin {
       timeoutMs: number
     } & RelayOptions
   ): Promise<{ status: number; body: string }>
+  /** Unpinned POST for code pairing: no bearer, the observed leaf fingerprint is returned. */
+  pairRequest(
+    o: { url: string; body: string; timeoutMs: number } & RelayOptions
+  ): Promise<{ status: number; body: string; fingerprint: string }>
   openEvents(o: { id: string; url: string; fingerprint: string; token: string } & RelayOptions): Promise<void>
   closeEvents(o: { id: string }): Promise<void>
   addListener(
@@ -163,6 +172,37 @@ export const nativeTransport: HubTransport = {
       void FaskHub.closeEvents({ id })
     }
   }
+}
+
+/** Where a code-pairing request goes: a Tailscale address or the relay pseudo-address. */
+export type PairEndpoint = { address: string; relay?: RelayIdentity }
+export const PAIR_PORT = 47615
+export type PairResponse = { status: number; body: unknown; fingerprint: string }
+
+/**
+ * Code pairing has no pin yet, so the native side accepts any leaf and reports its fingerprint;
+ * the OPAQUE context binds that fingerprint, so a substituted certificate fails the exchange.
+ */
+export async function pairPost(endpoint: PairEndpoint, path: string, body: unknown): Promise<PairResponse> {
+  if (!Capacitor.isNativePlatform()) throw new Error('개발용 브라우저에서는 코드 연결을 사용할 수 없습니다.')
+  let res: { status: number; body: string; fingerprint: string }
+  try {
+    res = await FaskHub.pairRequest({
+      url: `https://${endpoint.address}:${PAIR_PORT}${path}`,
+      body: JSON.stringify(body),
+      timeoutMs: 15000,
+      ...(endpoint.relay ? { relayUrl: endpoint.relay.url, relayRoom: endpoint.relay.room } : {})
+    })
+  } catch (e) {
+    throw toHubError(errorCode(e))
+  }
+  let parsed: unknown = null
+  try {
+    parsed = JSON.parse(res.body)
+  } catch {
+    // Non-JSON bodies surface as `HTTP <status>` through the caller's error mapping.
+  }
+  return { status: res.status, body: parsed, fingerprint: res.fingerprint }
 }
 
 /** Feeds `event:`/`data:` lines; a blank line dispatches one event and `:` comments are skipped. */

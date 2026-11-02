@@ -10,8 +10,10 @@ buildSync({
   bundle: true,
   platform: 'node',
   format: 'cjs',
-  external: ['electron'],
-  define: { __dirname: JSON.stringify(join(__dirname, '../out/main')) }
+  // Bundled, opaque-ts's sjcl dependency assigns module.exports and would replace this bundle's exports.
+  external: ['electron', '@cloudflare/opaque-ts'],
+  // personal.ts reads build-time vars from import.meta.env, which a plain CJS bundle lacks.
+  define: { __dirname: JSON.stringify(join(__dirname, '../out/main')), 'import.meta.env': '{}' }
 })
 buildSync({
   entryPoints: [join(__dirname, '../src/main/personal-store.ts')],
