@@ -10,7 +10,7 @@ ASKKUP(질문, 잇다)은 수업 중 생긴 학생 질문을 정리해 교사에
 
 ## 저장소 구조
 
-상세 설계는 [docs/PLAN.md](docs/PLAN.md)가 기준입니다. `desktop/`은 Electron 앱(electron-vite, React, Tailwind), `server/`는 FastAPI 서버와 pytest 테스트, `references/`는 해커톤 기획 자료, `docs/`는 설계와 강의 자료를 담습니다. 변경 시 계획 문서의 와이어 계약(스키마·경로·오류 문구)을 서버와 `desktop/src/renderer/src/api/types.ts`에 함께 반영하세요.
+`desktop/`은 Electron 앱(electron-vite, React, Tailwind), `mobile/`은 Capacitor Android 동반 앱, `relay/`는 Cloudflare 중계 서버입니다. `docs/`는 로컬 전용(gitignore)이며 기준 문서로 참조하지 않습니다.
 
 ## 실행·검증
 

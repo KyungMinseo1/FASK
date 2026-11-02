@@ -19,3 +19,5 @@ mobile/android/.gradle/
 *.jks
 *.keystore
 keystore.properties
+# Local docs
+docs/

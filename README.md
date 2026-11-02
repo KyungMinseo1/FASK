@@ -1,20 +1,35 @@
 <div align="center">
 
-# FASK
+<img src="desktop/build/icon.png" alt="FASK logo" width="112" height="112" />
 
-### Ask about your screen. Keep what you learn.
+<h1>FASK</h1>
 
-A personal desktop workspace for on-screen questions, AI answers, and connected knowledge.
+<p><strong>Ask about your screen. Keep what you learn.</strong></p>
 
-[![Windows](https://img.shields.io/badge/Windows-Desktop-0078D4)](https://github.com/KyungMinseo1/FASK/releases)
-[![Electron](https://img.shields.io/badge/Electron-React%20%2B%20TypeScript-47848F)](desktop/package.json)
-[![Local storage](https://img.shields.io/badge/Storage-Local%20SQLite-6B8E23)](#data--privacy)
+<p>A personal desktop workspace for on-screen questions, AI answers, and connected knowledge.</p>
 
-**[Download from Releases](https://github.com/KyungMinseo1/FASK/releases)** · [Getting started](#getting-started) · [Developer guide](#developer-guide)
+<p>
+  <a href="https://github.com/KyungMinseo1/FASK/releases"><img alt="Windows" src="https://img.shields.io/badge/Windows-desktop-7769F0?style=flat-square&logo=windows&logoColor=white" /></a>
+  <a href="mobile/"><img alt="Android" src="https://img.shields.io/badge/Android-companion-7769F0?style=flat-square&logo=android&logoColor=white" /></a>
+  <a href="desktop/package.json"><img alt="Electron" src="https://img.shields.io/badge/Electron-React%20·%20TypeScript-2B2D42?style=flat-square&logo=electron&logoColor=white" /></a>
+  <a href="#data--privacy"><img alt="Local SQLite" src="https://img.shields.io/badge/Storage-local%20SQLite-2B2D42?style=flat-square&logo=sqlite&logoColor=white" /></a>
+</p>
 
-**English** | [한국어](README.ko.md)
+<p>
+  <a href="https://github.com/KyungMinseo1/FASK/releases"><strong>Download</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#getting-started">Getting started</a>
+  &nbsp;·&nbsp;
+  <a href="#developer-guide">Developer guide</a>
+</p>
+
+<sub><strong>English</strong> &nbsp;|&nbsp; <a href="README.ko.md">한국어</a></sub>
 
 </div>
+
+<br />
+
+> **Mark** the screen &nbsp;→&nbsp; **Ask** in place &nbsp;→&nbsp; **Keep** the answer with its context.
 
 ---
 
@@ -39,8 +54,6 @@ The Windows installer is the planned distribution format. If a release does not 
 | Choose exactly which screen region to include | Read streamed answers with **Markdown and LaTeX** |
 | Attach an image or text/code files | Search questions, add notes, and link concepts |
 | Continue a conversation without leaving your screen; follow-ups stay in one question | Explore a concept graph and export memory as Markdown |
-
-**Your workflow:** choose a project → mark the screen → ask → save the answer and its context.
 
 ## Getting started
 
@@ -173,15 +186,11 @@ desktop/                     Electron + React + TypeScript + Tailwind
     lib/, api/types.ts       Tree helpers and shared types
   tests/                     Unit and Electron smoke tests
   build/, resources/         Icons, entitlements, icon generator
-docs/                        Personal app design and implementation contract
+mobile/                      Capacitor Android companion app
+relay/                       Cloudflare relay for end-to-end encrypted remote access
 graphify-out/                Code graph analysis output
 ```
 
 </details>
 
-### Design documents
-
-- [Personal app plan](docs/PERSONAL_APP_PLAN.md) — design and planned scope (Korean)
-- [Implementation contract](docs/PERSONAL_IMPLEMENTATION.md) — current behavior, storage, and IPC (Korean)
-
-MCP, embedding search, and JEV are future scope, not current features.
+> MCP, embedding search, and JEV are future scope, not current features.
