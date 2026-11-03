@@ -285,6 +285,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
     public boolean isToggleReady() { return chrome.isHandleReady(); }
     public Mode getMode() { return mode; }
     public boolean isDarkTheme() { return chrome.isDark(); }
+    public String paletteName() { return chrome.palette().name; }
     public OverlayInkView getInk() { return ink; }
     public OverlayGeometry.GeometrySnapshot getGeometry() { return geometry; }
     public boolean isGeometryReady() { return geometryReady; }

@@ -20,8 +20,8 @@ export function readTheme(): ThemePref {
   return value && PREFS.includes(value) ? value : 'system'
 }
 
-/** The light/dark base of a preference; native surfaces that only know light/dark use this. */
-export function themeBase(pref: ThemePref): 'system' | 'light' | 'dark' {
+/** The light/dark base of a preference. */
+function themeBase(pref: ThemePref): 'system' | 'light' | 'dark' {
   return PALETTES.includes(pref) ? 'light' : (pref as 'system' | 'light' | 'dark')
 }
 

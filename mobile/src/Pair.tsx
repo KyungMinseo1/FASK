@@ -10,6 +10,7 @@ import { parsePairing, staggered } from './hub'
 import { PAIR_RELAY_URL, pairWithCode } from './pair-code-flow'
 import { savePairing, snapshotCache } from './storage'
 import { overlayPreviewAvailable, previewOverlay, stopOverlay } from './overlay/control'
+import { demoAvailable } from './demo-hub'
 import { HubError, RELAY_ADDRESS, transport, type Pairing } from './transport'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
@@ -43,10 +44,13 @@ async function scanQr(): Promise<string | null> {
 
 export default function Pair({
   notice,
-  onPaired
+  onPaired,
+  onDemo
 }: {
   notice: string
   onPaired: (p: Pairing) => void
+  /** Test builds: opens the in-memory demo hub instead of a PC. */
+  onDemo?: () => void
 }): React.JSX.Element {
   useT()
   const [link, setLink] = useState(''),
@@ -120,6 +124,11 @@ export default function Pair({
         )}
       </p>
       {notice && <p className="notice">{notice}</p>}
+      {onDemo && demoAvailable() && (
+        <button disabled={busy} onClick={onDemo}>
+          {t('PC 없이 데모로 둘러보기 (테스트)')}
+        </button>
+      )}
       {Capacitor.isNativePlatform() && (
         <button
           className="primary"

@@ -9,7 +9,7 @@ import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
 import type { HubClient, HubConn } from '../hub'
-import type { Bootstrap, Bridge, OverlayState } from './bridge'
+import { applyOverlayTheme, type Bootstrap, type Bridge, type OverlayState } from './bridge'
 
 type Interaction = { busy: boolean; running: boolean; unresolved: boolean }
 const IDLE: Interaction = { busy: false, running: false, unresolved: false }
@@ -84,7 +84,7 @@ export default function OverlayPanel({
     const offPush = bridge.onPush((push) => {
       if (push.event === 'overlayState') {
         setOverlay(push.payload)
-        document.documentElement.dataset.theme = push.payload.theme
+        applyOverlayTheme(push.payload)
       }
       else if (push.event === 'panelShown') {
         // The Composer stays mounted; reconnecting replays missed stream/state through onChanged.
@@ -219,13 +219,15 @@ export default function OverlayPanel({
   }, [bridge, projectsKey])
 
   const question = questionId ? data.questions.find((q) => q.id === questionId) : undefined
-  const run = async (fn: () => Promise<unknown>): Promise<void> => {
+  const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
       await fn()
       await refresh()
+      return true
     } catch (e) {
       setNotice(errorText(e))
+      return false
     }
   }
   // The native window draws the desktop panel's header (project, 접기 ×) and a side resize grip
@@ -267,7 +269,14 @@ export default function OverlayPanel({
         </small>
         {question && (
           <details open={historyOpen} onToggle={(e) => setHistoryOpen(e.currentTarget.open)}>
-            <summary>{t('대화 기록')}</summary>
+            <summary>
+              {t('대화 기록')}
+              {question.memo.trim() !== '' && (
+                <span className="memo-badge" title={t('메모 있음')}>
+                  ✎ {t('메모')}
+                </span>
+              )}
+            </summary>
           <QuestionDetail
             question={question}
             concepts={data.concepts.filter((c) => c.projectId === projectId)}

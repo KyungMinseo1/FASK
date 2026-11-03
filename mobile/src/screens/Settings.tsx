@@ -11,7 +11,6 @@ import {
   readTheme,
   setTheme,
   THEME_OPTIONS,
-  themeBase,
   type ThemePref
 } from '@desktop/renderer/src/personal/theme'
 import {
@@ -24,11 +23,12 @@ import {
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { RELAY_ADDRESS } from '../transport'
+import { demoAvailable } from '../demo-hub'
 
 const STATE_LABEL = { online: '연결됨', offline: '오프라인', blocked: '차단됨' } as const
 
 export default function Settings(): React.JSX.Element {
-  const { data, pairing, client, conn, unpair } = useMobile()
+  const { data, pairing, client, conn, unpair, demo, enterDemo } = useMobile()
   const navigate = useNavigate()
   const t = useT()
   const [theme, setThemeState] = useState(readTheme)
@@ -59,7 +59,7 @@ export default function Settings(): React.JSX.Element {
                 onClick={() => {
                   setThemeState(o.value)
                   setTheme(o.value as ThemePref)
-                  syncOverlayTheme(themeBase(o.value))
+                  syncOverlayTheme(o.value)
                 }}
               >
                 <i aria-hidden />
@@ -102,7 +102,7 @@ export default function Settings(): React.JSX.Element {
             </div>
             <div>
               <dt>{t('연결 경로')}</dt>
-              <dd>{relayed ? t('중계 서버') : `${client.address()}:${pairing.port}`}</dd>
+              <dd>{demo ? t('데모 (PC 없음)') : relayed ? t('중계 서버') : `${client.address()}:${pairing.port}`}</dd>
             </div>
             <div>
               <dt>{t('PC 프로필')}</dt>
@@ -113,16 +113,19 @@ export default function Settings(): React.JSX.Element {
               <dd>{data.settings.model || t('설정되지 않음')}</dd>
             </div>
           </dl>
-          <button className="danger" onClick={() => void unpair(t('연결을 해제했습니다.'))}>
-            {t('연결 해제')}
+          <button className="danger" onClick={() => void unpair(demo ? '' : t('연결을 해제했습니다.'))}>
+            {demo ? t('데모 종료') : t('연결 해제')}
           </button>
         </section>
-        {overlayPreviewAvailable() && (
+        {(overlayPreviewAvailable() || (demoAvailable() && !demo)) && (
           <section>
             <h2>{t('테스트')}</h2>
-            <button onClick={() => void previewOverlay().catch((e) => setPreviewError(errorText(e)))}>
-              {t('오버레이 미리보기')}
-            </button>
+            {demoAvailable() && !demo && <button onClick={enterDemo}>{t('PC 없이 데모로 둘러보기')}</button>}
+            {overlayPreviewAvailable() && (
+              <button onClick={() => void previewOverlay().catch((e) => setPreviewError(errorText(e)))}>
+                {t('오버레이 미리보기')}
+              </button>
+            )}
             {previewError && (
               <p className="notice error" role="alert">
                 {previewError}

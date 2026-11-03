@@ -198,5 +198,8 @@
   "{{n}}개 프로젝트#one": "{{n}} project",
   "{{n}}개 질문#one": "{{n}} question",
   "{{n}}개 기록#one": "{{n}} record",
-  "대화 {{n}}개#one": "{{n}} turn"
+  "대화 {{n}}개#one": "{{n}} turn",
+  "페이지": "Pages",
+  "이전 페이지": "Previous page",
+  "다음 페이지": "Next page"
 }

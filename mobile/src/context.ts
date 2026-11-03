@@ -13,6 +13,9 @@ export interface MobileState {
   conn: HubConn
   share: PendingShare | null
   unpair: (message: string) => Promise<void>
+  /** Test builds: the client is the in-memory demo hub; `unpair` leaves the demo. */
+  demo: boolean
+  enterDemo: () => void
 }
 export const MobileContext = createContext<MobileState | null>(null)
 export function useMobile(): MobileState {

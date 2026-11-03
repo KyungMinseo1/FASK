@@ -72,24 +72,34 @@ final class OverlayChrome {
     private static final int HANDLE_W = 64, HANDLE_H = 58;
     private static final int SHADOW = 10, ELEVATION = 6, GAP = 8;
     private static final int OPEN_MS = 180, CLOSE_MS = 130;
+    private static final float COLLAPSED_ALPHA = .6f;
 
     private enum Attach { NONE, BELOW, ABOVE, LEFT, RIGHT }
     private enum Pop { NONE, PEN, PROJECT }
 
-    /** personal.css :root / [data-theme='dark'] tokens. */
+    /** personal.css :root / [data-theme='dark'] / [data-palette] tokens. */
     static final class Palette {
+        /** The app theme this mirrors; light-based palettes also set the panel's data-palette. */
+        final String name;
         final int bar, hairline, hairlineStrong, ink, inkSubtle, primary, primaryPressed, primarySoft, brand, pressed, collapsedBorder;
-        Palette(int bar, int hairline, int hairlineStrong, int ink, int inkSubtle, int primary, int primaryPressed,
+        Palette(String name, int bar, int hairline, int hairlineStrong, int ink, int inkSubtle, int primary, int primaryPressed,
                 int primarySoft, int brand, int pressed, int collapsedBorder) {
+            this.name = name;
             this.bar = bar; this.hairline = hairline; this.hairlineStrong = hairlineStrong; this.ink = ink;
             this.inkSubtle = inkSubtle; this.primary = primary; this.primaryPressed = primaryPressed;
             this.primarySoft = primarySoft; this.brand = brand; this.pressed = pressed; this.collapsedBorder = collapsedBorder;
         }
     }
-    private static final Palette LIGHT = new Palette(0xFFFFFFFF, 0xFFE3E6EF, 0xFFD3D7E4, 0xFF20283C, 0xFF7B849E,
+    private static final Palette LIGHT = new Palette("light", 0xFFFFFFFF, 0xFFE3E6EF, 0xFFD3D7E4, 0xFF20283C, 0xFF7B849E,
         0xFF5B51DF, 0xFF4E45C9, 0xFFF1EFFE, 0xFF5B51DF, 0xFFF1F2F8, 0x1420283C);
-    private static final Palette DARK = new Palette(0xFF161A2B, 0xFF262C40, 0xFF323A52, 0xFFE6E9F5, 0xFF8A93AD,
+    private static final Palette DARK = new Palette("dark", 0xFF161A2B, 0xFF262C40, 0xFF323A52, 0xFFE6E9F5, 0xFF8A93AD,
         0xFF7B72F0, 0xFF6A61E0, 0xFF241F4A, 0xFFA59BFF, 0xFF20263A, 0x14FFFFFF);
+    private static final Palette SEPIA = new Palette("sepia", 0xFFFBF6EA, 0xFFE3D6BC, 0xFFD6C6A6, 0xFF3B2F22, 0xFF86745C,
+        0xFFA0612B, 0xFF8A5223, 0xFFF3E3CC, 0xFFA0612B, 0xFFEFE5D1, 0x143B2F22);
+    private static final Palette FOREST = new Palette("forest", 0xFFFBFDFB, 0xFFDBE5DC, 0xFFC9D7CB, 0xFF1F2F25, 0xFF6C8172,
+        0xFF2F7D55, 0xFF276A48, 0xFFE2F1E7, 0xFF2F7D55, 0xFFE8F0E9, 0x141F2F25);
+    private static final Palette ROSE = new Palette("rose", 0xFFFFFBFC, 0xFFF0DDE3, 0xFFE5CCD4, 0xFF3A2230, 0xFF8C6A7A,
+        0xFFC94F7C, 0xFFB2416B, 0xFFFBE5ED, 0xFFC94F7C, 0xFFF8E9ED, 0x143A2230);
 
     private final Context context;
     private final WindowManager windows;
@@ -542,6 +552,7 @@ final class OverlayChrome {
                         pointer = event.getPointerId(0); downX = event.getRawX(); downY = event.getRawY();
                         startX = handleRect.left; startY = handleRect.top; moved = false;
                         handle.setPressed(true);
+                        handle.setAlpha(1f);
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         if (event.getPointerId(0) != pointer) return true;
@@ -551,12 +562,16 @@ final class OverlayChrome {
                         return true;
                     case MotionEvent.ACTION_UP:
                         handle.setPressed(false);
+                        if (!(barShown || barVisual)) handle.setAlpha(COLLAPSED_ALPHA);
                         if (!moved) view.performClick();
                         else position.edit()
                             .putFloat("x", handleRect.left / (float) Math.max(1, bounds.width() - handleRect.width()))
                             .putFloat("y", handleRect.top / (float) Math.max(1, bounds.height() - handleRect.height())).apply();
                         pointer = -1; return true;
-                    case MotionEvent.ACTION_CANCEL: handle.setPressed(false); pointer = -1; return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        handle.setPressed(false);
+                        if (!(barShown || barVisual)) handle.setAlpha(COLLAPSED_ALPHA);
+                        pointer = -1; return true;
                     default: return true;
                 }
             }
@@ -838,9 +853,16 @@ final class OverlayChrome {
 
     private Palette resolvePalette() {
         String pref = theme.getString(THEME_KEY, "system");
-        boolean dark = "dark".equals(pref) || (!"light".equals(pref)
-            && (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES);
-        return dark ? DARK : LIGHT;
+        switch (pref) {
+            case "light": return LIGHT;
+            case "dark": return DARK;
+            case "sepia": return SEPIA;
+            case "forest": return FOREST;
+            case "rose": return ROSE;
+            default:
+                return (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                    == Configuration.UI_MODE_NIGHT_YES ? DARK : LIGHT;
+        }
     }
 
     private void applyTheme() {
@@ -920,7 +942,7 @@ final class OverlayChrome {
         if (joined == Attach.NONE) {
             styleCard(handle, palette.bar, palette.collapsedBorder, R_LG, Attach.NONE, true);
             handle.setElevation(dp(4));
-            handle.setAlpha(.92f);
+            handle.setAlpha(COLLAPSED_ALPHA);
         } else {
             styleCard(handle, palette.bar, palette.hairlineStrong, R_XL, joined, true);
             handle.setElevation(dp(ELEVATION));

@@ -28,8 +28,24 @@ import {
   cleanTitle,
   mergeLive,
   normalizeLegacyQuestion,
+  pageSlice,
+  pageWindow,
   reconcileTurnState
 } from '../src/shared/questions'
+
+test('pageSlice clamps pages and pageWindow inserts gaps', () => {
+  const items = Array.from({ length: 45 }, (_, i) => i)
+  const third = pageSlice(items, 3, 20)
+  assert.equal(third.items.length, 5)
+  assert.equal(third.pages, 3)
+  assert.equal(pageSlice(items, 9, 20).page, 3)
+  assert.equal(pageSlice(items, 0, 20).page, 1)
+  assert.equal(pageSlice(items, NaN, 20).page, 1)
+  assert.deepEqual(pageSlice([], 1, 20), { items: [], page: 1, pages: 1 })
+  assert.deepEqual(pageWindow(5, 10), [1, 'gap', 4, 5, 6, 'gap', 10])
+  assert.deepEqual(pageWindow(2, 5), [1, 2, 3, 4, 5])
+  assert.deepEqual(pageWindow(1, 10), [1, 2, 'gap', 10])
+})
 
 const NO_PAIR = {
   ke1: async (): Promise<unknown> => {
