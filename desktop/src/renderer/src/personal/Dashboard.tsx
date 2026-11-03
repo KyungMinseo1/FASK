@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import type { Concept, ShortcutInfo } from '../../../preload/personal'
 import {
@@ -7,11 +7,13 @@ import {
   questionComplexity,
   questionHeading,
   questionImages,
+  pageSlice,
   questionStatus
 } from '../../../shared/questions'
 import MindMap from '../components/MindMap/MindMap'
 import Composer from './Composer'
 import MarkdownAnswer from './MarkdownAnswer'
+import Pager from './Pager'
 import QuestionDetail from './QuestionDetail'
 import Settings from './Settings'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
@@ -74,19 +76,25 @@ export default function Dashboard(): React.JSX.Element {
     () => filterQuestions(questions, filter, query),
     [questions, filter, query]
   )
+  const [page, setPage] = useState(1)
+  const recordsRef = useRef<HTMLElement>(null)
+  const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
+  useEffect(() => setPage(1), [project?.id])
   const graphRoot = useMemo(
     () => (data && project ? questionTree(data, project.id, filtered) : null),
     [data, project?.id, filtered]
   )
   const selected = questions.find((q) => q.id === selectedId)
   const concepts = data?.concepts.filter((c) => c.projectId === project?.id) ?? []
-  const run = async (fn: () => Promise<unknown>): Promise<void> => {
+  const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
       await fn()
       await refresh()
+      return true
     } catch (e) {
       setNotice(errorText(e))
+      return false
     }
   }
   const beginCreate = (
@@ -481,12 +489,18 @@ export default function Dashboard(): React.JSX.Element {
                 aria-label={t('기록 검색')}
                 placeholder={t('⌕ 질문, 답변, 메모 검색')}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setPage(1)
+                }}
               />
               <select
                 aria-label={t('질문 필터')}
                 value={filter}
-                onChange={(e) => setFilter(e.target.value)}
+                onChange={(e) => {
+                  setFilter(e.target.value)
+                  setPage(1)
+                }}
               >
                 <option value="all">{t('모든 질문')}</option>
                 <option value="simple">{t('간단한 질문')}</option>
@@ -499,7 +513,7 @@ export default function Dashboard(): React.JSX.Element {
               <span>{t('{{n}}개 기록', { n: filtered.length })}</span>
             </div>
             <div className={`knowledge-area ${selected ? 'has-detail' : ''}`}>
-              <section className="records-panel">
+              <section className="records-panel" ref={recordsRef}>
                 {view === 'graph' && project && graphRoot ? (
                   <>
                     <div className="graph-actions">
@@ -534,12 +548,13 @@ export default function Dashboard(): React.JSX.Element {
                     )}
                   </>
                 ) : filtered.length ? (
+                  <>
                   <div className={view === 'list' ? 'question-list compact' : 'question-list'}>
-                    {filtered.map((q, index) => (
+                    {paged.items.map((q, index) => (
                       <div key={q.id}>
                         {view === 'timeline' &&
                           (index === 0 ||
-                            new Date(filtered[index - 1].createdAt).toDateString() !==
+                            new Date(paged.items[index - 1].createdAt).toDateString() !==
                               new Date(q.createdAt).toDateString()) && (
                             <h3 className="day-label">
                               {new Date(q.createdAt).toLocaleDateString(i18n.language === 'en' ? 'en-US' : 'ko-KR', {
@@ -569,6 +584,11 @@ export default function Dashboard(): React.JSX.Element {
                             <time>{dateLabel(q.createdAt)}</time>
                             {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
                             {q.important && <span>★</span>}
+                            {q.memo.trim() !== '' && (
+                              <span className="memo-badge" title={t('메모 있음')}>
+                                ✎ {t('메모')}
+                              </span>
+                            )}
                           </div>
                           <h3>{questionHeading(q)}</h3>
                           {view !== 'list' && (
@@ -591,6 +611,15 @@ export default function Dashboard(): React.JSX.Element {
                       </div>
                     ))}
                   </div>
+                  <Pager
+                    page={paged.page}
+                    pages={paged.pages}
+                    onPage={(p) => {
+                      setPage(p)
+                      recordsRef.current?.scrollIntoView({ block: 'start' })
+                    }}
+                  />
+                  </>
                 ) : (
                   <div className="empty-state">
                     <div>✳</div>
@@ -810,7 +839,7 @@ function ConceptEditor({
 }: {
   concept: Concept
   concepts: Concept[]
-  run: (fn: () => Promise<unknown>) => Promise<void>
+  run: (fn: () => Promise<unknown>) => Promise<unknown>
 }): React.JSX.Element {
   const [name, setName] = useState(concept.name),
     [parent, setParent] = useState(concept.parentId || ''),

@@ -10,7 +10,7 @@ import { ApiContext } from '@desktop/renderer/src/personal/api'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import { createHubClient, type HubConn } from '../hub'
 import { i18n, t } from '@desktop/shared/i18n'
-import { createBridge, type Bootstrap, type Port, type OverlayState } from './bridge'
+import { applyOverlayTheme, createBridge, type Bootstrap, type Port, type OverlayState } from './bridge'
 import OverlayPanel from './OverlayPanel'
 import { bridgeTransport } from './transport'
 import { createPreviewClient } from './preview'
@@ -61,7 +61,7 @@ async function start(): Promise<void> {
   const bridge = createBridge(port)
   const boot = await bridge.bootstrap()
   applyLanguage(boot)
-  document.documentElement.dataset.theme = boot.theme
+  applyOverlayTheme(boot)
   // One client per session: no cache, token stays native, never replaced on hide/show.
   const client = boot.preview
     ? createPreviewClient(boot)

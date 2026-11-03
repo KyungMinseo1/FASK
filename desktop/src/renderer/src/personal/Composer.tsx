@@ -34,6 +34,8 @@ interface Props {
   projectId: string
   profileId: string
   settings: LocalSettings
+  /** Focus the question input on mount; off where the keyboard would cover content. */
+  autoFocus?: boolean
   /** Question to continue; omitted for a new question. */
   questionId?: string
   recentQuestion?: Question
@@ -59,6 +61,7 @@ export default function Composer({
   projectId,
   profileId,
   settings,
+  autoFocus = true,
   questionId,
   recentQuestion,
   onCapture,
@@ -343,7 +346,7 @@ export default function Composer({
   const questionInput = useRef<HTMLTextAreaElement>(null)
   // Focus without scrolling so a reopened overlay panel keeps its scroll position.
   useEffect(() => {
-    questionInput.current?.focus({ preventScroll: true })
+    if (autoFocus) questionInput.current?.focus({ preventScroll: true })
   }, [])
   const send = async (saveOnly = false): Promise<void> => {
     if (!hasInput || locked) return

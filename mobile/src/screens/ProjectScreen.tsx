@@ -8,6 +8,7 @@ import {
   questionComplexity,
   questionHeading,
   questionImages,
+  pageSlice,
   questionStatus
 } from '@desktop/shared/questions'
 import MindMap from '@desktop/renderer/src/components/MindMap/MindMap'
@@ -15,12 +16,19 @@ import { useApi } from '@desktop/renderer/src/personal/api'
 import { dateLabel, errorText, statuses } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import MarkdownAnswer from '@desktop/renderer/src/personal/MarkdownAnswer'
+import Pager from '@desktop/renderer/src/personal/Pager'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import { questionTree } from '@desktop/renderer/src/personal/questionTree'
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
-import { isAndroidOverlay, isOverlayCancellation, overlayControl, type OverlayStatus } from '../overlay/control'
+import {
+  isAndroidOverlay,
+  isOverlayCancellation,
+  overlayControl,
+  previewOverlay,
+  type OverlayStatus
+} from '../overlay/control'
 import { loadPairing } from '../storage'
 import { HubError, nativeTransport } from '../transport'
 
@@ -32,6 +40,8 @@ const FILTERS = [
   ['simple', '빠른 질문'],
   ['complex', '깊이 탐구']
 ] as const
+
+const lastPage = new Map<string, number>()
 
 function useWide(): boolean {
   const query = '(min-width: 900px)'
@@ -62,17 +72,27 @@ export default function ProjectScreen(): React.JSX.Element {
   )
   const filtered = useMemo(() => filterQuestions(questions, filter, query), [questions, filter, query])
   const graph = useMemo(() => questionTree(data, projectId, filtered), [data, projectId, filtered])
+  const [page, setPageState] = useState(() => lastPage.get(projectId) ?? 1)
+  const setPage = (p: number): void => {
+    lastPage.set(projectId, p)
+    setPageState(p)
+  }
+  const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
+  const listRef = useRef<HTMLElement>(null)
   if (!project) return <Navigate404 />
   const concepts = data.concepts.filter((c) => c.projectId === projectId)
   const open = (id: string): void => void navigate(`/p/${projectId}/q/${id}`)
   const list = (
-    <section className="mobile-list">
+    <section className="mobile-list" ref={listRef}>
       <div className="filter-row">
         <input
           aria-label={t('기록 검색')}
           placeholder={t('⌕ 질문, 답변, 메모 검색')}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setPage(1)
+          }}
         />
       </div>
       <div className="mobile-chips" role="tablist">
@@ -80,7 +100,10 @@ export default function ProjectScreen(): React.JSX.Element {
           <button
             key={id}
             className={filter === id ? 'active' : ''}
-            onClick={() => setFilter(id)}
+            onClick={() => {
+              setFilter(id)
+              setPage(1)
+            }}
           >
             {t(label)}
           </button>
@@ -103,8 +126,9 @@ export default function ProjectScreen(): React.JSX.Element {
           }}
         />
       ) : filtered.length ? (
-        <div className="question-list">
-          {filtered.map((q) => (
+        <>
+          <div className="question-list">
+            {paged.items.map((q) => (
             <QuestionCard
               key={q.id}
               question={q}
@@ -114,7 +138,16 @@ export default function ProjectScreen(): React.JSX.Element {
               onMenu={() => setMenu(q)}
             />
           ))}
-        </div>
+          </div>
+          <Pager
+            page={paged.page}
+            pages={paged.pages}
+            onPage={(p) => {
+              setPage(p)
+              listRef.current?.scrollIntoView({ block: 'start' })
+            }}
+          />
+        </>
       ) : (
         <div className="empty-state">
           <h2>{query || filter !== 'all' ? t('일치하는 기록이 없습니다') : t('첫 질문을 남겨 보세요')}</h2>
@@ -219,6 +252,11 @@ function ScreenQuestionControl({
         return
       }
       const initial = current.current
+      // The demo hub has no PC to stream to; show the native toolbar preview instead.
+      if (initial.mobile.demo) {
+        await previewOverlay()
+        return
+      }
       if (initial.mobile.conn.state !== 'online')
         throw new Error(t('PC에 연결된 상태에서 화면 질문을 시작해 주세요.'))
       if (!initial.mobile.data.projects.some((item) => item.id === projectId) ||
@@ -292,12 +330,12 @@ function ScreenQuestionControl({
   }
 
   return (
-    <div>
+    <>
       <button disabled={busy || !status} onClick={() => void act()}>
         {busy ? t('처리 중…') : status?.running ? t('화면 질문 실행 중 / 종료') : t('화면 위에서 질문')}
       </button>
-      {message && <p role="status">{message}</p>}
-    </div>
+      {message && <p role="status" className="mobile-header-message">{message}</p>}
+    </>
   )
 }
 
@@ -485,6 +523,11 @@ function QuestionCard({
         <time>{dateLabel(q.createdAt)}</time>
         {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
         {q.important && <span>★</span>}
+        {q.memo.trim() !== '' && (
+          <span className="memo-badge" title={t('메모 있음')}>
+            ✎ {t('메모')}
+          </span>
+        )}
       </div>
       <h3>{questionHeading(q)}</h3>
       <MarkdownAnswer preview>
@@ -523,13 +566,15 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
         <Link to={`/p/${projectId}`}>{t('목록으로')}</Link>
       </div>
     )
-  const run = async (fn: () => Promise<unknown>): Promise<void> => {
+  const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
       await fn()
       await refresh()
+      return true
     } catch (e) {
       setNotice(errorText(e))
+      return false
     }
   }
   return (
@@ -549,6 +594,7 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
         }}
       />
       <Composer
+        autoFocus={false}
         projectId={projectId}
         profileId={data.activeProfileId}
         settings={data.settings}

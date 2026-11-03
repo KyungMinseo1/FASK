@@ -7,6 +7,7 @@ import { ApiContext } from '@desktop/renderer/src/personal/api'
 import { dateLabel, useSnapshot } from '@desktop/renderer/src/personal/common'
 import { MobileContext, type PendingShare } from './context'
 import { createHubClient, type HubClient, type HubConn } from './hub'
+import { createDemoHub, DEMO_PAIRING } from './demo-hub'
 import { downscaleToFile } from './media'
 import Pair from './Pair'
 import Settings from './screens/Settings'
@@ -25,7 +26,12 @@ export default function MobileApp(): React.JSX.Element {
   useT()
   // undefined: still reading secure storage.
   const [pairing, setPairing] = useState<Pairing | null | undefined>(undefined)
+  // Test builds only: an in-memory hub replaces the PC until the user leaves the demo.
+  const [demo, setDemo] = useState(false)
+  const demoRef = useRef(demo)
+  demoRef.current = demo
   const [client, setClient] = useState<HubClient | null>(null)
+  const [clientDemo, setClientDemo] = useState(false)
   const [conn, setConn] = useState<HubConn>({ state: 'online' })
   const [notice, setNotice] = useState('')
   const [share, setShare] = useState<PendingShare | null>(null)
@@ -33,6 +39,13 @@ export default function MobileApp(): React.JSX.Element {
 
   const unpair = useCallback(
     async (message: string) => {
+      if (demoRef.current) {
+        // The demo never touched the stored pairing or cache; just drop back to the real state.
+        setDemo(false)
+        setNotice(message)
+        navigate('/', { replace: true })
+        return
+      }
       // The service holds its own copy of the token; end it before the pairing disappears.
       await stopOverlay()
       // Close first so no late response can repopulate the cache that is cleared next.
@@ -62,22 +75,25 @@ export default function MobileApp(): React.JSX.Element {
       .catch(() => setPairing(null))
   }, [])
   useEffect(() => {
-    if (!pairing) return
-    const c = createHubClient(pairing, {
-      transport,
-      cache: snapshotCache,
-      onStatus: setConn,
-      onUnpaired: (message) => void unpairRef.current(message)
-    })
+    if (!pairing && !demo) return
+    const c = demo
+      ? createDemoHub()
+      : createHubClient(pairing!, {
+          transport,
+          cache: snapshotCache,
+          onStatus: setConn,
+          onUnpaired: (message) => void unpairRef.current(message)
+        })
     clientRef.current = c
     setConn({ state: 'online' })
     setClient(c)
+    setClientDemo(demo)
     return () => {
       c.close()
       if (clientRef.current === c) clientRef.current = null
       setClient(null)
     }
-  }, [pairing])
+  }, [pairing, demo])
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return
     const handle = CapacitorShareTarget.addListener('shareReceived', (event) => {
@@ -104,13 +120,20 @@ export default function MobileApp(): React.JSX.Element {
     return () => void handle.then((h) => h.remove())
   }, [navigate])
 
-  if (pairing === undefined) return <div className="fask-loading">{t('FASK를 여는 중…')}</div>
-  if (!pairing || !client)
+  // Until the effect swaps clients, the previous hub must not render under the new mode.
+  if (pairing === undefined || ((pairing || demo) && (!client || clientDemo !== demo)))
+    return <div className="fask-loading">{t('FASK를 여는 중…')}</div>
+  if (!client || (!pairing && !demo))
     return (
       <div className="fask-app fask-mobile">
         {isDevWeb && <DevBanner />}
         <Pair
           notice={notice}
+          onDemo={() => {
+            setNotice('')
+            setDemo(true)
+            navigate('/', { replace: true })
+          }}
           onPaired={(p) => {
             clientRef.current?.close()
             setNotice('')
@@ -123,8 +146,15 @@ export default function MobileApp(): React.JSX.Element {
   return (
     <ApiContext.Provider value={client}>
       <Shell
+        // Remount on demo switch so no screen state or profile tracking crosses hubs.
+        key={demo ? 'demo' : 'hub'}
         client={client}
-        pairing={pairing}
+        pairing={demo ? DEMO_PAIRING : pairing!}
+        demo={demo}
+        enterDemo={() => {
+          setDemo(true)
+          navigate('/', { replace: true })
+        }}
         conn={conn}
         share={share}
         notice={notice}
@@ -143,6 +173,8 @@ function DevBanner(): React.JSX.Element {
 function Shell({
   client,
   pairing,
+  demo,
+  enterDemo,
   conn,
   share,
   notice,
@@ -151,6 +183,8 @@ function Shell({
 }: {
   client: HubClient
   pairing: Pairing
+  demo: boolean
+  enterDemo: () => void
   conn: HubConn
   share: PendingShare | null
   notice: string
@@ -172,7 +206,7 @@ function Shell({
   }, [data, navigate, setNotice, t])
   useEffect(() => {
     const check = async (): Promise<boolean> => {
-      if (!(await overlayRevoked(pairing.fingerprint))) return false
+      if (demo || !(await overlayRevoked(pairing.fingerprint))) return false
       await unpair(t('페어링이 해제되었습니다. 다시 연결해 주세요.'))
       return true
     }
@@ -188,7 +222,7 @@ function Shell({
       void handle.then((h) => h.remove())
       offRevoked()
     }
-  }, [client, refresh, pairing, unpair])
+  }, [client, refresh, pairing, unpair, demo])
   const [retrying, setRetrying] = useState(false)
   useEffect(() => setRetrying(false), [conn])
   // Safety net: never leave the button stuck if no status change arrives.
@@ -226,6 +260,12 @@ function Shell({
   return (
     <div className="fask-app fask-mobile">
       {isDevWeb && <DevBanner />}
+      {demo && (
+        <div className="mobile-banner offline" role="status">
+          {t('데모 모드: PC 없이 샘플 데이터로 동작합니다. 변경 내용은 저장되지 않습니다.')}
+          <button onClick={() => void unpair('')}>{t('데모 종료')}</button>
+        </div>
+      )}
       {banner}
       {notice && (
         <div className="notice mobile-notice" role="status">
@@ -236,7 +276,7 @@ function Shell({
       {!data ? (
         <div className="fask-loading">{error || t('PC의 기록을 불러오는 중…')}</div>
       ) : (
-        <MobileContext.Provider value={{ data, refresh, client, pairing, conn, share, unpair }}>
+        <MobileContext.Provider value={{ data, refresh, client, pairing, conn, share, unpair, demo, enterDemo }}>
           {/* Remount everything when the PC switches profile so no stale draft or ID survives. */}
           <Routes key={data.activeProfileId}>
             <Route path="/" element={<Home />} />

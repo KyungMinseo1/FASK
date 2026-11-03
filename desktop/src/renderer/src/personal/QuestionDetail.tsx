@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Concept, Question, Turn } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import MarkdownAnswer from './MarkdownAnswer'
@@ -7,7 +7,7 @@ import { useApi } from './api'
 import { dateLabel } from './common'
 import { useT } from '../../../shared/i18n/react'
 
-type Run = (fn: () => Promise<unknown>) => Promise<void>
+type Run = (fn: () => Promise<unknown>) => Promise<boolean>
 
 export default function QuestionDetail({
   question: q,
@@ -27,6 +27,17 @@ export default function QuestionDetail({
   const t = useT()
   const api = useApi()
   const [memo, setMemo] = useState(q.memo)
+  const [memoState, setMemoState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const memoTimer = useRef<number>(undefined)
+  useEffect(() => () => clearTimeout(memoTimer.current), [])
+  const memoDirty = memo !== q.memo
+  const saveMemo = async (): Promise<void> => {
+    clearTimeout(memoTimer.current)
+    setMemoState('saving')
+    const ok = await run(() => api.updateQuestion(q.id, { memo }))
+    setMemoState(ok ? 'saved' : 'idle')
+    if (ok) memoTimer.current = window.setTimeout(() => setMemoState('idle'), 2000)
+  }
   return (
     <aside className="question-detail">
       <header>
@@ -81,15 +92,28 @@ export default function QuestionDetail({
         </div>
       )}
       <label className="memo-label">
-        {t('나의 메모')}
+        <span className="memo-label-head">
+          {t('나의 메모')}
+          {memoDirty && <small className="memo-dirty">{t('저장되지 않은 변경')}</small>}
+        </span>
         <textarea
           value={memo}
           onChange={(e) => setMemo(e.target.value)}
           placeholder={t('확인한 사실, 결정, 다음 할 일…')}
         />
       </label>
-      <button onClick={() => void run(() => api.updateQuestion(q.id, { memo }))}>
-        {t('메모 저장')}
+      <button
+        className={memoState === 'saved' && !memoDirty ? 'memo-saved' : ''}
+        disabled={!memoDirty || memoState === 'saving'}
+        onClick={() => void saveMemo()}
+      >
+        {memoState === 'saving'
+          ? t('저장 중…')
+          : memoDirty
+            ? t('메모 저장')
+            : memoState === 'saved'
+              ? t('메모 저장됨 ✓')
+              : t('메모 저장')}
       </button>
       {onContinue && (
         <button className="reply-button" onClick={onContinue}>

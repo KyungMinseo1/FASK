@@ -1,11 +1,12 @@
 /* Phone/tablet layout on top of the shared desktop personal.css; scoped to .fask-mobile. */
 .fask-app.fask-mobile {
-  display: block;
-  height: auto;
-  min-height: 100vh;
-  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
   font-size: 15px;
-  padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  padding-top: env(safe-area-inset-top);
+  box-sizing: border-box;
 }
 .fask-mobile button,
 .fask-mobile select,
@@ -13,20 +14,22 @@
   min-height: 44px;
 }
 .fask-mobile .mobile-top {
-  position: sticky;
-  top: 0;
+  position: static;
+  flex: none;
   z-index: 20;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 56px;
   box-sizing: border-box;
-  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+  padding: 8px 16px;
   background: var(--surface-1);
   border-bottom: 1px solid var(--hairline);
 }
 .fask-mobile .mobile-top h1 {
+  flex: 1 1 0;
+  min-width: 0;
   margin: 0;
   font-size: 17px;
   font-weight: 600;
@@ -35,21 +38,26 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fask-mobile .mobile-top > :first-child:not(button) {
-  grid-column: 1 / 3;
-}
 .fask-mobile .mobile-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 16px;
 }
 .fask-mobile .mobile-body.project-split {
   display: grid;
   grid-template-columns: 380px 1fr;
   gap: 16px;
-  align-items: start;
+  overflow: hidden;
+  align-items: stretch;
 }
-.fask-mobile .project-split > .mobile-list {
-  max-height: calc(100vh - 140px);
-  overflow: auto;
+.fask-mobile .project-split > .mobile-list,
+.fask-mobile .project-split > .mobile-detail,
+.fask-mobile .project-split > .empty-state {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .fask-mobile .mobile-workspace h2 {
   font-size: 11px;
@@ -62,6 +70,34 @@
 .fask-mobile .space-card {
   width: 100%;
   margin-bottom: 8px;
+  min-height: 72px;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  align-items: center;
+  text-align: left;
+}
+.fask-mobile .space-card .space-icon {
+  grid-row: 1 / 3;
+}
+.fask-mobile .space-card h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fask-mobile .space-card small {
+  grid-column: 2;
+}
+.fask-mobile .space-card > b {
+  position: static;
+  grid-column: 3;
+  grid-row: 1 / 3;
 }
 .fask-mobile .space-card[aria-disabled='true'] {
   opacity: 0.45;
@@ -108,6 +144,19 @@
   overflow: visible;
   margin-bottom: 16px;
 }
+.fask-mobile .detail-answer > .markdown-answer,
+.fask-mobile .live-answer > .markdown-answer {
+  max-height: 55vh;
+  max-height: 55dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 8px 4px 0;
+}
+@media (max-width: 899px) {
+  .fask-mobile .mobile-detail .question-detail > header {
+    display: none;
+  }
+}
 .fask-mobile .composer textarea {
   font-size: 16px;
 }
@@ -115,10 +164,8 @@
   flex-wrap: wrap;
 }
 .fask-mobile .mobile-fab {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: static;
+  flex: none;
   z-index: 20;
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
   background: var(--canvas);
@@ -134,7 +181,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+  padding: 8px 16px;
+  flex: none;
   font-size: 12px;
   line-height: 1.4;
   border-bottom: 1px solid var(--hairline);
@@ -152,14 +200,21 @@
   color: #fff;
 }
 .fask-mobile .mobile-notice {
+  flex: none;
   margin: 12px 16px 0;
   white-space: pre-line;
 }
 .fask-mobile .mobile-pair {
   max-width: 560px;
   margin: 0 auto;
-  padding: calc(40px + env(safe-area-inset-top)) 20px 20px;
+  padding: 40px 20px 20px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
   display: grid;
+  align-content: start;
   gap: 14px;
 }
 .fask-mobile .mobile-pair h1 {
@@ -375,4 +430,39 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+.fask-mobile .mobile-header-message {
+  flex-basis: 100%;
+  order: 1;
+  margin: 0;
+  font-size: 12px;
+  color: var(--warning);
+}
+@media (min-width: 900px) {
+  .fask-mobile .mobile-workspace {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .fask-mobile .mobile-workspace > h2,
+  .fask-mobile .mobile-workspace > .mobile-remote-status {
+    grid-column: 1 / -1;
+  }
+  .fask-mobile .mobile-workspace .space-card {
+    margin-bottom: 0;
+  }
+  .fask-mobile .mobile-fab {
+    width: 412px;
+    box-sizing: border-box;
+    border-top: 0;
+    background: transparent;
+  }
+}
+.fask-mobile .copy-button {
+  min-height: 36px;
+  min-width: 36px;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
 }

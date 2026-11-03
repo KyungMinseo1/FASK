@@ -6,12 +6,12 @@ import './mobile.css'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router'
 import MobileApp from './MobileApp'
-import { initTheme, readTheme, themeBase } from '@desktop/renderer/src/personal/theme'
+import { initTheme, readTheme } from '@desktop/renderer/src/personal/theme'
 import { initLanguage, resolveLanguage } from '@desktop/shared/i18n'
 import { syncOverlayLanguage, syncOverlayTheme } from './overlay/control'
 
 initTheme()
-syncOverlayTheme(themeBase(readTheme()))
+syncOverlayTheme(readTheme())
 initLanguage()
 syncOverlayLanguage(resolveLanguage())
 

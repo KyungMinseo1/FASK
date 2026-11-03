@@ -391,11 +391,11 @@ public final class OverlayPlugin extends Plugin {
         new OverlayChrome.Project("preview-2", "운영체제", "2학기"),
         new OverlayChrome.Project("preview-3", "선형대수 스터디", "개인"));
 
-    /** The app's theme choice (system/light/dark) for the native overlay chrome. */
+    /** The app's theme choice (system/light/dark/sepia/forest/rose) for the native overlay chrome. */
     @PluginMethod
     public void setTheme(PluginCall call) {
         String pref = call.getString("pref", "system");
-        if (!"light".equals(pref) && !"dark".equals(pref)) pref = "system";
+        if (!java.util.Arrays.asList("light", "dark", "sepia", "forest", "rose").contains(pref)) pref = "system";
         getContext().getSharedPreferences(OverlayChrome.THEME_PREFS, Context.MODE_PRIVATE)
             .edit().putString(OverlayChrome.THEME_KEY, pref).apply();
         call.resolve();

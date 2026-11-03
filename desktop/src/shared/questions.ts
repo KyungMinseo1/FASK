@@ -72,6 +72,31 @@ export function filterQuestions(questions: Question[], filter: string, query: st
   )
 }
 
+export const QUESTIONS_PER_PAGE = 20
+/** page를 1..pages로 보정하고 해당 페이지 항목을 돌려준다. 빈 목록도 pages는 1. */
+export function pageSlice<T>(
+  items: T[],
+  page: number,
+  size = QUESTIONS_PER_PAGE
+): { items: T[]; page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(items.length / size))
+  const current = Math.min(Math.max(1, Math.floor(page) || 1), pages)
+  return { items: items.slice((current - 1) * size, current * size), page: current, pages }
+}
+/** 페이지 버튼 목록. pages ≤ 7이면 전부, 아니면 1, page-1..page+1, pages이며 번호가 건너뛰는 곳에 'gap'. */
+export function pageWindow(page: number, pages: number): (number | 'gap')[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1)
+  const nums = [...new Set([1, page - 1, page, page + 1, pages])]
+    .filter((n) => n >= 1 && n <= pages)
+    .sort((a, b) => a - b)
+  const out: (number | 'gap')[] = []
+  nums.forEach((n, i) => {
+    if (i > 0 && n - nums[i - 1] > 1) out.push('gap')
+    out.push(n)
+  })
+  return out
+}
+
 export type LiveAnswer = { turnId: string; answer: string; revision: number }
 
 export function applyDelta(
