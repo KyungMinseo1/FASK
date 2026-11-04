@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Question, Snapshot } from '@desktop/preload/personal'
-import { lastTurn } from '@desktop/shared/questions'
+import { answerJustCompleted, lastTurn } from '@desktop/shared/questions'
 import { useApi } from '@desktop/renderer/src/personal/api'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
@@ -219,6 +219,13 @@ export default function OverlayPanel({
   }, [bridge, projectsKey])
 
   const question = questionId ? data.questions.find((q) => q.id === questionId) : undefined
+  const prevQuestion = useRef(question)
+  // Native blinks the toggle only when the panel is folded, so no visibility check here.
+  useEffect(() => {
+    if (answerJustCompleted(prevQuestion.current, question))
+      void bridge.call('notifyAnswered').catch(() => {})
+    prevQuestion.current = question
+  }, [bridge, question])
   const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
@@ -294,6 +301,7 @@ export default function OverlayPanel({
         )}
         {!blocked && (
           <Composer
+            submitOnEnter={false}
             key={composerKey}
             projectId={projectId}
             profileId={boot.profileId}

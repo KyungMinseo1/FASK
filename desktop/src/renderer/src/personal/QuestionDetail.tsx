@@ -5,6 +5,7 @@ import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
 import TurnNav from './TurnNav'
 import { useApi } from './api'
+import { loadAttachment } from './attachment-cache'
 import { dateLabel } from './common'
 import { useT } from '../../../shared/i18n/react'
 
@@ -121,7 +122,12 @@ export default function QuestionDetail({
           {t('이 대화에 이어서 질문 ↗')}
         </button>
       )}
-      <TurnNav turns={q.turns} />
+      <TurnNav
+        turns={q.turns}
+        important={q.important}
+        onToggleImportant={() => void run(() => api.updateQuestion(q.id, { important: !q.important }))}
+        onClose={onClose}
+      />
     </aside>
   )
 }
@@ -139,24 +145,39 @@ function TurnView({
 }): React.JSX.Element {
   const tr = useT()
   const api = useApi()
-  const [image, setImage] = useState<string | null>(null)
-  useEffect(() => {
-    let alive = true
-    if (t.attachment)
-      void api
-        .attachment(t.attachment)
-        .then((img) => {
-          if (alive) setImage(img)
-        })
-        .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [api, t.attachment])
-  // Only mobile CSS clamps long questions; show the toggle when the clamp hides text.
+  // The long question and its capture are folded by default; the image loads on first expand.
   const questionRef = useRef<HTMLParagraphElement>(null)
   const [expanded, setExpanded] = useState(false)
   const [clamped, setClamped] = useState(false)
+  // Keyed by attachment ID: once the image is removed (or replaced) the old state no longer applies.
+  const [loaded, setLoaded] = useState<{
+    id: string
+    state: 'loading' | 'ready' | 'error'
+    src?: string | null
+  } | null>(null)
+  const image = t.attachment && loaded?.id === t.attachment ? loaded : null
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const loadImage = (id: string): void => {
+    setLoaded({ id, state: 'loading' })
+    const settle = (next: { state: 'ready' | 'error'; src?: string | null }): void => {
+      if (mounted.current)
+        setLoaded((s) => (s?.id === id && s.state === 'loading' ? { id, ...next } : s))
+    }
+    loadAttachment(api, id).then(
+      (src) => settle({ state: 'ready', src }),
+      () => settle({ state: 'error' })
+    )
+  }
+  const toggle = (): void => {
+    if (!expanded && t.attachment && !image) loadImage(t.attachment)
+    setExpanded(!expanded)
+  }
   useEffect(() => {
     const el = questionRef.current
     if (!el || expanded) return
@@ -175,9 +196,13 @@ function TurnView({
       >
         {t.sent}
       </p>
-      {(clamped || expanded) && (
-        <button className="turn-question-toggle" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? tr('질문 접기') : tr('질문 더보기')}
+      {(clamped || expanded || !!t.attachment) && (
+        <button className="turn-question-toggle" onClick={toggle}>
+          {expanded
+            ? tr('질문 접기')
+            : t.attachment
+              ? tr('▧ 캡처 이미지 · 펼쳐서 보기')
+              : tr('질문 더보기')}
         </button>
       )}
       {t.refined && (
@@ -186,12 +211,25 @@ function TurnView({
           <p>{t.raw}</p>
         </details>
       )}
-      {t.attachment && image && (
+      {expanded && image && (
         <div className="detail-capture">
-          <img src={image} alt={tr('질문에 사용한 캡처')} />
-          <button onClick={() => void run(() => api.clearAttachment(questionId, t.id))}>
-            {tr('보관 이미지 제거')}
-          </button>
+          {image.state === 'loading' && (
+            <p className="capture-status">{tr('이미지 불러오는 중…')}</p>
+          )}
+          {image.state === 'ready' && image.src && (
+            <>
+              <img src={image.src} alt={tr('질문에 사용한 캡처')} />
+              <button onClick={() => void run(() => api.clearAttachment(questionId, t.id))}>
+                {tr('보관 이미지 제거')}
+              </button>
+            </>
+          )}
+          {image.state === 'error' && (
+            <p className="capture-status">
+              {tr('이미지를 불러오지 못했습니다.')}{' '}
+              <button onClick={() => loadImage(image.id)}>{tr('다시 시도')}</button>
+            </p>
+          )}
         </div>
       )}
       {t.documents.map((d, i) => (

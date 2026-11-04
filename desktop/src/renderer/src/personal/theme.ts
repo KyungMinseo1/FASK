@@ -42,9 +42,37 @@ export function setTheme(pref: ThemePref): void {
 /** Applies the saved theme and keeps it in sync with the OS and other same-origin windows. */
 export function initTheme(): void {
   apply()
+  applyFontScale()
   dark().addEventListener('change', apply)
   window.addEventListener('storage', (e) => {
     if (e.key === KEY) apply()
+    if (e.key === FONT_KEY) applyFontScale()
   })
   window.addEventListener('focus', apply)
+  window.addEventListener('focus', applyFontScale)
+}
+
+export type FontScale = 'small' | 'normal' | 'large' | 'xlarge'
+export const FONT_SCALE_OPTIONS: { value: FontScale; label: string; zoom: number }[] = [
+  { value: 'small', label: '작게', zoom: 0.9 },
+  { value: 'normal', label: '기본', zoom: 1 },
+  { value: 'large', label: '크게', zoom: 1.12 },
+  { value: 'xlarge', label: '아주 크게', zoom: 1.25 }
+]
+const FONT_KEY = 'fask:font-scale'
+
+export function readFontScale(): FontScale {
+  const value = localStorage.getItem(FONT_KEY)
+  return FONT_SCALE_OPTIONS.some((o) => o.value === value) ? (value as FontScale) : 'normal'
+}
+
+/** Scales the app UI (not the overlay) through the `--ui-zoom` CSS variable. */
+function applyFontScale(): void {
+  const zoom = FONT_SCALE_OPTIONS.find((o) => o.value === readFontScale())?.zoom ?? 1
+  document.documentElement.style.setProperty('--ui-zoom', String(zoom))
+}
+
+export function setFontScale(scale: FontScale): void {
+  localStorage.setItem(FONT_KEY, scale)
+  applyFontScale()
 }

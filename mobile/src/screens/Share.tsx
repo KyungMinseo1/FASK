@@ -43,6 +43,7 @@ export default function Share(): React.JSX.Element {
         </label>
         {projectId ? (
           <Composer
+            submitOnEnter={false}
             key={`${share?.id ?? 'empty'}:${projectId}`}
             projectId={projectId}
             profileId={data.activeProfileId}

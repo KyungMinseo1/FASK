@@ -31,7 +31,6 @@ export interface MindNodeData extends Record<string, unknown> {
   diameter: number
   color: string
   expanded: boolean
-  open: boolean
   selected: boolean
   /** Shift-drag state: this node is being dragged / is the current drop target. */
   dragging?: boolean
@@ -77,7 +76,6 @@ function branchColor(mind: MindNode, index: number): string {
 export function layoutMindMap(
   root: MindNode,
   expanded: Set<string>,
-  openQuestions: Set<string>,
   selectedId: string | undefined
 ): { nodes: MindFlowNode[]; edges: Edge[] } {
   const laidOut = tree<VisibleNode>()
@@ -131,19 +129,17 @@ export function layoutMindMap(
     // Angle 0 points up; positions are the top-left corner of the circle.
     const cx = r * Math.cos(d.x - Math.PI / 2)
     const cy = r * Math.sin(d.x - Math.PI / 2)
-    const open = openQuestions.has(mind.id)
     nodes.push({
       id: mind.id,
       type: 'mind',
       position: { x: cx - diameter / 2, y: cy - diameter / 2 },
-      zIndex: open ? 1000 : d.depth === 0 ? 10 : 0,
+      zIndex: d.depth === 0 ? 10 : 0,
       data: {
         mind,
         depth: d.depth,
         diameter,
         color,
         expanded: expanded.has(mind.id),
-        open,
         selected: mind.id === selectedId
       },
       draggable: false,

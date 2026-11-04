@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import type { Concept, ShortcutInfo } from '../../../preload/personal'
+import type { ShortcutInfo } from '../../../preload/personal'
 import {
   filterQuestions,
   lastTurn,
@@ -18,11 +18,35 @@ import QuestionDetail from './QuestionDetail'
 import Settings from './Settings'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
 import { questionTree } from './questionTree'
+import { canDropGraphNode, canMoveGraphNode, moveGraphNode } from './graphMove'
 import { useT } from '../../../shared/i18n/react'
 import { i18n } from '../../../shared/i18n'
 import './personal.css'
 
 type ItemKind = 'profile' | 'workspace' | 'project' | 'concept' | 'question'
+
+/** Parses a card's Markdown only once it nears the visible part of the list; a page holds 20. */
+function CardPreview({ text }: { text: string }): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (near || !el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setNear(true)
+      },
+      { root: el.closest('.records-scroll'), rootMargin: '400px 0px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [near])
+  return near ? (
+    <MarkdownAnswer preview>{text}</MarkdownAnswer>
+  ) : (
+    <div ref={ref} className="card-preview-pending" />
+  )
+}
 
 export default function Dashboard(): React.JSX.Element {
   const { data, refresh, error } = useSnapshot()
@@ -58,7 +82,6 @@ export default function Dashboard(): React.JSX.Element {
       id?: string
     } | null>(null),
     [name, setName] = useState('')
-  const [conceptId, setConceptId] = useState('')
   const [move, setMove] = useState<{ id: string; name: string } | null>(null),
     [moveTarget, setMoveTarget] = useState('')
   const workspace = data?.workspaces.find((w) => w.id === workspaceId) ?? data?.workspaces[0]
@@ -77,7 +100,14 @@ export default function Dashboard(): React.JSX.Element {
     [questions, filter, query]
   )
   const [page, setPage] = useState(1)
-  const recordsRef = useRef<HTMLElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [headerCollapsed, setHeaderCollapsed] = useState(
+    () => localStorage.getItem('fask:library-header-collapsed') === '1'
+  )
+  useEffect(() => {
+    localStorage.setItem('fask:library-header-collapsed', headerCollapsed ? '1' : '0')
+  }, [headerCollapsed])
+  const collapsedHeader = scope === 'project' && headerCollapsed
   const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
   useEffect(() => setPage(1), [project?.id])
   const graphRoot = useMemo(
@@ -251,7 +281,6 @@ export default function Dashboard(): React.JSX.Element {
               onClick={() => {
                 setProjectId(p.id)
                 setSelectedId('')
-                setConceptId('')
                 setCompose(false)
               }}
             >
@@ -275,7 +304,7 @@ export default function Dashboard(): React.JSX.Element {
           </small>
         </div>
       </aside>
-      <main className="fask-main">
+      <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`}>
         <nav className="breadcrumb" aria-label={t('상위 경로')}>
           <button
             aria-label={t('이전 화면')}
@@ -322,15 +351,17 @@ export default function Dashboard(): React.JSX.Element {
             </>
           )}
         </nav>
-        <header className="project-header">
+        <header className={collapsedHeader ? 'project-header collapsed' : 'project-header'}>
           <div>
-            <span className="eyebrow">
-              {scope === 'project'
-                ? 'PROJECT LIBRARY'
-                : scope === 'workspace'
-                  ? 'WORKSPACE'
-                  : 'YOUR SPACE'}
-            </span>
+            {!collapsedHeader && (
+              <span className="eyebrow">
+                {scope === 'project'
+                  ? 'PROJECT LIBRARY'
+                  : scope === 'workspace'
+                    ? 'WORKSPACE'
+                    : 'YOUR SPACE'}
+              </span>
+            )}
             <h1>
               {scope === 'home'
                 ? t('내 공간')
@@ -346,12 +377,27 @@ export default function Dashboard(): React.JSX.Element {
                   ✎
                 </button>
               )}
+              {scope === 'project' && (
+                <button
+                  className={`header-collapse${headerCollapsed ? ' collapsed' : ''}`}
+                  aria-expanded={!headerCollapsed}
+                  aria-label={headerCollapsed ? t('정보 펼치기') : t('정보 접기')}
+                  title={headerCollapsed ? t('정보 펼치기') : t('정보 접기')}
+                  onClick={() => setHeaderCollapsed((c) => !c)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <path d="M6 15l6-6 6 6" />
+                  </svg>
+                </button>
+              )}
             </h1>
-            <p>
-              {scope === 'project'
-                ? t('질문하고, 연결하고, 나의 지식으로.')
-                : t('생각을 이어갈 프로젝트를 선택하세요.')}
-            </p>
+            {!collapsedHeader && (
+              <p>
+                {scope === 'project'
+                  ? t('질문하고, 연결하고, 나의 지식으로.')
+                  : t('생각을 이어갈 프로젝트를 선택하세요.')}
+              </p>
+            )}
           </div>
           <div className="button-row">
             {scope === 'project' ? (
@@ -420,6 +466,7 @@ export default function Dashboard(): React.JSX.Element {
           </section>
         ) : (
           <>
+            {!headerCollapsed && (
             <div className="project-stats">
               <div>
                 <b>{questions.length}</b>
@@ -438,6 +485,7 @@ export default function Dashboard(): React.JSX.Element {
                 {data.settings.model || t('AI 연결을 설정해 주세요')}
               </div>
             </div>
+            )}
             {(notice || error) && (
               <div className="notice error" role="alert">
                 {notice || error}
@@ -473,17 +521,20 @@ export default function Dashboard(): React.JSX.Element {
               </button>
             </div>
             {compose && project && (
-              <Composer
-                key={project.id}
-                projectId={project.id}
-                profileId={data.activeProfileId}
-                settings={data.settings}
-                onSaved={(id) => {
-                  setSelectedId(id)
-                  void refresh()
-                }}
-              />
+              <div className="compose-slot">
+                <Composer
+                  key={project.id}
+                  projectId={project.id}
+                  profileId={data.activeProfileId}
+                  settings={data.settings}
+                  onSaved={(id) => {
+                    setSelectedId(id)
+                    void refresh()
+                  }}
+                />
+              </div>
             )}
+            {(!headerCollapsed || query !== '' || filter !== 'all') && (
             <div className="filter-row">
               <input
                 aria-label={t('기록 검색')}
@@ -512,18 +563,34 @@ export default function Dashboard(): React.JSX.Element {
               </select>
               <span>{t('{{n}}개 기록', { n: filtered.length })}</span>
             </div>
+            )}
             <div className={`knowledge-area ${selected ? 'has-detail' : ''}`}>
-              <section className="records-panel" ref={recordsRef}>
+              <section className="records-panel">
                 {view === 'graph' && project && graphRoot ? (
-                  <>
-                    <div className="graph-actions">
-                      <span>{t('개념을 펼치고 질문을 연결하세요')}</span>
-                      <button onClick={() => beginCreate('concept', project.id)}>{t('＋ 개념')}</button>
-                    </div>
+                  <div className="graph-stage">
                     <MindMap
                       key={project.id}
                       root={graphRoot}
-                      height={510}
+                      height="100%"
+                      actions={
+                        !locked && (
+                          <button onClick={() => beginCreate('concept', project.id)}>
+                            <svg viewBox="0 0 24 24" aria-hidden>
+                              <circle cx="12" cy="12" r="8" />
+                              <path d="M12 8.5v7M8.5 12h7" />
+                            </svg>
+                            {t('개념 추가')}
+                          </button>
+                        )
+                      }
+                      onMoveNode={
+                        locked
+                          ? undefined
+                          : (node, target, copy) =>
+                              void run(() => moveGraphNode(window.fask, concepts, questions, node, target, copy))
+                      }
+                      canMove={canMoveGraphNode}
+                      canDrop={canDropGraphNode}
                       onContextMenu={(node, event) => {
                         if (node.id.startsWith('q:')) {
                           const q = questions.find((q) => q.id === node.id.split(':')[1])
@@ -535,20 +602,12 @@ export default function Dashboard(): React.JSX.Element {
                       }}
                       onSelect={(node) => {
                         if (node.id.startsWith('q:')) setSelectedId(node.id.split(':')[1])
-                        if (node.id.startsWith('c:')) setConceptId(node.id.slice(2))
                       }}
                     />
-                    {conceptId && concepts.some((c) => c.id === conceptId) && (
-                      <ConceptEditor
-                        key={conceptId}
-                        concept={concepts.find((c) => c.id === conceptId)!}
-                        concepts={concepts}
-                        run={run}
-                      />
-                    )}
-                  </>
+                  </div>
                 ) : filtered.length ? (
                   <>
+                  <div className="records-scroll" ref={scrollRef}>
                   <div className={view === 'list' ? 'question-list compact' : 'question-list'}>
                     {paged.items.map((q, index) => (
                       <div key={q.id}>
@@ -592,9 +651,9 @@ export default function Dashboard(): React.JSX.Element {
                           </div>
                           <h3>{questionHeading(q)}</h3>
                           {view !== 'list' && (
-                            <MarkdownAnswer preview>
-                              {lastTurn(q).answer || t(lastTurn(q).error || '아직 답변이 없습니다.')}
-                            </MarkdownAnswer>
+                            <CardPreview
+                              text={lastTurn(q).answer || t(lastTurn(q).error || '아직 답변이 없습니다.')}
+                            />
                           )}
                           <div className="question-footer">
                             <span>
@@ -611,12 +670,13 @@ export default function Dashboard(): React.JSX.Element {
                       </div>
                     ))}
                   </div>
+                  </div>
                   <Pager
                     page={paged.page}
                     pages={paged.pages}
                     onPage={(p) => {
                       setPage(p)
-                      recordsRef.current?.scrollIntoView({ block: 'start' })
+                      scrollRef.current?.scrollTo({ top: 0 })
                     }}
                   />
                   </>
@@ -712,7 +772,6 @@ export default function Dashboard(): React.JSX.Element {
                   setCompose(false)
                 }
                 if (id === selectedId) setSelectedId('')
-                if (id === conceptId) setConceptId('')
               })
             }}
           >
@@ -828,58 +887,6 @@ export default function Dashboard(): React.JSX.Element {
           </form>
         </div>
       )}
-    </div>
-  )
-}
-
-function ConceptEditor({
-  concept,
-  concepts,
-  run
-}: {
-  concept: Concept
-  concepts: Concept[]
-  run: (fn: () => Promise<unknown>) => Promise<unknown>
-}): React.JSX.Element {
-  const [name, setName] = useState(concept.name),
-    [parent, setParent] = useState(concept.parentId || ''),
-    [target, setTarget] = useState('')
-  const t = useT()
-  return (
-    <div className="concept-editor">
-      <h3>{t('개념 정리')}</h3>
-      <input aria-label={t('개념 이름')} value={name} onChange={(e) => setName(e.target.value)} />
-      <select aria-label={t('상위 개념')} value={parent} onChange={(e) => setParent(e.target.value)}>
-        <option value="">{t('프로젝트 바로 아래')}</option>
-        {concepts
-          .filter((c) => c.id !== concept.id)
-          .map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-      </select>
-      <button
-        onClick={() => void run(() => window.fask.editConcept(concept.id, name, parent || null))}
-      >
-        {t('이름·위치 저장')}
-      </button>
-      <select aria-label={t('병합 대상')} value={target} onChange={(e) => setTarget(e.target.value)}>
-        <option value="">{t('병합할 개념 선택')}</option>
-        {concepts
-          .filter((c) => c.id !== concept.id)
-          .map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-      </select>
-      <button
-        disabled={!target}
-        onClick={() => void run(() => window.fask.mergeConcept(concept.id, target))}
-      >
-        {t('선택한 개념으로 병합')}
-      </button>
     </div>
   )
 }

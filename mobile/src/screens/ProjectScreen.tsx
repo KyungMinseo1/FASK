@@ -13,6 +13,11 @@ import {
 } from '@desktop/shared/questions'
 import MindMap from '@desktop/renderer/src/components/MindMap/MindMap'
 import { useApi } from '@desktop/renderer/src/personal/api'
+import {
+  canDropGraphNode,
+  canMoveGraphNode,
+  moveGraphNode
+} from '@desktop/renderer/src/personal/graphMove'
 import { dateLabel, errorText, statuses } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import MarkdownAnswer from '@desktop/renderer/src/personal/MarkdownAnswer'
@@ -57,7 +62,9 @@ function useWide(): boolean {
 
 export default function ProjectScreen(): React.JSX.Element {
   const { projectId = '', questionId } = useParams()
-  const { data } = useMobile()
+  const { data, refresh } = useMobile()
+  const api = useApi()
+  const [graphError, setGraphError] = useState('')
   const navigate = useNavigate()
   const t = useT()
   const wide = useWide()
@@ -72,6 +79,9 @@ export default function ProjectScreen(): React.JSX.Element {
   )
   const filtered = useMemo(() => filterQuestions(questions, filter, query), [questions, filter, query])
   const graph = useMemo(() => questionTree(data, projectId, filtered), [data, projectId, filtered])
+  const projectConcepts = data.concepts.filter((c) => c.projectId === projectId)
+  const workspace = data.workspaces.find((w) => w.id === project?.workspaceId)
+  const locked = !!workspace?.remote && workspace.remote.status !== 'online'
   const [page, setPageState] = useState(() => lastPage.get(projectId) ?? 1)
   const setPage = (p: number): void => {
     lastPage.set(projectId, p)
@@ -118,13 +128,33 @@ export default function ProjectScreen(): React.JSX.Element {
         </button>
       </div>
       {view === 'graph' ? (
-        <MindMap
-          root={graph}
-          height="70vh"
-          onSelect={(node) => {
-            if (node.id.startsWith('q:')) open(node.id.split(':')[1])
-          }}
-        />
+        <>
+          {graphError && (
+            <p className="notice error" role="alert">
+              {graphError}
+            </p>
+          )}
+          <MindMap
+            root={graph}
+            height="70vh"
+            allowCopy={false}
+            onMoveNode={
+              locked
+                ? undefined
+                : (node, target) => {
+                    setGraphError('')
+                    void moveGraphNode(api, projectConcepts, questions, node, target, false)
+                      .then(refresh)
+                      .catch((e) => setGraphError(errorText(e)))
+                  }
+            }
+            canMove={canMoveGraphNode}
+            canDrop={canDropGraphNode}
+            onSelect={(node) => {
+              if (node.id.startsWith('q:')) open(node.id.split(':')[1])
+            }}
+          />
+        </>
       ) : filtered.length ? (
         <>
           <div className="question-list">
@@ -599,6 +629,7 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
         }}
       />
       <Composer
+        submitOnEnter={false}
         autoFocus={false}
         projectId={projectId}
         profileId={data.activeProfileId}

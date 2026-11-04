@@ -10,7 +10,17 @@ import type {
   PeerStatus
 } from '../../../preload/personal'
 import { errorText } from './common'
-import { readTheme, setTheme, THEME_OPTIONS, type ThemePref } from './theme'
+import {
+  FONT_SCALE_OPTIONS,
+  readFontScale,
+  readTheme,
+  setFontScale,
+  setTheme,
+  THEME_OPTIONS,
+  type FontScale,
+  type ThemePref
+} from './theme'
+import { readAnswerBlink, setAnswerBlink } from './answer-blink'
 import { LANGUAGE_OPTIONS, readLanguage, resolveLanguage, setLanguage, type LanguagePref } from '../../../shared/i18n'
 import { useT } from '../../../shared/i18n/react'
 
@@ -27,7 +37,9 @@ export default function Settings({
   const [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false)
   const [theme, setThemeState] = useState(readTheme)
+  const [answerBlink, setAnswerBlinkState] = useState(readAnswerBlink)
   const [language, setLanguageState] = useState(readLanguage)
+  const [fontScale, setFontScaleState] = useState(readFontScale)
   const t = useT()
   const share = usePeerCode()
   useEffect(() => {
@@ -263,6 +275,17 @@ export default function Settings({
                 ))}
               </select>
             </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={answerBlink}
+                onChange={(e) => {
+                  setAnswerBlinkState(e.target.checked)
+                  setAnswerBlink(e.target.checked)
+                }}
+              />
+              {t('답변 완료 시 토글 로고 깜빡임')}
+            </label>
             <label>
               {t('언어')}
               <select
@@ -277,6 +300,23 @@ export default function Settings({
                 {LANGUAGE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.value === 'system' ? t(o.label) : o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t('글꼴 크기')}
+              <select
+                value={fontScale}
+                onChange={(e) => {
+                  const v = e.target.value as FontScale
+                  setFontScaleState(v)
+                  setFontScale(v)
+                }}
+              >
+                {FONT_SCALE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {t(o.label)}
                   </option>
                 ))}
               </select>

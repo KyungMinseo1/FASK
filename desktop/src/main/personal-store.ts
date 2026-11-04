@@ -385,9 +385,7 @@ export class PersonalStore {
       this.db.exec('ROLLBACK')
       throw e
     }
-    for (const image of images)
-      if (!this.isImageReferenced(image) && existsSync(this.imagePath(image)))
-        unlinkSync(this.imagePath(image))
+    for (const image of images) if (!this.isImageReferenced(image)) this.deleteImage(image)
   }
   snapshot(): Snapshot {
     const questions = this.list<Question>('question').sort((a, b) =>
@@ -396,7 +394,8 @@ export class PersonalStore {
     const paths = new Set(questions.flatMap(questionImages))
     let storageBytes = 0
     for (const path of paths)
-      if (existsSync(this.imagePath(path))) storageBytes += statSync(this.imagePath(path)).size
+      for (const file of [this.imagePath(path), this.displayPath(path)])
+        if (existsSync(file)) storageBytes += statSync(file).size
     return {
       profiles: this.list('profile', '*'),
       activeProfileId: this.active,
@@ -429,13 +428,25 @@ export class PersonalStore {
     if (!existsSync(this.imagePath(id))) return null
     return `data:image/${id.endsWith('png') ? 'png' : 'jpeg'};base64,${readFileSync(this.imagePath(id)).toString('base64')}`
   }
+  // Smaller WebP copy for viewing; generated in the background, so the original may be served until then.
+  displayPath(id: string): string {
+    return `${this.imagePath(id)}.webp`
+  }
+  displayImage(id: string): string | null {
+    const display = this.displayPath(id)
+    if (!existsSync(display) || !existsSync(this.imagePath(id))) return this.image(id)
+    return `data:image/webp;base64,${readFileSync(display).toString('base64')}`
+  }
+  deleteImage(id: string): void {
+    for (const file of [this.imagePath(id), this.displayPath(id)])
+      if (existsSync(file)) unlinkSync(file)
+  }
   removeAttachment(questionId: string, turnId: string): void {
     const turn = this.record<Question>('question', questionId).turns.find((t) => t.id === turnId)
     if (!turn) throw new Error('대화 항목을 찾을 수 없습니다.')
     this.updateTurn(questionId, turnId, { attachment: null })
     const id = turn.attachment
-    if (id && !this.isImageReferenced(id) && existsSync(this.imagePath(id)))
-      unlinkSync(this.imagePath(id))
+    if (id && !this.isImageReferenced(id)) this.deleteImage(id)
   }
   updateQuestion(id: string, patch: Partial<Question>): void {
     const q = this.record<Question>('question', id)
