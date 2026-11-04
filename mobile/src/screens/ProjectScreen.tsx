@@ -162,6 +162,13 @@ export default function ProjectScreen(): React.JSX.Element {
       <h2>{t('질문을 선택하세요')}</h2>
     </div>
   )
+  const fab = (
+    <div className="mobile-fab">
+      <button className="primary" onClick={() => navigate(`/p/${projectId}/new`)}>
+        {t('＋ 새 질문')}
+      </button>
+    </div>
+  )
   return (
     <>
       <header className="mobile-top">
@@ -175,7 +182,11 @@ export default function ProjectScreen(): React.JSX.Element {
       <main className={wide ? 'mobile-body project-split' : 'mobile-body'}>
         {wide ? (
           <>
-            {list}
+            {/* The button lives in the list column so the detail pane reaches its bottom edge. */}
+            <div className="mobile-list-column">
+              {list}
+              {fab}
+            </div>
             {detail}
           </>
         ) : questionId ? (
@@ -184,13 +195,7 @@ export default function ProjectScreen(): React.JSX.Element {
           list
         )}
       </main>
-      {(!questionId || wide) && (
-        <div className="mobile-fab">
-          <button className="primary" onClick={() => navigate(`/p/${projectId}/new`)}>
-            {t('＋ 새 질문')}
-          </button>
-        </div>
-      )}
+      {!questionId && !wide && fab}
       {menu && (
         <QuestionSheet
           key={menu.id}

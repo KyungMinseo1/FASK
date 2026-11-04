@@ -3,6 +3,7 @@ import type { Concept, Question, Turn } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
+import TurnNav from './TurnNav'
 import { useApi } from './api'
 import { dateLabel } from './common'
 import { useT } from '../../../shared/i18n/react'
@@ -120,6 +121,7 @@ export default function QuestionDetail({
           {t('이 대화에 이어서 질문 ↗')}
         </button>
       )}
+      <TurnNav turns={q.turns} />
     </aside>
   )
 }
@@ -151,10 +153,33 @@ function TurnView({
       alive = false
     }
   }, [api, t.attachment])
+  // Only mobile CSS clamps long questions; show the toggle when the clamp hides text.
+  const questionRef = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [clamped, setClamped] = useState(false)
+  useEffect(() => {
+    const el = questionRef.current
+    if (!el || expanded) return
+    const check = (): void => setClamped(el.scrollHeight > el.clientHeight + 1)
+    check()
+    const observer = new ResizeObserver(check)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [t.sent, expanded])
   return (
     <section className="detail-turn">
       <span className="eyebrow">{tr('질문 {{n}}', { n: index + 1 })}</span>
-      <p className="turn-question">{t.sent}</p>
+      <p
+        ref={questionRef}
+        className={`turn-question${expanded ? ' expanded' : clamped ? ' clamped' : ''}`}
+      >
+        {t.sent}
+      </p>
+      {(clamped || expanded) && (
+        <button className="turn-question-toggle" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? tr('질문 접기') : tr('질문 더보기')}
+        </button>
+      )}
       {t.refined && (
         <details>
           <summary>{tr('원래 질문')}</summary>
