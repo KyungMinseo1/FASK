@@ -301,7 +301,21 @@ export function createHubClient<P extends HubIdentity>(
     } catch (e) {
       if (superseded()) return
       const errors = e && typeof e === 'object' && 'errors' in e && Array.isArray(e.errors) ? e.errors : []
-      fail(errors.filter((x) => x !== undefined).map((x) => (x instanceof HubError ? x.code : 'NETWORK')))
+      const codes: HubErrorCode[] = errors
+        .filter((x) => x !== undefined)
+        .map((x) => (x instanceof HubError ? x.code : 'NETWORK'))
+      // A failed replacement keeps the still-live stream; its own close reports real outages.
+      if (handle !== null && codes.every((c) => c === 'NETWORK')) {
+        attempt = 0
+        if (streamAt === RELAY_ADDRESS && p.addresses.length > 1) probe = setInterval(upgrade, UPGRADE_PROBE_MS)
+        return
+      }
+      // Auth and pin failures still retire the old stream, as before make-before-break.
+      const previous = handle
+      handle = null
+      current = null
+      previous?.()
+      fail(codes)
       return
     }
     if (superseded()) return winner.value.release()
@@ -358,11 +372,7 @@ export function createHubClient<P extends HubIdentity>(
     if (closed) return
     clearTimeout(timer)
     stopUpgrade()
-    // Drop ownership before closing the previous stream so its callbacks are ignored.
-    const previous = handle
-    handle = null
-    current = null
-    previous?.()
+    // Make-before-break: the live stream keeps delivering until promote() swaps in the new one.
     void connect(active === RELAY_ADDRESS ? [...p.addresses] : ordered())
   }
 
@@ -378,6 +388,8 @@ export function createHubClient<P extends HubIdentity>(
         const cached = deps.cache ? await deps.cache.load(p.fingerprint) : memorySnapshot
         if (closed) throw closedError()
         if (!cached) throw e
+        // A live event stream proves the path works; a transient RPC failure is not "offline".
+        if (e.code === 'NETWORK' && handle !== null) return cached.snapshot
         deps.onStatus({
           state: e.code === 'PIN_MISMATCH' ? 'blocked' : 'offline',
           savedAt: cached.savedAt

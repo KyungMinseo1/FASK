@@ -206,7 +206,7 @@ export default function ProjectScreen(): React.JSX.Element {
           ←
         </button>
         <h1>{project.name}</h1>
-        {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} questionId={questionId} />}
+        {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} />}
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className={wide ? 'mobile-body project-split' : 'mobile-body'}>
@@ -239,17 +239,11 @@ export default function ProjectScreen(): React.JSX.Element {
   )
 }
 
-function ScreenQuestionControl({
-  projectId,
-  questionId
-}: {
-  projectId: string
-  questionId?: string
-}): React.JSX.Element {
+function ScreenQuestionControl({ projectId }: { projectId: string }): React.JSX.Element {
   const mobile = useMobile()
   const t = useT()
-  const current = useRef({ mobile, projectId, questionId })
-  current.current = { mobile, projectId, questionId }
+  const current = useRef({ mobile, projectId })
+  current.current = { mobile, projectId }
   const [status, setStatus] = useState<OverlayStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -294,10 +288,8 @@ function ScreenQuestionControl({
       }
       if (initial.mobile.conn.state !== 'online')
         throw new Error(t('PC에 연결된 상태에서 화면 질문을 시작해 주세요.'))
-      if (!initial.mobile.data.projects.some((item) => item.id === projectId) ||
-          (questionId && !initial.mobile.data.questions.some(
-            (item) => item.id === questionId && item.projectId === projectId
-          ))) throw new Error(t('현재 화면에 프로젝트 또는 질문이 없습니다. 다시 열어 주세요.'))
+      if (!initial.mobile.data.projects.some((item) => item.id === projectId))
+        throw new Error(t('프로젝트를 찾을 수 없습니다.'))
       if (!window.confirm(
         t(
           '다른 앱 위에 FASK 토글을 표시하고 이번 세션 동안 전체 디스플레이를 공유합니다. 전역 펜 좌표를 맞추려면 전체 화면 공유가 필요합니다. 전체 화면을 자동 전송하지 않으며, 질문 전송 시 선택한 영역만 첨부합니다. 보호된 화면은 캡처되지 않거나 검게 보일 수 있습니다. 계속할까요?'
@@ -338,7 +330,7 @@ function ScreenQuestionControl({
       const now = current.current
       if (!mounted.current) return
       if (now.mobile.client !== initial.mobile.client || now.projectId !== initial.projectId ||
-          now.questionId !== initial.questionId || now.mobile.conn.state !== 'online' ||
+          now.mobile.conn.state !== 'online' ||
           now.mobile.data.activeProfileId !== initial.mobile.data.activeProfileId)
         throw new Error(t('현재 화면이나 연결이 변경되었습니다. 다시 시작해 주세요.'))
       const profileId = latest.activeProfileId
@@ -349,10 +341,7 @@ function ScreenQuestionControl({
             (item) => item.id === project.workspaceId && item.profileId === profileId
           ))
         throw new Error(t('현재 프로필에 프로젝트가 없습니다. 프로젝트를 다시 열어 주세요.'))
-      if (questionId && !latest.questions.some(
-        (item) => item.id === questionId && item.projectId === projectId
-      )) throw new Error(t('현재 프로젝트에 질문이 없습니다. 질문을 다시 열어 주세요.'))
-      await overlayControl.start({ pairing, profileId, projectId, ...(questionId ? { questionId } : {}) })
+      await overlayControl.start({ pairing, profileId, projectId })
       if (mounted.current) setStatus(await overlayControl.status())
     } catch (error) {
       if (error instanceof HubError && error.code === 'UNAUTHORIZED')

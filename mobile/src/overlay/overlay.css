@@ -40,3 +40,34 @@
 .screen-q-fatal {
   margin: 16px;
 }
+.screen-q-followup {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--primary-soft);
+  border-bottom: 1px solid var(--primary-border);
+  color: var(--primary);
+  font-size: 13px;
+}
+.screen-q-followup-tag {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.screen-q-followup b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 500;
+}
+.screen-q-followup button {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+}
