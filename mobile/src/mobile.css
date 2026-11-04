@@ -52,7 +52,7 @@
   overflow: hidden;
   align-items: stretch;
 }
-.fask-mobile .project-split > .mobile-list,
+.fask-mobile .project-split > .mobile-list-column,
 .fask-mobile .project-split > .mobile-detail,
 .fask-mobile .project-split > .empty-state {
   min-height: 0;
@@ -144,13 +144,22 @@
   overflow: visible;
   margin-bottom: 16px;
 }
-.fask-mobile .detail-answer > .markdown-answer,
-.fask-mobile .live-answer > .markdown-answer {
-  max-height: 55vh;
-  max-height: 55dvh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 4px 8px 4px 0;
+/* Answers flow in the single outer scroller; long questions are clamped instead so
+   the answer starts near the top and one swipe axis moves through the whole thread. */
+.fask-mobile .turn-question:not(.expanded) {
+  max-height: 25dvh;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+.fask-mobile .turn-question-toggle {
+  min-height: 32px;
+  margin: -4px 0 8px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--primary);
+  background: transparent;
+  border-color: var(--primary-border);
 }
 @media (max-width: 899px) {
   .fask-mobile .mobile-detail .question-detail > header {
@@ -452,9 +461,20 @@
   .fask-mobile .mobile-workspace .space-card {
     margin-bottom: 0;
   }
-  .fask-mobile .mobile-fab {
-    width: 412px;
-    box-sizing: border-box;
+  .fask-mobile .mobile-list-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+  .fask-mobile .mobile-list-column > .mobile-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .fask-mobile .mobile-list-column > .mobile-fab {
+    padding: 0;
     border-top: 0;
     background: transparent;
   }

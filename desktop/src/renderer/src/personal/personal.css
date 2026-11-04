@@ -2787,6 +2787,97 @@ button.memo-saved:disabled {
 .question-detail {
   animation: dash-rise 0.3s ease-out both;
 }
+/* Thread jump controls (portaled to <body>). TurnNav sets right/bottom to the
+   visible corner of the thread's scroller. Hidden until the thread scrolls. */
+.turn-nav {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: var(--font);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+.turn-nav.shown {
+  opacity: 0.55;
+  pointer-events: auto;
+  transform: none;
+}
+.turn-nav.shown.pinned {
+  opacity: 1;
+}
+.turn-nav > button {
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  box-shadow: var(--shadow-float);
+}
+.turn-nav > button.active {
+  color: var(--primary);
+  border-color: var(--primary-border);
+}
+.turn-nav-menu {
+  position: absolute;
+  right: 0;
+  bottom: 48px;
+  width: min(320px, 80vw);
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
+}
+.turn-nav-menu button {
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  border-radius: var(--r-sm);
+}
+.turn-nav-menu button:hover {
+  background: var(--surface-3);
+}
+.turn-nav-menu b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-subtle);
+}
+.turn-nav-menu span {
+  width: 100%;
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-nav {
+    transition: none;
+  }
+}
 
 /* sidebar */
 .fask-sidebar nav button {
