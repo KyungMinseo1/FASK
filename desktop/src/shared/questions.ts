@@ -32,6 +32,13 @@ const COMPLEXITIES = ['simple', 'complex', 'unknown'] as const
 export function lastTurn(q: Question): Turn {
   return q.turns[q.turns.length - 1]
 }
+/** True when `prev`'s running last turn is now completed in `next` (same turn id). */
+export function answerJustCompleted(prev: Question | undefined, next: Question | undefined): boolean {
+  if (!prev || !next) return false
+  const before = lastTurn(prev)
+  if (!before || before.status !== 'running') return false
+  return next.turns.some((t) => t.id === before.id && t.status === 'completed')
+}
 export function questionStatus(q: Question): TurnStatus {
   return lastTurn(q).status
 }

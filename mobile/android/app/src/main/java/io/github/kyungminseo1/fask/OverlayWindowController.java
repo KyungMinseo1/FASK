@@ -413,6 +413,12 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
         render();
     }
 
+    /** An answer completed in the panel page; blink the toggle unless the panel is showing. */
+    public void notifyAnswered() {
+        checkThread();
+        if (!closed && mode != Mode.PANEL) chrome.setAttention(true);
+    }
+
     public void showPanel() {
         checkThread();
         if (closed || captureLocked) return;
@@ -424,6 +430,7 @@ public final class OverlayWindowController implements OverlayInkView.Listener {
             return;
         }
         mode = Mode.PANEL;
+        chrome.setAttention(false);
         ink.setMode(mode); remove(ink);
         chrome.hideHandle();
         panelParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;

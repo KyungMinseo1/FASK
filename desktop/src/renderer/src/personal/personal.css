@@ -880,6 +880,28 @@ button.memo-saved:disabled {
   white-space: pre-wrap;
   margin: 4px 0 8px;
 }
+/* Long questions fold so the answer starts near the top; mobile overrides the height. */
+.turn-question:not(.expanded) {
+  max-height: 9.5em;
+  overflow: hidden;
+}
+.turn-question.clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+.turn-question-toggle {
+  min-height: 32px;
+  margin: -4px 0 8px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--primary);
+  background: transparent;
+  border-color: var(--primary-border);
+}
+.capture-status {
+  font-size: 12px;
+  color: var(--ink-subtle);
+}
 .hub-qr {
   display: block;
   width: 240px;
@@ -959,33 +981,6 @@ button.memo-saved:disabled {
   display: block !important;
   margin-top: 24px;
   width: 100%;
-}
-.graph-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: var(--ink-subtle);
-  margin-bottom: 8px;
-}
-.concept-editor {
-  background: var(--surface-1);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
-  margin-top: 20px;
-  padding: 16px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.concept-editor h3 {
-  width: 100%;
-  font-size: 13px;
-  font-weight: 600;
-}
-.concept-editor input,
-.concept-editor select {
-  max-width: 200px;
 }
 
 /* ---------- home ---------- */
@@ -1403,6 +1398,21 @@ button.memo-saved:disabled {
   font-size: 28px;
   text-align: center;
   color: var(--brand-mark);
+}
+/* Answer completed while the panel was closed; cleared when the panel opens. */
+@keyframes fask-attention {
+  50% {
+    opacity: 0.25;
+  }
+}
+.overlay-toolbar b.attention {
+  animation: fask-attention 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-toolbar b.attention {
+    animation: none;
+    color: var(--accent);
+  }
 }
 .overlay-toolbar b span {
   display: none;
@@ -2094,6 +2104,11 @@ button.memo-saved:disabled {
   font-size: 12px;
   line-height: 1.8;
   color: var(--ink-subtle);
+}
+/* Same box as a clipped preview, so the list does not jump when the Markdown arrives. */
+.card-preview-pending {
+  height: 5.4em;
+  font-size: 12px;
 }
 .markdown-answer-preview p {
   margin: 0 0 0.4em;
@@ -3183,4 +3198,273 @@ button.memo-saved:disabled {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Project scope: the page never scrolls; the records list and detail scroll on their own. */
+.fask-main.project-scope {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+}
+.fask-main.project-scope > * {
+  flex: none;
+}
+.fask-main.project-scope > .knowledge-area {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+.project-scope .records-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.records-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.records-scroll::-webkit-scrollbar {
+  display: none;
+}
+.project-scope .question-detail {
+  position: static;
+  max-height: none;
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.project-scope .question-detail::-webkit-scrollbar {
+  display: none;
+}
+.compose-slot {
+  max-height: 45vh;
+  overflow-y: auto;
+  flex: none;
+}
+.project-header.collapsed {
+  margin: 8px 0;
+}
+.project-header.collapsed h1 {
+  font-size: 20px;
+}
+
+/* ---------- graph: full-height stage, corner dock, fullscreen ---------- */
+.graph-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.graph-stage > .mind-map-box {
+  flex: 1;
+}
+.mind-map-box {
+  position: relative;
+  background: var(--surface-2) !important;
+  border-color: var(--hairline) !important;
+}
+.mind-map-box.full,
+.mind-map-box:fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  width: 100vw !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+}
+.graph-dock {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.graph-dock-toggle {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 50% !important;
+  background: var(--card-glass, var(--surface-1)) !important;
+  backdrop-filter: blur(8px);
+  color: var(--ink-muted);
+  box-shadow: 0 4px 14px var(--primary-ring) !important;
+  transition:
+    color 0.2s,
+    transform 0.2s !important;
+}
+.graph-dock.open .graph-dock-toggle {
+  color: var(--primary);
+  transform: rotate(90deg) !important;
+}
+.graph-dock svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.graph-dock-toggle svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+.graph-dock-items {
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  background: var(--card-glass, var(--surface-1));
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 28px var(--primary-ring);
+  transform-origin: top right;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.96);
+  pointer-events: none;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease;
+}
+.graph-dock.open .graph-dock-items {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.graph-dock-items button {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: var(--r-md) !important;
+  background: transparent !important;
+  color: var(--ink-muted);
+  font: 500 13px/1 var(--font);
+  text-align: left;
+  box-shadow: none !important;
+  white-space: nowrap;
+}
+.graph-dock-items button:hover {
+  background: var(--primary-soft) !important;
+  color: var(--primary);
+  transform: none !important;
+}
+.graph-hint.copy {
+  background: var(--success);
+}
+/* Long-press on touch must not open the system text-selection/callout. */
+.mind-map-box .react-flow__node {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.graph-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 10;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  animation: settings-pop 0.25s ease-out both;
+}
+
+/* ---------- title chevron: hide/show project details ---------- */
+.fask-app .header-collapse {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 0;
+  vertical-align: middle;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-tertiary);
+  box-shadow: none;
+}
+.fask-app .header-collapse:hover {
+  background: var(--surface-3);
+  color: var(--primary);
+  transform: none;
+}
+.header-collapse svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.25s ease;
+}
+.header-collapse.collapsed svg {
+  transform: rotate(180deg);
+}
+
+/* ---------- font size: scales the app UI; heights tied to the viewport are compensated ---------- */
+.fask-app,
+.modal-backdrop > * {
+  zoom: var(--ui-zoom, 1);
+}
+.fask-app {
+  height: calc(100vh / var(--ui-zoom, 1));
+}
+.fask-sidebar {
+  height: calc(100vh / var(--ui-zoom, 1));
+}
+.settings-modal {
+  height: min(850px, calc(90vh / var(--ui-zoom, 1)));
+}
+.mind-map-box.full,
+.mind-map-box:fullscreen {
+  width: calc(100vw / var(--ui-zoom, 1)) !important;
+  height: calc(100vh / var(--ui-zoom, 1)) !important;
+}
+:root[data-theme='dark'] {
+  --card-glass: #161a2be6;
+}
+/* Close/star for a scrolled question: top-right of the thread scroller. */
+.turn-nav-top {
+  transform: translateY(-6px);
+  align-items: center;
+}
+.turn-nav-top > button {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  font-size: 17px;
+}
+.turn-nav-top > button.star-on {
+  color: #f0b429;
+}
+/* Only the ⋯ button (and the open menu) catch the pointer, so hover opens it from the button alone. */
+.graph-dock {
+  pointer-events: none;
+}
+.graph-dock-toggle,
+.graph-dock.open .graph-dock-items {
+  pointer-events: auto;
 }

@@ -33,6 +33,7 @@ const plugin = registerPlugin<
     preview(): Promise<void>
     setTheme(options: { pref: string }): Promise<void>
     setLanguage(options: { lang: 'ko' | 'en' }): Promise<void>
+    setAnswerBlink(options: { enabled: boolean }): Promise<void>
   }
 >('FaskOverlay')
 
@@ -47,6 +48,11 @@ export const overlayControl: OverlayPlugin = {
 /** Mirrors the app's theme choice (system/light/dark/sepia/forest/rose) to the native overlay toolbar. */
 export function syncOverlayTheme(pref: string): void {
   if (isAndroidOverlay()) void plugin.setTheme({ pref }).catch(() => {})
+}
+
+/** Mirrors this phone's answer-completed blink preference to the native toggle. */
+export function syncOverlayAnswerBlink(enabled: boolean): void {
+  if (isAndroidOverlay()) void plugin.setAnswerBlink({ enabled }).catch(() => {})
 }
 
 /** Mirrors the resolved UI language to the native overlay toolbar and panel. */

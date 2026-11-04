@@ -2,7 +2,7 @@
 .fask-app.fask-mobile {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  height: calc(100dvh / var(--ui-zoom, 1));
   overflow: hidden;
   font-size: 15px;
   padding-top: env(safe-area-inset-top);
@@ -290,6 +290,18 @@
   margin: 0;
   font-size: 13px;
   color: var(--ink-subtle);
+}
+.fask-mobile .mobile-settings label.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 14px;
+}
+.fask-mobile .mobile-settings label.check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--primary);
 }
 .fask-mobile .theme-grid {
   display: grid;

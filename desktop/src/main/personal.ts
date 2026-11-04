@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage } from 'electron'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { hostname, networkInterfaces } from 'node:os'
+import { dirname, join } from 'node:path'
 import {
   addressKind,
   createHubCertificate,
@@ -16,6 +17,7 @@ import { PairError, PairingHost } from './peer-pairing'
 import { checkPeerCall, RemoteRouter, UNSUPPORTED } from './personal-routing'
 import { isTailscaleTarget, pairRelayKey, TAILSCALE_ADDRESS_ERROR, type PairPayload } from '../shared/pair-code'
 import { PersonalStore } from './personal-store'
+import { DisplayImages } from './image-display'
 import { PersonalCapture } from './personal-capture'
 import { validateBackup } from './personal-backup'
 import { questionShortcutInfo, registerQuestionShortcut } from './personal-shortcuts'
@@ -87,6 +89,18 @@ export interface PersonalRuntime {
 }
 export function registerPersonal(root: string, main: () => BrowserWindow | null): PersonalRuntime {
   const store = new PersonalStore(root)
+  const display = new DisplayImages(
+    store,
+    join(dirname(require.resolve('@jsquash/webp/package.json')), 'codec/enc/webp_enc_simd.wasm'),
+    join(__dirname, 'webp-worker.js')
+  )
+  const saveImage = (data: string): string => {
+    const id = store.saveImage(data)
+    display.ensure(id)
+    return id
+  }
+  // Older attachments get their copies once startup work has settled.
+  const backfillTimer = setTimeout(() => display.backfill(), 5000)
   // Deliberately in memory: reopening an overlay restores the conversation, restarting resets it.
   const recentQuestions = new Map<string, string>()
   const controllers = new Map<
@@ -417,7 +431,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   handle('attachment', (id: string) => {
     if (!store.list<Question>('question').some((q) => questionImages(q).includes(id)))
       throw new Error('이미지 접근 권한이 없습니다.')
-    return store.image(id)
+    return store.displayImage(id)
   })
   handle('clear-attachment', (questionId: string, turnId: string) => {
     store.removeAttachment(questionId, turnId)
@@ -524,7 +538,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       )
       .digest('hex')
     // Images are content-addressed files written outside the transaction.
-    const attachment = input.image ? store.saveImage(input.image) : null
+    const attachment = input.image ? saveImage(input.image) : null
     const turn: Turn = {
       id: randomUUID(),
       createdAt: new Date().toISOString(),
@@ -557,12 +571,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         saveOnly
       })
     } catch (e) {
-      if (
-        attachment &&
-        !store.isImageReferenced(attachment) &&
-        existsSync(store.imagePath(attachment))
-      )
-        unlinkSync(store.imagePath(attachment))
+      if (attachment && !store.isImageReferenced(attachment)) store.deleteImage(attachment)
       throw e
     }
     const { questionId, turnId } = recorded
@@ -858,7 +867,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
             id: randomUUID(),
             status: t.status === 'running' ? 'failed' : t.status,
             revision: t.status === 'running' ? t.revision + 1 : t.revision,
-            attachment: t.attachment ? store.saveImage(backup.images[t.attachment]) : null
+            attachment: t.attachment ? saveImage(backup.images[t.attachment]) : null
           }))
         })
       store.saveSettings({
@@ -1192,6 +1201,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       registerQuestionShortcut(quickQuestion)
     },
     close: () => {
+      clearTimeout(backfillTimer)
+      void display.close()
       for (const item of controllers.values()) item.controller.abort()
       for (const conn of peers.values()) conn.close()
       peers.clear()

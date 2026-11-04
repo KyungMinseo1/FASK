@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   overlayPreviewAvailable,
   previewOverlay,
+  syncOverlayAnswerBlink,
   syncOverlayLanguage,
   syncOverlayTheme
 } from '../overlay/control'
@@ -11,8 +12,12 @@ import {
   readTheme,
   setTheme,
   THEME_OPTIONS,
+  FONT_SCALE_OPTIONS,
+  readFontScale,
+  setFontScale,
   type ThemePref
 } from '@desktop/renderer/src/personal/theme'
+import { readAnswerBlink, setAnswerBlink } from '@desktop/renderer/src/personal/answer-blink'
 import {
   LANGUAGE_OPTIONS,
   readLanguage,
@@ -32,7 +37,9 @@ export default function Settings(): React.JSX.Element {
   const navigate = useNavigate()
   const t = useT()
   const [theme, setThemeState] = useState(readTheme)
+  const [answerBlink, setAnswerBlinkState] = useState(readAnswerBlink)
   const [language, setLanguageState] = useState<LanguagePref>(readLanguage)
+  const [fontScale, setFontScaleState] = useState(readFontScale)
   const [previewError, setPreviewError] = useState('')
   const profile = data.profiles.find((p) => p.id === data.activeProfileId)
   const relayed = client.address() === RELAY_ADDRESS
@@ -69,6 +76,21 @@ export default function Settings(): React.JSX.Element {
           </div>
         </section>
         <section>
+          <h2>{t('토글 알림')}</h2>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={answerBlink}
+              onChange={(e) => {
+                setAnswerBlinkState(e.target.checked)
+                setAnswerBlink(e.target.checked)
+                syncOverlayAnswerBlink(e.target.checked)
+              }}
+            />
+            {t('답변 완료 시 토글 로고 깜빡임')}
+          </label>
+        </section>
+        <section>
           <h2>{t('언어')}</h2>
           <p>{t('이 휴대폰에만 적용되며 바로 바뀝니다.')}</p>
           <div className="theme-grid" role="radiogroup" aria-label={t('언어')}>
@@ -85,6 +107,25 @@ export default function Settings(): React.JSX.Element {
                 }}
               >
                 {o.value === 'system' ? t(o.label) : o.label}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section>
+          <h2>{t('글꼴 크기')}</h2>
+          <div className="theme-grid" role="radiogroup" aria-label={t('글꼴 크기')}>
+            {FONT_SCALE_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                role="radio"
+                aria-checked={fontScale === o.value}
+                className={`theme-chip${fontScale === o.value ? ' on' : ''}`}
+                onClick={() => {
+                  setFontScaleState(o.value)
+                  setFontScale(o.value)
+                }}
+              >
+                {t(o.label)}
               </button>
             ))}
           </div>

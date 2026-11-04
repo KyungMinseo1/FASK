@@ -273,6 +273,10 @@ final class OverlayWebBridge {
                 ok(id, new JSONObject());
                 return;
             }
+            case "notifyAnswered":
+                overlay.notifyAnswered();
+                ok(id, new JSONObject());
+                return;
             case "setProject": {
                 String project = p.getString("projectId");
                 if (!project.matches("[A-Za-z0-9-]{1,100}")) throw new JSONException("projectId");

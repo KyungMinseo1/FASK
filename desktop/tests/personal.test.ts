@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, request as httpRequest, type IncomingHttpHeaders } from 'node:http'
@@ -23,7 +23,9 @@ import { pairConfig, pairRelayKey, runPairClient, type PairPayload, type PairPos
 import { OpaqueClient } from '@cloudflare/opaque-ts'
 import { validateBackup } from '../src/main/personal-backup'
 import { readAttachment } from '../src/renderer/src/personal/attachments'
+import { previewSource } from '../src/renderer/src/personal/preview-source'
 import {
+  answerJustCompleted,
   applyDelta,
   cleanTitle,
   mergeLive,
@@ -32,6 +34,32 @@ import {
   pageWindow,
   reconcileTurnState
 } from '../src/shared/questions'
+
+test('answerJustCompleted fires only for the same turn going running → completed', () => {
+  const q = (id: string, status: Turn['status']): Question =>
+    ({ id: 'q1', turns: [{ id, status }] }) as unknown as Question
+  assert.equal(answerJustCompleted(q('t1', 'running'), q('t1', 'completed')), true)
+  assert.equal(answerJustCompleted(q('t1', 'completed'), q('t1', 'completed')), false)
+  assert.equal(answerJustCompleted(q('t1', 'running'), q('t2', 'completed')), false)
+  assert.equal(answerJustCompleted(undefined, q('t1', 'completed')), false)
+})
+
+test('previewSource trims long answers and keeps fences and $$ blocks balanced', () => {
+  const short = 'short answer'
+  assert.equal(previewSource(short), short)
+  const long = Array.from({ length: 130 }, (_, i) => `line ${i} of a long answer`).join('\n')
+  assert.ok(long.length >= 3000)
+  const cut = previewSource(long)
+  assert.ok(cut.length <= 700 && cut.length >= 600, String(cut.length))
+  const balanced = (s: string): boolean =>
+    (s.match(/^```/gm) ?? []).length % 2 === 0 && (s.match(/\$\$/g) ?? []).length % 2 === 0
+  const fence = 'a'.repeat(550) + '\n```ts\n' + 'const x = 1\n'.repeat(200) + '```\nafter'
+  const fenced = previewSource(fence)
+  assert.ok(balanced(fenced) && !fenced.includes('```'))
+  const math = 'b'.repeat(550) + '\n$$\n' + 'x^2 + y^2\n'.repeat(200) + '$$\nafter'
+  const mathCut = previewSource(math)
+  assert.ok(balanced(mathCut) && !mathCut.includes('$$'))
+})
 
 test('pageSlice clamps pages and pageWindow inserts gaps', () => {
   const items = Array.from({ length: 45 }, (_, i) => i)
@@ -235,6 +263,29 @@ test('deduplicated attachment is retained while another turn refers to it', () =
     assert.equal(store.image(id), null)
     assert.throws(() => store.removeAttachment('two', 'missing'), /대화 항목/)
     assert.throws(() => store.image('../outside.png'), /잘못된/)
+  } finally {
+    store.close()
+    rmSync(path, { recursive: true, force: true })
+  }
+})
+test('display copies are served when present and deleted with the original', () => {
+  const path = mkdtempSync(join(tmpdir(), 'fask-display-')),
+    store = new PersonalStore(path)
+  try {
+    const id = store.saveImage(`data:image/jpeg;base64,${Buffer.from('jpeg bytes').toString('base64')}`)
+    assert.match(store.displayImage(id) ?? '', /^data:image\/jpeg;base64,/)
+    assert.equal(store.displayPath(id), `${store.imagePath(id)}.webp`)
+    writeFileSync(store.displayPath(id), 'webp bytes')
+    assert.equal(
+      store.displayImage(id),
+      `data:image/webp;base64,${Buffer.from('webp bytes').toString('base64')}`
+    )
+    assert.match(store.image(id) ?? '', /^data:image\/jpeg;base64,/)
+    store.deleteImage(id)
+    assert.equal(existsSync(store.imagePath(id)), false)
+    assert.equal(existsSync(store.displayPath(id)), false)
+    assert.equal(store.displayImage(id), null)
+    store.deleteImage(id)
   } finally {
     store.close()
     rmSync(path, { recursive: true, force: true })

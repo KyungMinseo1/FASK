@@ -7,6 +7,8 @@ import { ToolIcon } from './ToolbarIcons'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
+import { answerJustCompleted } from '../../../shared/questions'
+import { useAnswerBlink } from './answer-blink'
 
 const ANCHOR_W = 64,
   ANCHOR_H = 58
@@ -84,6 +86,18 @@ export default function Overlay(): React.JSX.Element {
   const questionId = recent?.id
   const scrollKey = `fask:panel-scroll:${profileId}`
   const conversationKey = `${projectId}:${questionId ?? ''}`
+  const blinkOn = useAnswerBlink()
+  const [attention, setAttention] = useState(false)
+  const prevRecent = useRef(recent)
+  // Snapshot-based: the overlay Composer unmounts with the closed panel, so onCompleted can't fire.
+  useEffect(() => {
+    if (answerJustCompleted(prevRecent.current, recent) && !panel) setAttention(true)
+    prevRecent.current = recent
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recent])
+  useEffect(() => {
+    if (panel) setAttention(false)
+  }, [panel])
   const panelContent = useRef<HTMLDivElement>(null)
   const restored = useRef(false)
   // The panel unmounts while closed; restore its last scroll once content (Composer) exists.
@@ -409,7 +423,7 @@ export default function Overlay(): React.JSX.Element {
             setPanelInteraction(false)
           }}
         >
-          <b>
+          <b className={attention && blinkOn ? 'attention' : undefined}>
             f<span>{project?.name || 'FASK'}</span>
           </b>
         </button>

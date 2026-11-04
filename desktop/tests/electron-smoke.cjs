@@ -83,7 +83,8 @@ app.whenReady().then(async () => {
           : input.messages[0]?.content.includes('다듬어라')
             ? '다듬어진 테스트 질문'
             : ((lastSystem = input.messages[0]?.content ?? ''),
-              `## 설명\n\n**핵심 내용**과 목록입니다.\n\n- 첫 번째\n- 두 번째\n\n\`\`\`js\nconst answer = 42\n\`\`\`\n\n| 항목 | 설명 |\n| --- | --- |\n| 캡처 | 전송 시 촬영 |\n\n[위험 링크](javascript:alert(1))\n\n<img src="https://example.invalid/track">\n\n${'긴 답변의 스크롤과 영역 크기를 확인하는 문단입니다.\n\n'.repeat(24)}테스트 답변: ${typeof last.content === 'string' ? last.content : '이미지 질문'}`)
+              // List previews render only the first ~600 chars, so preview checks need italic/math up front.
+              `## 설명\n\n**핵심 내용**과 *기울임*, $x^2 + 1$ 목록입니다.\n\n- 첫 번째\n- 두 번째\n\n\`\`\`js\nconst answer = 42\n\`\`\`\n\n| 항목 | 설명 |\n| --- | --- |\n| 캡처 | 전송 시 촬영 |\n\n[위험 링크](javascript:alert(1))\n\n<img src="https://example.invalid/track">\n\n${'긴 답변의 스크롤과 영역 크기를 확인하는 문단입니다.\n\n'.repeat(24)}테스트 답변: ${typeof last.content === 'string' ? last.content : '이미지 질문'}`)
         res.setHeader('Content-Type', 'text/event-stream')
         res.write(
           `data: ${JSON.stringify({ model: 'test-fast', choices: [{ delta: { content: `${reply}\n\n*기울임*과 $x^2 + 1$` } }] })}\n\n`

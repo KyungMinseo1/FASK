@@ -401,6 +401,14 @@ public final class OverlayPlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void setAnswerBlink(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+        getContext().getSharedPreferences(OverlayChrome.THEME_PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(OverlayChrome.BLINK_KEY, enabled).apply();
+        call.resolve();
+    }
+
     /** The app's UI language ('ko' default, 'en') for native overlay text; a live overlay relabels itself. */
     @PluginMethod
     public void setLanguage(PluginCall call) {

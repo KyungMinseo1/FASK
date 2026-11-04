@@ -13,6 +13,7 @@ export type Op =
   | 'captureSelectedRegion'
   | 'setInteractionState'
   | 'setQuestion'
+  | 'notifyAnswered'
   | 'setProject'
   | 'setProjects'
   | 'clearInk'

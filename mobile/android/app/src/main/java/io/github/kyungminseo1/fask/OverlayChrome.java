@@ -68,6 +68,8 @@ final class OverlayChrome {
 
     static final String THEME_PREFS = "overlay_theme";
     static final String THEME_KEY = "pref";
+    /** Per-device answer-completed blink toggle, stored alongside the theme. Default on. */
+    static final String BLINK_KEY = "answer_blink";
     private static final int R_MD = 8, R_LG = 12, R_XL = 16;
     private static final int HANDLE_W = 64, HANDLE_H = 58;
     private static final int SHADOW = 10, ELEVATION = 6, GAP = 8;
@@ -138,6 +140,8 @@ final class OverlayChrome {
     private Pop pop = Pop.NONE;
     private View popAnchor;
     private ValueAnimator barAnimator;
+    /** Pulses the handle's text alpha; the view alpha belongs to the touch/collapse logic. */
+    private ValueAnimator attentionAnimator;
 
     private OverlayWindowController.Mode mode = OverlayWindowController.Mode.IDLE;
     private boolean editable = true, inputLocked, panelOpen;
@@ -232,7 +236,10 @@ final class OverlayChrome {
         int y = Math.round(position.getFloat("y", .25f) * Math.max(0, bounds.height() - h));
         handleRect.set(x, y, x + w, y + h);
 
-        themeListener = (prefs, key) -> { if (THEME_KEY.equals(key)) host.perform(this::applyTheme); };
+        themeListener = (prefs, key) -> {
+            if (THEME_KEY.equals(key)) host.perform(this::applyTheme);
+            else if (BLINK_KEY.equals(key) && !prefs.getBoolean(BLINK_KEY, true)) host.perform(() -> setAttention(false));
+        };
         theme.registerOnSharedPreferenceChangeListener(themeListener);
         languageListener = (prefs, key) -> { if (Strings.KEY.equals(key)) host.perform(this::applyLanguage); };
         language.registerOnSharedPreferenceChangeListener(languageListener);
@@ -344,10 +351,33 @@ final class OverlayChrome {
         if (pop == Pop.PROJECT) rebuildPop();
     }
 
+    /** Blinks the "f" handle until cleared; ignored when this device turned the blink off. */
+    void setAttention(boolean on) {
+        if (closed) return;
+        if (attentionAnimator != null) {
+            attentionAnimator.cancel();
+            attentionAnimator = null;
+        }
+        if (!on || !theme.getBoolean(BLINK_KEY, true)) {
+            handle.setTextColor(palette.brand);
+            return;
+        }
+        ValueAnimator animator = ValueAnimator.ofInt(255, 70);
+        animator.setDuration(600);
+        animator.setRepeatMode(ValueAnimator.REVERSE);
+        animator.setRepeatCount(ValueAnimator.INFINITE);
+        animator.addUpdateListener(a ->
+            handle.setTextColor(((int) a.getAnimatedValue() << 24) | (palette.brand & 0x00FFFFFF)));
+        attentionAnimator = animator;
+        animator.start();
+    }
+
     void close() {
         if (closed) return;
         closed = true;
         cancelBarAnimation();
+        if (attentionAnimator != null) attentionAnimator.cancel();
+        attentionAnimator = null;
         theme.unregisterOnSharedPreferenceChangeListener(themeListener);
         language.unregisterOnSharedPreferenceChangeListener(languageListener);
         context.unregisterComponentCallbacks(configListener);

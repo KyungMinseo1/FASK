@@ -8,6 +8,7 @@
   "scripts": {
     "test": "node tests/run.cjs",
     "test:smoke": "npm run build && node tests/smoke.cjs",
+    "test:slow": "npm run build && node tests/slow.cjs",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
@@ -26,6 +27,7 @@
     "@cloudflare/opaque-ts": "^0.7.5",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@jsquash/webp": "^1.5.0",
     "@peculiar/x509": "^2.2.0",
     "@xyflow/react": "^12.12.0",
     "d3-hierarchy": "^3.1.2",

@@ -21,6 +21,7 @@ export default function NewQuestion(): React.JSX.Element {
       </header>
       <main className="mobile-body">
         <Composer
+          submitOnEnter={false}
           projectId={projectId}
           profileId={data.activeProfileId}
           settings={data.settings}

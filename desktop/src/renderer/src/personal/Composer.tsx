@@ -56,6 +56,8 @@ interface Props {
   mediaActions?: { label: string; pick: () => Promise<File[]> }[]
   /** When false the draft is never read from or written to localStorage. */
   persistDraft?: boolean
+  /** Enter sends and Shift+Enter breaks the line; when false, Ctrl/Cmd+Enter sends (soft keyboards). */
+  submitOnEnter?: boolean
 }
 export default function Composer({
   projectId,
@@ -73,6 +75,7 @@ export default function Composer({
   initialRaw,
   initialFiles,
   mediaActions,
+  submitOnEnter = true,
   persistDraft = true
 }: Props): React.JSX.Element {
   const t = useT()
@@ -476,7 +479,9 @@ export default function Composer({
           setRefined('')
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          // Confirming Korean IME input fires Enter too; never send on it.
+          if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return
+          if (submitOnEnter ? !e.shiftKey : e.ctrlKey || e.metaKey) {
             e.preventDefault()
             void send()
           }
@@ -638,7 +643,9 @@ export default function Composer({
           </>
         )}
         {t(
-          '이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Ctrl + Enter로 전송'
+          submitOnEnter
+            ? '이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Enter로 전송 · Shift + Enter 줄바꿈'
+            : '이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Ctrl + Enter로 전송'
         )}
       </small>
     </div>

@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { memo, useRef } from 'react'
 import CopyButton from './CopyButton'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -6,6 +6,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import { useT } from '../../../shared/i18n/react'
+import { previewSource } from './preview-source'
 
 /** Models often emit \(..\) / \[..\]; remark-math only knows $..$ / $$..$$. Skip code spans/blocks. */
 function normalizeMath(text: string): string {
@@ -33,7 +34,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }): React.JSX.Elem
 }
 
 /** Render model output as text/Markdown, never executable HTML or remote image requests. */
-export default function MarkdownAnswer({
+function MarkdownAnswer({
   children,
   preview = false
 }: {
@@ -75,8 +76,10 @@ export default function MarkdownAnswer({
             : { pre: CodeBlock })
         }}
       >
-        {normalizeMath(children)}
+        {normalizeMath(preview ? previewSource(children) : children)}
       </ReactMarkdown>
     </div>
   )
 }
+
+export default memo(MarkdownAnswer)
