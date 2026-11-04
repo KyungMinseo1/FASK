@@ -177,21 +177,36 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   }
   // ── Linked PCs (this PC as client) ── host data stays in memory, never on disk.
   const peers = new Map<string, PeerConnection>()
+  const localHas = (id: string): boolean => !!store.db.prepare('SELECT 1 FROM records WHERE id=?').get(id)
   const router = new RemoteRouter(
     () => peers.values(),
-    (id) => !!store.db.prepare('SELECT 1 FROM records WHERE id=?').get(id),
+    localHas,
     (name, args) => {
       const handler = handlers.get(name)
       if (!handler) throw new Error(UNSUPPORTED)
       return handler(...args)
+    },
+    (projectId, questionId) => {
+      recentQuestions.set(projectId, questionId)
+      changed(true)
     }
   )
+  /** A project/question of this PC or of a visible linked-PC workspace; throws like store.record when missing. */
+  const anyProject = (id: string): Project => router.remoteProject(id) ?? store.record<Project>('project', id)
+  const anyQuestion = (id: string): Question =>
+    router.remoteQuestion(id) ?? store.record<Question>('question', id)
+  /** Re-reads linked-PC ownership; recent conversations of projects no longer visible anywhere are dropped. */
+  const rebuildPeers = (): void => {
+    router.rebuild()
+    for (const project of [...recentQuestions.keys()])
+      if (!localHas(project) && !router.remoteProject(project)) recentQuestions.delete(project)
+  }
   const connectPeer = (link: PeerLink): void => {
     peers.get(link.id)?.close()
     const conn = new PeerConnection(
       link,
       () => {
-        router.rebuild()
+        rebuildPeers()
         changed(true)
       },
       (event) => {
@@ -214,7 +229,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       return
     }
     const projects = store.list<Project>('project')
-    const project = projects.find((p) => p.id === lastProjectId) ?? projects[0]
+    const project = router.remoteProject(lastProjectId) ?? projects.find((p) => p.id === lastProjectId) ?? projects[0]
     if (project) {
       try {
         capture.open(project.id, true)
@@ -333,10 +348,17 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         .flatMap((p) => (recentQuestions.has(p.id) ? [[p.id, recentQuestions.get(p.id) ?? '']] : []))
     )
   })
-  const mergedSnapshot = (): Snapshot => router.merge(localSnapshot())
+  const mergedSnapshot = (): Snapshot => {
+    const merged = router.merge(localSnapshot())
+    // Linked-PC projects keep their recent conversation on this PC only; peers never see it.
+    const remote = [...recentQuestions].filter(([project]) => router.remoteProject(project))
+    return remote.length
+      ? { ...merged, recentQuestions: { ...merged.recentQuestions, ...Object.fromEntries(remote) } }
+      : merged
+  }
   handle('snapshot', () => mergedSnapshot())
   handle('clear-recent', (id: string) => {
-    store.record('project', id)
+    anyProject(id)
     recentQuestions.delete(id)
     changed()
   })
@@ -346,13 +368,13 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       throw new Error('오버레이와 캡처 설정을 닫고 삭제해 주세요.')
     store.remove(kind, id)
     for (const [project, question] of recentQuestions)
-      if (!store.db.prepare('SELECT id FROM records WHERE id=?').get(question))
+      if (!router.ownerOf(question) && !store.db.prepare('SELECT id FROM records WHERE id=?').get(question))
         recentQuestions.delete(project)
     changed()
   })
   handle('shortcut-info', () => questionShortcutInfo())
   handle('active-project', (id: string) => {
-    store.record('project', id)
+    anyProject(id)
     lastProjectId = id
   })
   handle('overlay-regions', (drawing, regions, panelOpen) =>
@@ -741,9 +763,9 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     return capture.edit(capture.displayId)
   })
   handle('open-overlay', (id: string, questionId?: string) => {
-    store.record('project', id)
+    anyProject(id)
     if (questionId) {
-      if (store.record<Question>('question', questionId).projectId !== id)
+      if (anyQuestion(questionId).projectId !== id)
         throw new Error('프로젝트가 다른 질문입니다.')
       recentQuestions.set(id, questionId)
     }
@@ -1167,7 +1189,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     }
     writeSecret('peer:links', JSON.stringify([...links().filter((l) => !stale.includes(l)), link]))
     connectPeer(link)
-    router.rebuild()
+    rebuildPeers()
     changed()
   })
   handle('peer-links', () =>
@@ -1185,7 +1207,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     conn?.close()
     peers.delete(id)
     writeSecret('peer:links', JSON.stringify(links().filter((l) => l.id !== id)))
-    router.rebuild()
+    rebuildPeers()
     changed()
   })
   try {

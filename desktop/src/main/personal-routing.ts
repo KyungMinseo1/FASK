@@ -1,7 +1,7 @@
 // Linked-PC routing: merges remote workspaces into this PC's snapshot, forwards calls on remote ids,
 // and authorizes what a peer PC may do on this host.
 import { questionImages } from '../shared/questions'
-import type { AskInput, AskResult, Snapshot, StreamEvent, PeerStatus } from '../preload/personal'
+import type { AskInput, AskResult, Project, Question, Snapshot, StreamEvent, PeerStatus } from '../preload/personal'
 import { PEER_BLOCKED, PEER_REVOKED } from './personal-peers'
 
 export const NOT_ALLOWED = '권한이 없는 요청입니다.'
@@ -106,7 +106,8 @@ export class RemoteRouter {
   constructor(
     private peers: () => Iterable<RemotePeer>,
     private localHas: (id: string) => boolean,
-    private local: (name: string, args: unknown[]) => unknown
+    private local: (name: string, args: unknown[]) => unknown,
+    private onAsked: (projectId: string, questionId: string) => void = () => {}
   ) {}
 
   /** Recomputes ownership from the latest remote snapshots; colliding remote workspaces are dropped. */
@@ -163,6 +164,28 @@ export class RemoteRouter {
     return typeof id === 'string' ? this.owners.get(id) : undefined
   }
 
+  /**
+   * A project in a linked PC's workspace as of its last snapshot. Only peers currently in the link list
+   * (unlink deletes them and rebuilds) and workspaces that passed the collision check in rebuild() count;
+   * local ids are never returned. The host re-checks ownership of every forwarded call (checkPeerCall).
+   */
+  remoteProject(id: string): Project | undefined {
+    for (const part of this.parts) {
+      const hit = part.projects.find((p) => p.id === id)
+      if (hit) return hit
+    }
+    return undefined
+  }
+
+  /** A question in a visible linked-PC workspace, under the same contract as remoteProject(). */
+  remoteQuestion(id: string): Question | undefined {
+    for (const part of this.parts) {
+      const hit = part.questions.find((q) => q.id === id)
+      if (hit) return hit
+    }
+    return undefined
+  }
+
   noteStream(peerId: string, event: StreamEvent): void {
     if (event.done) {
       this.runs.delete(event.requestId)
@@ -192,8 +215,9 @@ export class RemoteRouter {
     if (typeof other === 'string' && other && (this.ownerOf(other) ?? 'local') !== (owner ?? 'local'))
       throw new Error(CROSS_BOUNDARY)
     if (!owner) return this.local(name, args)
-    if (name === 'active-project' || name === 'clear-recent') return undefined
-    if (name === 'open-overlay' || name === 'export') throw new Error(REMOTE_UNSUPPORTED)
+    // The overlay window and its recent-conversation state live on this PC, even for linked-PC projects.
+    if (name === 'active-project' || name === 'clear-recent' || name === 'open-overlay') return this.local(name, args)
+    if (name === 'export') throw new Error(REMOTE_UNSUPPORTED)
     const peer = this.peer(owner)
     if (name === 'ask') {
       // The host answers with its own AI settings and active profile.
@@ -201,6 +225,7 @@ export class RemoteRouter {
       this.runs.set(input.requestId, owner)
       const result = (await peer.rpc('ask', [input], { retry: true })) as AskResult
       if (result?.turnId) this.runs.set(result.turnId, owner)
+      if (result?.questionId) this.onAsked(input.projectId, result.questionId)
       return result
     }
     return peer.rpc(name, args, { retry: RETRY.has(name) })

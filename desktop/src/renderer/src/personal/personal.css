@@ -210,7 +210,8 @@ button.danger {
 .settings-modal textarea,
 .create-modal input,
 .composer textarea,
-.composer select {
+.composer select,
+.overlay-history textarea {
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-md);
   padding: 8px 12px;
@@ -227,7 +228,8 @@ button.danger {
 .settings-modal select:focus,
 .create-modal input:focus,
 .composer textarea:focus,
-.composer select:focus {
+.composer select:focus,
+.overlay-history textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-ring);
 }
@@ -842,7 +844,8 @@ button.memo-saved:disabled {
   flex: 1;
   white-space: pre-wrap;
 }
-.fask-app .question-detail .star {
+.fask-app .question-detail .star,
+.overlay-history .question-detail .star {
   border: 0;
   background: transparent;
   font-size: 22px;
@@ -1604,6 +1607,7 @@ button.memo-saved:disabled {
   flex-shrink: 0;
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   align-items: center;
   padding: 10px 12px;
   border-bottom: 1px solid var(--hairline);
@@ -1617,9 +1621,42 @@ button.memo-saved:disabled {
   font-weight: 600;
   margin-top: 4px;
 }
+.overlay-panel > header > div {
+  flex: 1;
+  min-width: 0;
+}
+/* Which conversation the panel continues: "새 대화" or the question's title, one line. */
+.overlay-panel-thread {
+  display: block;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .overlay-panel > header button {
+  flex-shrink: 0;
   font-size: 12px;
   padding: 6px 10px;
+}
+.overlay-history {
+  margin: 8px 16px 0;
+}
+.overlay-history > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+/* The history scrolls with the panel, so the panel's jump controls cover every turn. */
+.overlay-history .question-detail {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  margin-top: 8px;
+  padding: 14px;
 }
 .overlay-panel .composer {
   margin: 8px;

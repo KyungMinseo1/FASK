@@ -208,6 +208,8 @@ export class PeerConnection {
   private attempt = 0
   private seen = new Map<string, number>()
   private refreshing: Promise<void> | null = null
+  /** A `changed` arrived while a snapshot read was in flight; that read may predate it. */
+  private stale = false
 
   constructor(
     readonly link: PeerLink,
@@ -481,17 +483,28 @@ export class PeerConnection {
   }
 
   private refresh(): Promise<void> {
-    // Coalesce bursts of `changed` into one snapshot read.
-    this.refreshing ??= (async () => {
+    // Coalesce bursts of `changed`, but re-read once if one arrived mid-read.
+    if (this.refreshing) {
+      this.stale = true
+      return this.refreshing
+    }
+    this.refreshing = (async () => {
       try {
-        this.snapshot = (await this.rpc('snapshot', [], { retry: true })) as Snapshot
-        this.status = 'online'
-      } catch {
-        // rpc already set the status.
+        do {
+          this.stale = false
+          try {
+            this.snapshot = (await this.rpc('snapshot', [], { retry: true })) as Snapshot
+            this.status = 'online'
+          } catch {
+            // rpc already set the status; reopening the event stream refreshes again.
+            break
+          } finally {
+            this.onChange()
+          }
+        } while (this.stale && !this.terminal)
       } finally {
         this.refreshing = null
       }
-      this.onChange()
     })()
     return this.refreshing
   }

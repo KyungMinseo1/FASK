@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Question, Snapshot } from '@desktop/preload/personal'
-import { answerJustCompleted, lastTurn, questionHeading } from '@desktop/shared/questions'
+import type { Snapshot } from '@desktop/preload/personal'
+import { answerJustCompleted, questionHeading } from '@desktop/shared/questions'
 import { useApi } from '@desktop/renderer/src/personal/api'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import ProjectPicker from '@desktop/renderer/src/personal/ProjectPicker'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
+import TurnNav from '@desktop/renderer/src/personal/TurnNav'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
 import type { HubClient, HubConn } from '../hub'
@@ -53,15 +54,11 @@ export default function OverlayPanel({
   const [picker, setPicker] = useState(false)
   const [questionId, setQuestionId] = useState(boot.questionId)
   const [composerKey, setComposerKey] = useState(0)
+  // Earlier turns start folded per conversation; hiding and showing the panel keeps this state.
   const [historyOpen, setHistoryOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [blocked, setBlocked] = useState('')
   const [interaction, setInteraction] = useState<Interaction>(IDLE)
-  // A running last turn on arrival keeps streaming in this Composer.
-  const [recent] = useState<Question | undefined>(() => {
-    const q = boot.questionId ? initial.questions.find((x) => x.id === boot.questionId) : undefined
-    return q && lastTurn(q).status === 'running' ? q : undefined
-  })
   const interactionRef = useRef(interaction)
   // Ink revision frozen by the latest capture, tied to the turn that capture produced.
   const capturedInk = useRef<number | null>(null)
@@ -253,15 +250,21 @@ export default function OverlayPanel({
         </div>
       )}
       <div className="overlay-panel-content">
-        {questionId && (
-          <div className="screen-q-followup" role="status">
-            <span className="screen-q-followup-tag">↪ {t('이어서 질문 중')}</span>
-            <b>{question ? questionHeading(question) : ''}</b>
-            <button disabled={locked} onClick={newConversation}>
-              {confirmNew ? t('다시 눌러 새 대화 시작') : t('＋ 새 질문')}
-            </button>
-          </div>
-        )}
+        <div className="screen-q-followup" role="status">
+          {questionId ? (
+            <>
+              <span className="screen-q-followup-tag">↪ {t('이어서 질문 중')}</span>
+              <b title={question ? questionHeading(question) : undefined}>
+                {question ? questionHeading(question) : ''}
+              </b>
+              <button disabled={locked} onClick={newConversation}>
+                {confirmNew ? t('다시 눌러 새 대화 시작') : t('＋ 새 질문')}
+              </button>
+            </>
+          ) : (
+            <b>{t('새 대화')}</b>
+          )}
+        </div>
         {unpaired && <p className="notice error">{unpaired}</p>}
         {conn.state === 'offline' && (
           <p className="notice">{t('PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.')}</p>
@@ -283,30 +286,44 @@ export default function OverlayPanel({
             {t('영역 선택')}
           </button>
         </small>
-        {question && (
-          <details open={historyOpen} onToggle={(e) => setHistoryOpen(e.currentTarget.open)}>
+        {question && question.turns.length > 1 && (
+          <details
+            className="overlay-history"
+            open={historyOpen}
+            onToggle={(e) => setHistoryOpen(e.currentTarget.open)}
+          >
             <summary>
-              {t('대화 기록')}
+              {t('이전 대화 {{count}}개', { count: question.turns.length - 1 })}
               {question.memo.trim() !== '' && (
                 <span className="memo-badge" title={t('메모 있음')}>
                   ✎ {t('메모')}
                 </span>
               )}
             </summary>
-          <QuestionDetail
-            question={question}
-            concepts={data.concepts.filter((c) => c.projectId === projectId)}
-            run={run}
-            onClose={() => setHistoryOpen(false)}
-            onCreateConcept={async (name) => {
-              const id = await api.create('concept', name, projectId)
-              await api.updateQuestion(question.id, {
-                conceptIds: [...question.conceptIds, id],
-                suggestions: question.suggestions.filter((s) => s !== name)
-              })
-            }}
-          />
+            <QuestionDetail
+              question={question}
+              concepts={data.concepts.filter((c) => c.projectId === projectId)}
+              run={run}
+              earlierOnly
+              onCreateConcept={async (name) => {
+                const id = await api.create('concept', name, projectId)
+                await api.updateQuestion(question.id, {
+                  conceptIds: [...question.conceptIds, id],
+                  suggestions: question.suggestions.filter((s) => s !== name)
+                })
+              }}
+            />
           </details>
+        )}
+        {question && (
+          <TurnNav
+            turns={question.turns}
+            important={question.important}
+            onToggleImportant={() =>
+              void run(() => api.updateQuestion(question.id, { important: !question.important }))
+            }
+            panel={{ historyOpen, onToggleHistory: () => setHistoryOpen((open) => !open) }}
+          />
         )}
         {!blocked && (
           <Composer
@@ -316,14 +333,11 @@ export default function OverlayPanel({
             profileId={boot.profileId}
             settings={data.settings}
             questionId={questionId}
-            recentQuestion={composerKey === 0 ? recent : undefined}
+            recentQuestion={question}
             persistDraft={false}
             hasInk={overlay.hasInk}
             onCapture={onCapture}
-            onSaved={() => {
-              setHistoryOpen(false)
-              void refresh()
-            }}
+            onSaved={() => void refresh()}
             onCompleted={onCompleted}
             onTurnIdentified={onTurnIdentified}
             onInteractionState={onInteractionState}

@@ -1241,6 +1241,11 @@ interface PeerHost {
   port: number
   tick: (ms: number) => void
   restart: () => Promise<unknown>
+  /**
+   * While a gate is set, snapshot reads answer only after it resolves, with the state from before it.
+   * Resolves once a read is waiting at the gate.
+   */
+  holdSnapshot: (gate: Promise<void> | null) => Promise<void>
 }
 async function peerHost(isTailscale: (address: string) => boolean = () => true): Promise<PeerHost> {
   const tls = await createHubCertificate()
@@ -1248,6 +1253,7 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
   const pairing = new PairingHost('host-pc', () => clock)
   const grants = new Map<string, string>()
   const questions = new Map([['q1', 'first']])
+  let held: { gate: Promise<void>; entered: () => void } | null = null
   const mint = (name: string): PairPayload => {
     const token = randomBytes(32).toString('base64url')
     const id = `peer-${grants.size}-${name}`
@@ -1257,8 +1263,8 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
   const hub: PersonalHub = new PersonalHub(
     async (caller, name, args) => {
       assert.equal(caller.kind, 'peer')
-      if (name === 'snapshot')
-        return {
+      if (name === 'snapshot') {
+        const value = {
           profiles: [],
           activeProfileId: 'p',
           workspaces: [{ id: 'w1', profileId: 'p', name: 'Host WS' }],
@@ -1268,6 +1274,12 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
           settings: {},
           storageBytes: 0
         }
+        if (held) {
+          held.entered()
+          await held.gate
+        }
+        return value
+      }
       if (name === 'rename') {
         await new Promise((r) => setTimeout(r, Math.random() * 20))
         questions.set(String(args[1]), String(args[2]))
@@ -1300,7 +1312,12 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
     tick: (ms) => {
       clock += ms
     },
-    restart: () => hub.start(['127.0.0.1'], bound.port, auth, tls)
+    restart: () => hub.start(['127.0.0.1'], bound.port, auth, tls),
+    holdSnapshot: (gate) => {
+      const entered = Promise.withResolvers<void>()
+      held = gate ? { gate, entered: entered.resolve } : null
+      return entered.promise
+    }
   }
 }
 /** Unpinned POST to a hub's /pair routes over direct TLS, reporting the observed fingerprint. */
@@ -1599,10 +1616,13 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
     }
   }
   const local: unknown[][] = []
+  const asked: string[][] = []
+  let linkedPeers = [peer]
   const router = new RemoteRouter(
-    () => [peer],
+    () => linkedPeers,
     (id) => id === 'lq' || id === 'lp',
-    (name, args) => local.push([name, ...args])
+    (name, args) => local.push([name, ...args]),
+    (p, q) => asked.push([p, q])
   )
   router.rebuild()
   const merged = router.merge({ ...remote, activeProfileId: 'mine', workspaces: [], projects: [], questions: [] })
@@ -1618,10 +1638,29 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
   assert.deepEqual(local, [['rename', 'question', 'lq', 'local']])
   await assert.rejects(router.route('move-question', ['rq', 'lp']), /로컬과 외부 워크스페이스 사이/)
   await assert.rejects(router.route('export', ['rp']), /지원하지 않는 기능/)
+  assert.deepEqual(asked, [['rp', 'rq']])
+  // The overlay and its recent conversation live on this PC, even for linked-PC projects.
+  await router.route('open-overlay', ['rp', 'rq'])
+  await router.route('active-project', ['rp'])
+  await router.route('clear-recent', ['rp'])
+  assert.deepEqual(local.slice(1), [
+    ['open-overlay', 'rp', 'rq'],
+    ['active-project', 'rp'],
+    ['clear-recent', 'rp']
+  ])
+  assert.equal(router.remoteProject('rp')?.id, 'rp')
+  assert.equal(router.remoteQuestion('rq')?.projectId, 'rp')
+  assert.equal(router.remoteProject('lp'), undefined)
   // An id collision with local data hides the remote workspace instead of mixing owners.
   const colliding = new RemoteRouter(() => [peer], (id) => id === 'rq', () => null)
   colliding.rebuild()
   assert.equal(colliding.merge({ ...remote, workspaces: [], projects: [], questions: [] }).workspaces.length, 0)
+  assert.equal(colliding.remoteProject('rp'), undefined)
+  // Unlinking a PC removes its ownership.
+  linkedPeers = []
+  router.rebuild()
+  assert.equal(router.remoteProject('rp'), undefined)
+  assert.equal(router.remoteQuestion('rq'), undefined)
 })
 
 test('linked PC: concurrent renames from two PCs converge on both', async () => {
@@ -1637,6 +1676,33 @@ test('linked PC: concurrent renames from two PCs converge on both', async () => 
     } finally {
       a.close()
       b.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('linked PC: a change during a snapshot read is re-read, not dropped', async () => {
+  const h = await peerHost()
+  try {
+    const conn = new PeerConnection(await linked(h), () => {}, () => {}, h.port)
+    try {
+      await until(() => conn.status === 'online' && !!conn.snapshot, 5000, 'online')
+      const gate = Promise.withResolvers<void>()
+      const reading = h.holdSnapshot(gate.promise)
+      h.questions.set('q1', 'v1')
+      h.hub.broadcast('changed', {})
+      // The read has started and is held with v1 already built in.
+      await reading
+      h.questions.set('q1', 'v2')
+      h.hub.broadcast('changed', {})
+      // Real delay: nothing on the client signals that this `changed` crossed the event stream.
+      await new Promise((r) => setTimeout(r, 100))
+      void h.holdSnapshot(null)
+      gate.resolve()
+      await until(() => conn.snapshot?.questions[0].title === 'v2', 5000, 'latest state')
+    } finally {
+      conn.close()
     }
   } finally {
     await h.hub.stop()

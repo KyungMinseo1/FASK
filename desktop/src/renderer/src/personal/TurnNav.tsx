@@ -11,7 +11,7 @@ const HIDE_MS = 1600
  * is open. Portaled to <body> and pinned to the visible bottom-right corner of the
  * scroller: the scroller itself may extend past the viewport (desktop dashboard).
  */
-/** The question header (close, star) scrolls away after this many pixels. */
+/** The question header (close, star) scrolls away after this many pixels; back-to-top joins them. */
 const HEADER_PX = 80
 /** Desktop: the pointer within this corner of the scroller reveals the header controls. */
 const CORNER_W = 220
@@ -21,12 +21,19 @@ export default function TurnNav({
   turns,
   important,
   onToggleImportant,
-  onClose
+  onClose,
+  panel
 }: {
   turns: Turn[]
   important: boolean
   onToggleImportant: () => void
-  onClose: () => void
+  /** Omitted where the host already has its own close control (question panel). */
+  onClose?: () => void
+  /**
+   * Question panel: earlier turns sit in a foldable `.overlay-history` and the Composer shows the
+   * last one. The close slot then folds/unfolds that history.
+   */
+  panel?: { historyOpen: boolean; onToggleHistory: () => void }
 }): React.JSX.Element {
   const t = useT()
   const anchor = useRef<HTMLSpanElement>(null)
@@ -97,10 +104,18 @@ export default function TurnNav({
   }, [open])
   const jump = (index: number): void => {
     setOpen(false)
-    anchor.current
-      ?.closest('.question-detail')
-      ?.querySelectorAll('.detail-turn')
-      [index]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    let target: Element | null | undefined
+    if (panel) {
+      const content = anchor.current?.closest('.overlay-panel-content')
+      target =
+        index === turns.length - 1
+          ? (content?.querySelector('.composer .recent-question') ?? content?.querySelector('.composer'))
+          : content?.querySelectorAll('.overlay-history .detail-turn')[index]
+    } else target = anchor.current?.closest('.question-detail')?.querySelectorAll('.detail-turn')[index]
+    // An earlier turn in the folded history opens it so the turn has a position.
+    const folded = target?.closest('details.overlay-history')
+    if (folded instanceof HTMLDetailsElement && !folded.open) folded.open = true
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
   const shown = visible || pinned
   const showList = turns.length > 1
@@ -119,6 +134,16 @@ export default function TurnNav({
         >
           <button
             type="button"
+            aria-label={t('맨 위로')}
+            title={t('맨 위로')}
+            onClick={() => scroller.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 19V6M6 12l6-6 6 6" />
+            </svg>
+          </button>
+          <button
+            type="button"
             className={important ? 'star-on' : ''}
             aria-label={t('중요 표시')}
             title={t('중요 표시')}
@@ -126,11 +151,27 @@ export default function TurnNav({
           >
             {important ? '★' : '☆'}
           </button>
-          <button type="button" aria-label={t('닫기')} title={t('닫기')} onClick={onClose}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
+          {onClose && (
+            <button type="button" aria-label={t('닫기')} title={t('닫기')} onClick={onClose}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          )}
+          {panel && turns.length > 1 && (
+            <button
+              type="button"
+              className={panel.historyOpen ? 'active' : ''}
+              aria-label={panel.historyOpen ? t('이전 대화 접기') : t('이전 대화 펼치기')}
+              title={panel.historyOpen ? t('이전 대화 접기') : t('이전 대화 펼치기')}
+              aria-expanded={panel.historyOpen}
+              onClick={panel.onToggleHistory}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d={panel.historyOpen ? 'M7 20l5-5 5 5M7 4l5 5 5-5' : 'M7 15l5 5 5-5M7 9l5-5 5 5'} />
+              </svg>
+            </button>
+          )}
         </div>,
         document.body
       )}
