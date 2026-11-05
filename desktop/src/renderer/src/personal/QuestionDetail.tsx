@@ -17,14 +17,21 @@ export default function QuestionDetail({
   run,
   onClose,
   onCreateConcept,
-  onContinue
+  onContinue,
+  earlierOnly = false
 }: {
   question: Question
   concepts: Concept[]
   run: Run
-  onClose: () => void
+  /** Omitted where the host already has its own close control (desktop question panel). */
+  onClose?: () => void
   onCreateConcept: (name: string) => Promise<void>
   onContinue?: () => void
+  /**
+   * Question panel history: shows only the turns before the last one (the Composer shows that)
+   * and leaves the jump controls to the panel's own TurnNav.
+   */
+  earlierOnly?: boolean
 }): React.JSX.Element {
   const t = useT()
   const api = useApi()
@@ -44,7 +51,7 @@ export default function QuestionDetail({
     <aside className="question-detail">
       <header>
         <span className="eyebrow">QUESTION NOTES</span>
-        <button onClick={onClose}>{t('닫기 ×')}</button>
+        {onClose && <button onClick={onClose}>{t('닫기 ×')}</button>}
       </header>
       <div className="detail-title">
         <h2>{questionHeading(q)}</h2>
@@ -59,7 +66,7 @@ export default function QuestionDetail({
       <p className="detail-meta">
         {dateLabel(q.createdAt)} · {t('대화 {{count}}개', { count: q.turns.length })}
       </p>
-      {q.turns.map((t, i) => (
+      {(earlierOnly ? q.turns.slice(0, -1) : q.turns).map((t, i) => (
         <TurnView key={t.id} questionId={q.id} turn={t} index={i} run={run} />
       ))}
       <h3>{t('연결된 개념')}</h3>
@@ -122,12 +129,14 @@ export default function QuestionDetail({
           {t('이 대화에 이어서 질문 ↗')}
         </button>
       )}
-      <TurnNav
-        turns={q.turns}
-        important={q.important}
-        onToggleImportant={() => void run(() => api.updateQuestion(q.id, { important: !q.important }))}
-        onClose={onClose}
-      />
+      {!earlierOnly && (
+        <TurnNav
+          turns={q.turns}
+          important={q.important}
+          onToggleImportant={() => void run(() => api.updateQuestion(q.id, { important: !q.important }))}
+          onClose={onClose}
+        />
+      )}
     </aside>
   )
 }

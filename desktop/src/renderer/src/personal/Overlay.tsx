@@ -2,14 +2,18 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
+import QuestionDetail from './QuestionDetail'
+import TurnNav from './TurnNav'
 import ProjectPicker from './ProjectPicker'
 import { ToolIcon } from './ToolbarIcons'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
-import { answerJustCompleted } from '../../../shared/questions'
+import { answerJustCompleted, questionHeading } from '../../../shared/questions'
 import { useAnswerBlink } from './answer-blink'
 
+/** The question panel header names the continued question in at most this many characters. */
+const THREAD_CHARS = 30
 const ANCHOR_W = 64,
   ANCHOR_H = 58
 /** Matches `.overlay-project-picker` max-height. */
@@ -86,6 +90,14 @@ export default function Overlay(): React.JSX.Element {
   const questionId = recent?.id
   const scrollKey = `fask:panel-scroll:${profileId}`
   const conversationKey = `${projectId}:${questionId ?? ''}`
+  // Earlier turns start folded in a newly opened overlay and on every conversation change; folding
+  // the panel away and back (the overlay stays) keeps what the user had open.
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyFor, setHistoryFor] = useState(conversationKey)
+  if (historyFor !== conversationKey) {
+    setHistoryFor(conversationKey)
+    setHistoryOpen(false)
+  }
   const blinkOn = useAnswerBlink()
   const [attention, setAttention] = useState(false)
   const prevRecent = useRef(recent)
@@ -112,13 +124,19 @@ export default function Overlay(): React.JSX.Element {
       const saved = JSON.parse(localStorage.getItem(scrollKey) ?? 'null') as {
         key?: string
         top?: number
+        history?: boolean
       } | null
-      if (saved?.key === conversationKey && Number.isFinite(saved.top))
+      // A position saved with the history unfolded means nothing once it is folded again.
+      if (saved?.key === conversationKey && saved.history === historyOpen && Number.isFinite(saved.top))
         panelContent.current.scrollTop = saved.top as number
     } catch {
       // Corrupt entry: start at the top.
     }
-  }, [panel, data, conversationKey, scrollKey])
+  }, [panel, data, conversationKey, scrollKey, historyOpen])
+  const saveScroll = (history: boolean): void => {
+    const top = panelContent.current?.scrollTop ?? 0
+    localStorage.setItem(scrollKey, JSON.stringify({ key: conversationKey, top, history }))
+  }
   const west = toolbar.x + 32 >= innerWidth / 2
   const north = edge === 'bottom'
   const corner = `${north ? 'n' : 's'}${west ? 'w' : 'e'}`
@@ -304,6 +322,26 @@ export default function Overlay(): React.JSX.Element {
     setMode('idle')
   }
   const project = data?.projects.find((p) => p.id === projectId)
+  const projectName = !project
+    ? ''
+    : data?.workspaces.find((w) => w.id === project.workspaceId)?.remote
+      ? `🌐 ${project.name}`
+      : project.name
+  const heading = recent ? questionHeading(recent).replace(/\s+/g, ' ').trim() : ''
+  const headingChars = [...heading]
+  const threadName =
+    headingChars.length > THREAD_CHARS ? `${headingChars.slice(0, THREAD_CHARS).join('')}…` : heading
+  const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      setNotice('')
+      await fn()
+      await refresh()
+      return true
+    } catch (e) {
+      setNotice(errorText(e))
+      return false
+    }
+  }
   const region = data?.settings.regions.find((r) => r.displayId === data.settings.displayId)
   const switchProject = (id: string): void => {
     setPicker(null)
@@ -424,7 +462,7 @@ export default function Overlay(): React.JSX.Element {
           }}
         >
           <b className={attention && blinkOn ? 'attention' : undefined}>
-            f<span>{project?.name || 'FASK'}</span>
+            f<span>{projectName || 'FASK'}</span>
           </b>
         </button>
         <div className="toolbar-tools">
@@ -501,7 +539,7 @@ export default function Overlay(): React.JSX.Element {
           <button
             className={`toolbar-project ${picker ? 'active' : ''}`}
             aria-expanded={!!picker}
-            title={t('프로젝트 바꾸기 · 현재: {{name}}', { name: project?.name ?? '' })}
+            title={t('프로젝트 바꾸기 · 현재: {{name}}', { name: projectName })}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
               setPicker((p) =>
@@ -583,25 +621,69 @@ export default function Overlay(): React.JSX.Element {
           >
             <div>
               <span className="eyebrow">ASK IN CONTEXT</span>
-              <b>{project?.name || t('화면 질문')}</b>
+              <b>{projectName || t('화면 질문')}</b>
+              {project && (
+                <small className="overlay-panel-thread" title={heading || undefined}>
+                  {recent ? `↪ ${threadName}` : t('새 대화')}
+                </small>
+              )}
             </div>
             <button onClick={() => setPanel(false)}>{t('접기 ×')}</button>
           </header>
           <div
             className="overlay-panel-content"
             ref={panelContent}
-            onScroll={(e) =>
-              localStorage.setItem(
-                scrollKey,
-                JSON.stringify({ key: conversationKey, top: e.currentTarget.scrollTop })
-              )
-            }
+            onScroll={() => saveScroll(historyOpen)}
           >
             <small className="overlay-capture-note">
               {region ? t('설정한 영역만 캡처') : t('영역 미설정 · 전체 모니터 캡처')} ·{' '}
               {t('캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}
             </small>
-            {data && (
+            {data && !project && <p className="notice error">{t('프로젝트를 찾을 수 없습니다.')}</p>}
+            {data && project && recent && recent.turns.length > 1 && (
+              <details
+                className="overlay-history"
+                open={historyOpen}
+                onToggle={(e) => {
+                  const open = e.currentTarget.open
+                  setHistoryOpen(open)
+                  saveScroll(open)
+                }}
+              >
+                <summary>
+                  {t('이전 대화 {{count}}개', { count: recent.turns.length - 1 })}
+                  {recent.memo.trim() !== '' && (
+                    <span className="memo-badge" title={t('메모 있음')}>
+                      ✎ {t('메모')}
+                    </span>
+                  )}
+                </summary>
+                <QuestionDetail
+                  question={recent}
+                  concepts={data.concepts.filter((c) => c.projectId === projectId)}
+                  run={run}
+                  earlierOnly
+                  onCreateConcept={async (name) => {
+                    const id = await window.fask.create('concept', name, projectId)
+                    await window.fask.updateQuestion(recent.id, {
+                      conceptIds: [...recent.conceptIds, id],
+                      suggestions: recent.suggestions.filter((s) => s !== name)
+                    })
+                  }}
+                />
+              </details>
+            )}
+            {data && project && recent && (
+              <TurnNav
+                turns={recent.turns}
+                important={recent.important}
+                onToggleImportant={() =>
+                  void run(() => window.fask.updateQuestion(recent.id, { important: !recent.important }))
+                }
+                panel={{ historyOpen, onToggleHistory: () => setHistoryOpen((open) => !open) }}
+              />
+            )}
+            {data && project && (
               <Composer
                 key={`${projectId}:${resetCount}`}
                 projectId={projectId}

@@ -26,9 +26,10 @@ export default function ProjectPicker({
       {workspaces.map((w) => {
         const list = projects.filter((p) => p.workspaceId === w.id)
         if (!list.length) return null
+        const label = w.remote ? `🌐 ${w.name}` : w.name
         return (
-          <div key={w.id} role="group" aria-label={w.name}>
-            <small className="project-picker-group">{w.name}</small>
+          <div key={w.id} role="group" aria-label={label}>
+            <small className="project-picker-group">{label}</small>
             {list.map((p) => (
               <button
                 key={p.id}

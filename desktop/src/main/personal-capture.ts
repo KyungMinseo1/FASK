@@ -66,7 +66,6 @@ export class PersonalCapture {
     }))
   }
   open(projectId: string, showPanel = false): void {
-    this.store.record('project', projectId)
     if (this.editor) throw new Error('캡처 영역 설정을 먼저 마쳐 주세요.')
     this.stopHitTest()
     this.overlay?.destroy()
