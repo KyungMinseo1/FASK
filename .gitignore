@@ -21,3 +21,5 @@ mobile/android/.gradle/
 keystore.properties
 # Local docs
 docs/
+# hallmark
+.hallmark/
