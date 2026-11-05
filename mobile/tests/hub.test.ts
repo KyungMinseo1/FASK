@@ -846,4 +846,50 @@ describe('hub client over the relay', () => {
     expect(t.opens).toEqual([A, RELAY_ADDRESS, A, RELAY_ADDRESS])
     c.close()
   })
+  it('an RPC failure while the event stream is live returns the cached snapshot and stays online', async () => {
+    vi.useFakeTimers()
+    let failing = false
+    const { t } = relayTransport(
+      async () => undefined,
+      async () => {
+        if (failing) throw toHubError('NETWORK')
+        return ok(snapshot('cached'))
+      }
+    )
+    const { c, statuses } = client(t, undefined, relayPairing)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(statuses.at(-1)).toEqual({ state: 'online' })
+    await c.snapshot()
+    failing = true
+    expect((await c.snapshot()).activeProfileId).toBe('cached')
+    expect(statuses.every((s) => s.state === 'online')).toBe(true)
+    c.close()
+  })
+  it('reconnect keeps delivering on the live stream until the replacement opens, and keeps it if the replacement fails', async () => {
+    vi.useFakeTimers()
+    const replacement = deferred<void>()
+    const { t, latest } = relayTransport(async (a, n) =>
+      a === A ? Promise.reject(toHubError('NETWORK')) : n === 0 ? undefined : replacement.promise
+    )
+    const { c, statuses } = client(t, undefined, relayPairing)
+    const got: string[] = []
+    c.onStream((e) => got.push(String(e.delta)))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    const first = latest(RELAY_ADDRESS)
+    c.reconnect()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(t.opens.filter((a) => a === RELAY_ADDRESS)).toHaveLength(2)
+    first.onEvent('stream', JSON.stringify({ delta: 'still' }))
+    expect(got).toEqual(['still'])
+    expect(first.released).toBe(0)
+    replacement.reject(toHubError('NETWORK'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(first.released).toBe(0)
+    first.onEvent('stream', JSON.stringify({ delta: 'kept' }))
+    expect(got).toEqual(['still', 'kept'])
+    expect(c.address()).toBe(RELAY_ADDRESS)
+    expect(statuses.every((s) => s.state === 'online')).toBe(true)
+    c.close()
+  })
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Question, Snapshot } from '@desktop/preload/personal'
-import { answerJustCompleted, lastTurn } from '@desktop/shared/questions'
+import { answerJustCompleted, lastTurn, questionHeading } from '@desktop/shared/questions'
 import { useApi } from '@desktop/renderer/src/personal/api'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
@@ -253,6 +253,15 @@ export default function OverlayPanel({
         </div>
       )}
       <div className="overlay-panel-content">
+        {questionId && (
+          <div className="screen-q-followup" role="status">
+            <span className="screen-q-followup-tag">↪ {t('이어서 질문 중')}</span>
+            <b>{question ? questionHeading(question) : ''}</b>
+            <button disabled={locked} onClick={newConversation}>
+              {confirmNew ? t('다시 눌러 새 대화 시작') : t('＋ 새 질문')}
+            </button>
+          </div>
+        )}
         {unpaired && <p className="notice error">{unpaired}</p>}
         {conn.state === 'offline' && (
           <p className="notice">{t('PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.')}</p>
@@ -319,11 +328,6 @@ export default function OverlayPanel({
             onTurnIdentified={onTurnIdentified}
             onInteractionState={onInteractionState}
           />
-        )}
-        {questionId && (
-          <button className="overlay-new" disabled={locked} onClick={newConversation}>
-            {confirmNew ? t('다시 눌러 새 대화 시작') : t('새 대화 시작')}
-          </button>
         )}
         {notice && <p className="notice error">{notice}</p>}
       </div>
