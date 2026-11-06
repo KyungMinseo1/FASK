@@ -15,6 +15,7 @@ import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.text.TextUtils;
@@ -70,38 +71,42 @@ final class OverlayChrome {
     static final String THEME_KEY = "pref";
     /** Per-device answer-completed blink toggle, stored alongside the theme. Default on. */
     static final String BLINK_KEY = "answer_blink";
-    private static final int R_MD = 8, R_LG = 12, R_XL = 16;
+    private static final int R_MD = 8, R_LG = 12, R_TB = 14;
     private static final int HANDLE_W = 64, HANDLE_H = 58;
+    /** Collapsed toggle: a 52dp tile centred in the 64x58 handle area (desktop .overlay-toolbar.collapsed). */
+    private static final int TILE = 52;
     private static final int SHADOW = 10, ELEVATION = 6, GAP = 8;
     private static final int OPEN_MS = 180, CLOSE_MS = 130;
-    private static final float COLLAPSED_ALPHA = .6f;
+    private static final float COLLAPSED_ALPHA = .9f;
 
     private enum Attach { NONE, BELOW, ABOVE, LEFT, RIGHT }
     private enum Pop { NONE, PEN, PROJECT }
 
-    /** personal.css :root / [data-theme='dark'] / [data-palette] tokens. */
+    /** personal.css theme tokens per app theme: surface set (panel, popovers) and the overlay toolbar set (--tb-*). */
     static final class Palette {
-        /** The app theme this mirrors; light-based palettes also set the panel's data-palette. */
+        /** The app theme key this mirrors (navy, white, ivory, lavender, night); also the panel's data-palette. */
         final String name;
-        final int bar, hairline, hairlineStrong, ink, inkSubtle, primary, primaryPressed, primarySoft, brand, pressed, collapsedBorder;
-        Palette(String name, int bar, int hairline, int hairlineStrong, int ink, int inkSubtle, int primary, int primaryPressed,
-                int primarySoft, int brand, int pressed, int collapsedBorder) {
+        final int bar, hairline, hairlineStrong, ink, inkSubtle, primary, primarySoft;
+        /** Toolbar fill, ink, selected fill/ink (--tb, --tb-ink, --tb-on, --tb-on-ink), 1dp --ring and --logo-acc. */
+        final int tb, tbInk, tbOn, tbOnInk, ring, logo;
+        Palette(String name, int bar, int hairline, int hairlineStrong, int ink, int inkSubtle, int primary,
+                int primarySoft, int tb, int tbInk, int tbOn, int tbOnInk, int ring, int logo) {
             this.name = name;
             this.bar = bar; this.hairline = hairline; this.hairlineStrong = hairlineStrong; this.ink = ink;
-            this.inkSubtle = inkSubtle; this.primary = primary; this.primaryPressed = primaryPressed;
-            this.primarySoft = primarySoft; this.brand = brand; this.pressed = pressed; this.collapsedBorder = collapsedBorder;
+            this.inkSubtle = inkSubtle; this.primary = primary; this.primarySoft = primarySoft;
+            this.tb = tb; this.tbInk = tbInk; this.tbOn = tbOn; this.tbOnInk = tbOnInk; this.ring = ring; this.logo = logo;
         }
     }
-    private static final Palette LIGHT = new Palette("light", 0xFFFFFFFF, 0xFFE3E6EF, 0xFFD3D7E4, 0xFF20283C, 0xFF7B849E,
-        0xFF5B51DF, 0xFF4E45C9, 0xFFF1EFFE, 0xFF5B51DF, 0xFFF1F2F8, 0x1420283C);
-    private static final Palette DARK = new Palette("dark", 0xFF161A2B, 0xFF262C40, 0xFF323A52, 0xFFE6E9F5, 0xFF8A93AD,
-        0xFF7B72F0, 0xFF6A61E0, 0xFF241F4A, 0xFFA59BFF, 0xFF20263A, 0x14FFFFFF);
-    private static final Palette SEPIA = new Palette("sepia", 0xFFFBF6EA, 0xFFE3D6BC, 0xFFD6C6A6, 0xFF3B2F22, 0xFF86745C,
-        0xFFA0612B, 0xFF8A5223, 0xFFF3E3CC, 0xFFA0612B, 0xFFEFE5D1, 0x143B2F22);
-    private static final Palette FOREST = new Palette("forest", 0xFFFBFDFB, 0xFFDBE5DC, 0xFFC9D7CB, 0xFF1F2F25, 0xFF6C8172,
-        0xFF2F7D55, 0xFF276A48, 0xFFE2F1E7, 0xFF2F7D55, 0xFFE8F0E9, 0x141F2F25);
-    private static final Palette ROSE = new Palette("rose", 0xFFFFFBFC, 0xFFF0DDE3, 0xFFE5CCD4, 0xFF3A2230, 0xFF8C6A7A,
-        0xFFC94F7C, 0xFFB2416B, 0xFFFBE5ED, 0xFFC94F7C, 0xFFF8E9ED, 0x143A2230);
+    private static final Palette NAVY = new Palette("navy", 0xFFFBF7F0, 0xFFE6DDCB, 0xFFD0C4AE, 0xFF14213D, 0xFF535B6E,
+        0xFF14213D, 0xFFEAE1D0, 0xFF14213D, 0xFFF4EDE0, 0xFFFF6B5B, 0xFF14213D, 0x33000000, 0xFFFF6B5B);
+    private static final Palette WHITE = new Palette("white", 0xFFFFFFFF, 0xFFEAEAEA, 0xFFD6D6D4, 0xFF0B0B0C, 0xFF5F5F62,
+        0xFF0B0B0C, 0xFFF2F2F2, 0xFFFFFFFF, 0xFF0B0B0C, 0xFF0B0B0C, 0xFFC6F432, 0x1F0B0B0C, 0xFFC6F432);
+    private static final Palette IVORY = new Palette("ivory", 0xFFFBF8F1, 0xFFE2D6BE, 0xFFCBBC9E, 0xFF1A2A20, 0xFF5A6152,
+        0xFF1F3D2B, 0xFFE8DCC4, 0xFF1F3D2B, 0xFFF3ECDD, 0xFFE8DCC4, 0xFF1F3D2B, 0x33000000, 0xFF6D3FD9);
+    private static final Palette LAVENDER = new Palette("lavender", 0xFFF6F0FC, 0xFFD6C5EC, 0xFFBBA2DC, 0xFF2A1A40, 0xFF5E4D78,
+        0xFF3B2160, 0xFFDCCAF0, 0xFFCBB3E8, 0xFF2A1A40, 0xFF3B2160, 0xFFE9FF9A, 0x332A1A40, 0xFFC6F432);
+    private static final Palette NIGHT = new Palette("night", 0xFF141414, 0xFF232323, 0xFF3A3A3A, 0xFFF2F2EC, 0xFF9A9A92,
+        0xFFD4FF3F, 0xFF1C1C1C, 0xFF0B0B0B, 0xFFF2F2EC, 0xFFD4FF3F, 0xFF0B0B0B, 0x26FFFFFF, 0xFFFF2DA8);
 
     private final Context context;
     private final WindowManager windows;
@@ -110,10 +115,10 @@ final class OverlayChrome {
     private final SharedPreferences.OnSharedPreferenceChangeListener themeListener, languageListener;
     private final ComponentCallbacks configListener;
     private int densityDpi;
-    private Palette palette = LIGHT;
+    private Palette palette = NAVY;
 
     private final FrameLayout handleRoot, barRoot, popRoot;
-    private final TextView handle;
+    private final ToggleMarkView handle;
     private final FrameLayout barCard;
     private final LinearLayout popCard;
     private final ScrollView vScroll;
@@ -163,11 +168,7 @@ final class OverlayChrome {
         theme = context.getSharedPreferences(THEME_PREFS, Context.MODE_PRIVATE);
         language = Strings.prefs(context);
 
-        handle = new TextView(context);
-        handle.setText("f");
-        handle.setTypeface(Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC));
-        handle.setTextSize(28);
-        handle.setGravity(Gravity.CENTER);
+        handle = new ToggleMarkView(context, densityDpi / 160f);
         handle.setContentDescription(Strings.get(context, "FASK 화면 질문 메뉴"));
         handle.setOnClickListener(v -> host.perform(this::onHandleClick));
         handle.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
@@ -184,7 +185,7 @@ final class OverlayChrome {
         eraser = tool(ToolIconView.Kind.ERASER, "지우개", "지우개", host::onEraser);
         clear = tool(ToolIconView.Kind.CLEAR, "모두 지우기", "모두 지우기", host::onClearInk);
         divider();
-        question = tool(ToolIconView.Kind.QUESTION, "질문", "질문 · 앱 열기", () -> { host.onQuestion(); closePeek(); });
+        question = tool(ToolIconView.Kind.QUESTION, "질문", "질문, 앱 열기", () -> { host.onQuestion(); closePeek(); });
         dashboard = tool(ToolIconView.Kind.DASHBOARD, "대시보드", "대시보드", () -> { host.onDashboard(); closePeek(); });
         region = tool(ToolIconView.Kind.REGION, "캡처 영역", "캡처 영역 선택", () -> { host.onRegion(); closePeek(); });
         divider();
@@ -256,6 +257,7 @@ final class OverlayChrome {
 
     void setDisplay(int densityDpi, Rect displayBounds, Rect safeBounds) {
         this.densityDpi = densityDpi;
+        handle.setDensity(densityDpi / 160f);
         bounds.set(displayBounds);
         safe.set(safeBounds);
         int w = Math.min(dp(HANDLE_W), safe.width()), h = Math.min(dp(HANDLE_H), safe.height());
@@ -264,7 +266,7 @@ final class OverlayChrome {
     }
 
     Palette palette() { return palette; }
-    boolean isDark() { return palette == DARK; }
+    boolean isDark() { return palette == NIGHT; }
     void moveHandle(int x, int y) {
         handleRect.offsetTo(x, y);
         relayout();
@@ -359,15 +361,14 @@ final class OverlayChrome {
             attentionAnimator = null;
         }
         if (!on || !theme.getBoolean(BLINK_KEY, true)) {
-            handle.setTextColor(palette.brand);
+            handle.setMarkAlpha(255);
             return;
         }
-        ValueAnimator animator = ValueAnimator.ofInt(255, 70);
+        ValueAnimator animator = ValueAnimator.ofInt(255, 64);
         animator.setDuration(600);
         animator.setRepeatMode(ValueAnimator.REVERSE);
         animator.setRepeatCount(ValueAnimator.INFINITE);
-        animator.addUpdateListener(a ->
-            handle.setTextColor(((int) a.getAnimatedValue() << 24) | (palette.brand & 0x00FFFFFF)));
+        animator.addUpdateListener(a -> handle.setMarkAlpha((int) a.getAnimatedValue()));
         attentionAnimator = animator;
         animator.start();
     }
@@ -418,13 +419,15 @@ final class OverlayChrome {
         LinearLayout button = new LinearLayout(context);
         button.setOrientation(LinearLayout.VERTICAL);
         button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(2), dp(4), dp(2), dp(4));
+        button.setPadding(0, dp(6), 0, dp(6));
         button.setClickable(true);
-        ToolIconView g = new ToolIconView(context, kind, dp(22));
+        ToolIconView g = new ToolIconView(context, kind, dp(20));
         TextView l = new TextView(context);
         l.setMaxLines(1);
         l.setGravity(Gravity.CENTER);
         l.setIncludeFontPadding(false);
+        l.setLetterSpacing(-0.02f);
+        if (Build.VERSION.SDK_INT >= 28) l.setTypeface(Typeface.create(Typeface.DEFAULT, 500, false));
         l.setPadding(0, dp(3), 0, 0);
         button.addView(g);
         button.addView(l);
@@ -441,10 +444,10 @@ final class OverlayChrome {
         TextView l = (TextView) button.getChildAt(1);
         String text = Strings.get(context, label);
         l.setText(text);
-        l.setTextSize(10.5f);
-        // Shrink long labels (모두 지우기) to the 64dp card's inner width instead of clipping.
-        int inner = dp(HANDLE_W - 16);
-        for (float sp = 10.5f; sp > 8 && l.getPaint().measureText(text) > inner; sp -= .5f) l.setTextSize(sp - .5f);
+        l.setTextSize(11);
+        // Shrink long labels to the 64dp card's inner width instead of clipping.
+        int inner = dp(HANDLE_W - 10);
+        for (float sp = 11; sp > 8 && l.getPaint().measureText(text) > inner; sp -= .5f) l.setTextSize(sp - .5f);
     }
 
     private void divider() {
@@ -460,16 +463,16 @@ final class OverlayChrome {
         horizontal = strip;
         tools.setOrientation(strip ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         // The strip is only as tall as the 58dp handle, so it trims vertical padding.
-        if (strip) tools.setPadding(dp(6), dp(3), dp(6), dp(3)); else tools.setPadding(dp(6), dp(6), dp(6), dp(6));
+        if (strip) tools.setPadding(dp(6), dp(3), dp(6), dp(3)); else tools.setPadding(dp(4), dp(6), dp(4), dp(6));
         for (LinearLayout b : buttons) {
-            if (strip) b.setPadding(dp(2), dp(1), dp(2), dp(1)); else b.setPadding(dp(2), dp(4), dp(2), dp(4));
+            if (strip) b.setPadding(dp(2), dp(1), dp(2), dp(1)); else b.setPadding(0, dp(6), 0, dp(6));
         }
         for (int i = 0; i < tools.getChildCount(); i++) {
             View child = tools.getChildAt(i);
             LinearLayout.LayoutParams lp;
             if (dividers.contains(child)) {
                 lp = strip ? new LinearLayout.LayoutParams(dp(1), -1) : new LinearLayout.LayoutParams(-1, dp(1));
-                if (strip) lp.setMargins(dp(4), dp(6), dp(4), dp(6)); else lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+                if (strip) lp.setMargins(dp(4), dp(6), dp(4), dp(6)); else lp.setMargins(dp(6), dp(4), dp(6), dp(4));
             } else {
                 lp = strip ? new LinearLayout.LayoutParams(dp(52), -1) : new LinearLayout.LayoutParams(-1, -2);
                 if (strip) lp.rightMargin = dp(2); else lp.bottomMargin = dp(2);
@@ -748,7 +751,7 @@ final class OverlayChrome {
         title.setTextSize(13);
         title.setTextColor(palette.ink);
         TextView hint = new TextView(context);
-        hint.setText(Strings.get(context, finger ? "손가락과 펜 모두 필기됩니다" : "S펜만 필기 · 손가락은 화면 조작"));
+        hint.setText(Strings.get(context, finger ? "손가락과 펜 모두 필기됩니다" : "S펜만 필기, 손가락은 화면 조작"));
         hint.setTextSize(11);
         hint.setTextColor(palette.inkSubtle);
         text.addView(title);
@@ -884,14 +887,15 @@ final class OverlayChrome {
     private Palette resolvePalette() {
         String pref = theme.getString(THEME_KEY, "system");
         switch (pref) {
-            case "light": return LIGHT;
-            case "dark": return DARK;
-            case "sepia": return SEPIA;
-            case "forest": return FOREST;
-            case "rose": return ROSE;
-            default:
+            case "navy": return NAVY;
+            case "white": case "light": return WHITE;
+            case "ivory": case "sepia": case "forest": return IVORY;
+            case "lavender": case "rose": return LAVENDER;
+            case "night": case "dark": return NIGHT;
+            case "system":
                 return (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
-                    == Configuration.UI_MODE_NIGHT_YES ? DARK : LIGHT;
+                    == Configuration.UI_MODE_NIGHT_YES ? NIGHT : WHITE;
+            default: return NAVY;
         }
     }
 
@@ -924,13 +928,24 @@ final class OverlayChrome {
         return d;
     }
 
-    private Drawable ripple(int radiusDp) {
-        int color = (palette.primary & 0x00FFFFFF) | 0x29000000;
-        return new RippleDrawable(ColorStateList.valueOf(color), null, rounded(Color.WHITE, radiusDp));
+    private Drawable ripple(int radiusDp) { return ripple(radiusDp, palette.primary, 0, 0); }
+
+    private Drawable ripple(int radiusDp, int base, int insetX, int insetY) {
+        int color = (base & 0x00FFFFFF) | 0x29000000;
+        Drawable mask = rounded(Color.WHITE, radiusDp);
+        if (insetX != 0 || insetY != 0) mask = new InsetDrawable(mask, insetX, insetY, insetX, insetY);
+        return new RippleDrawable(ColorStateList.valueOf(color), null, mask);
     }
 
-    /** Card fill/stroke with the joined side squared; the outline extends past it so no seam shadow shows. */
     private void styleCard(View card, int fill, int stroke, int radiusDp, Attach joined, boolean isHandle) {
+        styleCard(card, fill, stroke, radiusDp, joined, isHandle, 0, 0);
+    }
+
+    /**
+     * Card fill with a 1dp ring and the joined side squared; the outline extends past it so no seam
+     * shadow shows. Insets shrink the drawn card inside the view (the collapsed tile).
+     */
+    private void styleCard(View card, int fill, int stroke, int radiusDp, Attach joined, boolean isHandle, int insetX, int insetY) {
         float r = dp(radiusDp);
         float tl = r, tr = r, br = r, bl = r;
         Attach flat = Attach.NONE;
@@ -946,56 +961,64 @@ final class OverlayChrome {
         GradientDrawable d = new GradientDrawable();
         d.setCornerRadii(new float[]{tl, tl, tr, tr, br, br, bl, bl});
         d.setColor(fill);
-        d.setStroke(dp(1), stroke);
-        card.setBackground(d);
+        int s = dp(1);
+        d.setStroke(s, stroke);
+        // The ring stops at the seam: its joined side is pushed past the window edge, which clips it.
+        int il = insetX - (flat == Attach.LEFT ? s : 0), ir = insetX - (flat == Attach.RIGHT ? s : 0);
+        int it = insetY - (flat == Attach.ABOVE ? s : 0), ib = insetY - (flat == Attach.BELOW ? s : 0);
+        card.setBackground(il == 0 && ir == 0 && it == 0 && ib == 0 ? d : new InsetDrawable(d, il, it, ir, ib));
         final Attach side = flat;
         final int radius = Math.round(r);
         card.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View view, Outline outline) {
-                int w = view.getWidth(), h = view.getHeight();
-                if (side == Attach.BELOW) outline.setRoundRect(0, 0, w, h + radius, radius);
-                else if (side == Attach.ABOVE) outline.setRoundRect(0, -radius, w, h, radius);
-                else if (side == Attach.LEFT) outline.setRoundRect(-radius, 0, w, h, radius);
-                else if (side == Attach.RIGHT) outline.setRoundRect(0, 0, w + radius, h, radius);
-                else outline.setRoundRect(0, 0, w, h, radius);
+                int w = view.getWidth() - insetX, h = view.getHeight() - insetY;
+                if (side == Attach.BELOW) outline.setRoundRect(insetX, insetY, w, h + radius, radius);
+                else if (side == Attach.ABOVE) outline.setRoundRect(insetX, insetY - radius, w, h, radius);
+                else if (side == Attach.LEFT) outline.setRoundRect(insetX - radius, insetY, w, h, radius);
+                else if (side == Attach.RIGHT) outline.setRoundRect(insetX, insetY, w + radius, h, radius);
+                else outline.setRoundRect(insetX, insetY, w, h, radius);
             }
         });
         if (Build.VERSION.SDK_INT >= 28) {
-            int shadow = palette == DARK ? 0xFF000000 : 0xFF1A1F3A;
-            card.setOutlineAmbientShadowColor(shadow);
-            card.setOutlineSpotShadowColor(shadow);
+            card.setOutlineAmbientShadowColor(0xFF000000);
+            card.setOutlineSpotShadowColor(0xFF000000);
         }
     }
 
     private void restyleShapes() {
         Attach joined = barShown || barVisual ? attach : Attach.NONE;
         if (joined == Attach.NONE) {
-            styleCard(handle, palette.bar, palette.collapsedBorder, R_LG, Attach.NONE, true);
-            handle.setElevation(dp(4));
+            int ix = Math.max(0, (handleRect.width() - dp(TILE)) / 2), iy = Math.max(0, (handleRect.height() - dp(TILE)) / 2);
+            styleCard(handle, palette.tb, palette.ring, R_TB, Attach.NONE, true, ix, iy);
+            handle.setShape(ix, iy, ToggleMarkView.Side.NONE);
+            handle.setForeground(ripple(R_TB, palette.tbInk, ix, iy));
             handle.setAlpha(COLLAPSED_ALPHA);
         } else {
-            styleCard(handle, palette.bar, palette.hairlineStrong, R_XL, joined, true);
-            handle.setElevation(dp(ELEVATION));
+            styleCard(handle, palette.tb, palette.ring, R_TB, joined, true);
+            ToggleMarkView.Side seam = joined == Attach.BELOW ? ToggleMarkView.Side.BOTTOM
+                : joined == Attach.ABOVE ? ToggleMarkView.Side.TOP
+                : joined == Attach.LEFT ? ToggleMarkView.Side.LEFT : ToggleMarkView.Side.RIGHT;
+            handle.setShape(0, 0, seam);
+            handle.setForeground(ripple(R_TB, palette.tbInk, 0, 0));
             handle.setAlpha(1f);
         }
-        styleCard(barCard, palette.bar, palette.hairlineStrong, R_XL, attach, false);
+        handle.setElevation(dp(ELEVATION));
+        styleCard(barCard, palette.tb, palette.ring, R_TB, attach, false);
         if (barAnimator == null) barCard.setElevation(dp(ELEVATION));
     }
 
     private void restyle() {
         if (closed) return;
-        handle.setTextColor(palette.brand);
-        handle.setForeground(ripple(R_LG));
-        for (View line : dividers) line.setBackgroundColor(palette.hairline);
+        // The period follows the pen colour while drawing (desktop MarkF dot), else the theme logo accent.
+        handle.setColors(palette.tbInk, mode == OverlayWindowController.Mode.PEN ? penColor : palette.logo);
+        for (View line : dividers) line.setBackgroundColor((palette.tbInk & 0x00FFFFFF) | 0x24000000);
         for (LinearLayout b : buttons) styleTool(b, false);
         styleTool(penButton, mode == OverlayWindowController.Mode.PEN);
         styleTool(eraser, mode == OverlayWindowController.Mode.ERASER);
         styleTool(region, mode == OverlayWindowController.Mode.REGION);
+        styleTool(question, panelOpen);
         styleTool(project, pop == Pop.PROJECT);
         ((ToolIconView) penButton.getChildAt(0)).setInk(penColor);
-        question.setBackground(rounded(panelOpen ? palette.primaryPressed : palette.primary, R_MD));
-        ((ToolIconView) question.getChildAt(0)).setColor(Color.WHITE);
-        ((TextView) question.getChildAt(1)).setTextColor(Color.WHITE);
         for (View b : new View[]{penButton, eraser, clear, region}) {
             b.setEnabled(editable);
             b.setAlpha(editable ? 1f : .4f);
@@ -1003,10 +1026,11 @@ final class OverlayChrome {
         restyleShapes();
     }
 
+    /** Toolbar button: tool ink on the bar, the theme selected fill (--tb-on) when active. */
     private void styleTool(LinearLayout button, boolean active) {
-        button.setBackground(active ? rounded(palette.primarySoft, R_MD) : null);
-        button.setForeground(ripple(R_MD));
-        int color = active ? palette.primary : palette.inkSubtle;
+        button.setBackground(active ? rounded(palette.tbOn, R_MD) : null);
+        button.setForeground(ripple(R_MD, palette.tbInk, 0, 0));
+        int color = active ? palette.tbOnInk : palette.tbInk;
         ((ToolIconView) button.getChildAt(0)).setColor(color);
         ((TextView) button.getChildAt(1)).setTextColor(color);
     }

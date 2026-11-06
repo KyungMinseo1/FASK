@@ -9,7 +9,7 @@ import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 // A slow relay: every image takes 3 s and is ~1.5 MB of base64.
 const DELAY = 3000
 const IMAGE = `data:image/webp;base64,${'A'.repeat(1_500_000)}`
-const CHIP = '▧ 캡처 이미지 · 펼쳐서 보기'
+const CHIP = '캡처 이미지 펼쳐 보기'
 
 function slowApi(fail = 0) {
   const calls: string[] = []

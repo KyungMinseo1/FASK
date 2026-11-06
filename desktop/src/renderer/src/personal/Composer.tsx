@@ -16,6 +16,7 @@ import { attachmentAccept, readAttachment } from './attachments'
 import { errorText } from './common'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
+import { Icon } from './ToolbarIcons'
 import { useApi } from './api'
 import { useT } from '../../../shared/i18n/react'
 
@@ -437,12 +438,15 @@ export default function Composer({
       {(live.answer || running) && (
         <div className="live-answer">
           <div className="answer-head">
-            <span className="eyebrow">
-              {running
-                ? t('답변 작성 중')
-                : actualModel
-                  ? t('이번 답변 · {{model}}', { model: actualModel })
-                  : t('이번 답변')}
+            <span className="live-answer-label">
+              {running ? (
+                t('답변 작성 중')
+              ) : (
+                <>
+                  {t('이번 답변')}
+                  {actualModel && <b>{actualModel}</b>}
+                </>
+              )}
             </span>
             {!running && live.answer && (
               <CopyButton text={() => live.answer} label={t('답변 복사')} />
@@ -505,7 +509,8 @@ export default function Composer({
         <div className="document-chips">
           {documents.map((d, index) => (
             <span key={`${d.name}:${index}`}>
-              ▤ {d.name}
+              <Icon name="file" size={14} />
+              {d.name}
               <button
                 aria-label={t('{{name}} 제거', { name: d.name })}
                 disabled={locked}
@@ -514,7 +519,7 @@ export default function Composer({
                   setRefined('')
                 }}
               >
-                ×
+                <Icon name="close" size={12} />
               </button>
             </span>
           ))}
@@ -522,7 +527,7 @@ export default function Composer({
       )}
       {refined && (
         <label className="refine-review">
-          {t('다듬은 질문 · 수정 후 전송')}
+          {t('다듬은 질문, 고친 뒤 전송')}
           <textarea
             value={refined}
             onChange={(e) => setRefined(e.target.value)}
@@ -535,15 +540,18 @@ export default function Composer({
       )}
       {settings.routing !== 'manual' && (
         <div className="recommendation">
-          {settings.routing === 'auto' ? t('자동 선택') : t('추천')} ·{' '}
-          {recommendation || t('설정에서 모델을 선택하세요')}{' '}
-          <span>
-            {image || includeCapture
-              ? t('이미지 난이도 미확정')
-              : complex
-                ? t('여러 단계의 추론')
-                : t('간단한 설명 · 로컬 규칙')}
-          </span>
+          <span>{settings.routing === 'auto' ? t('자동 선택') : t('추천 모델')}</span>
+          {recommendation ? <b>{recommendation}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>}
+          {image || includeCapture ? (
+            <span>{t('이미지 난이도 미확정')}</span>
+          ) : complex ? (
+            <span>{t('여러 단계의 추론')}</span>
+          ) : (
+            <>
+              <span>{t('간단한 설명')}</span>
+              <span>{t('로컬 규칙')}</span>
+            </>
+          )}
           {settings.routing === 'recommend' && recommendation && (
             <button disabled={locked} onClick={() => setModel(recommendation)}>
               {t('사용')}
@@ -553,7 +561,8 @@ export default function Composer({
       )}
       <div className="composer-actions">
         <button disabled={locked} onClick={() => fileInput.current?.click()}>
-          {t('＋ 파일·이미지')}
+          <Icon name="clip" />
+          {t('파일 첨부')}
         </button>
         {mediaActions?.map((action) => (
           <button
@@ -586,6 +595,7 @@ export default function Composer({
           </label>
         )}
         <button disabled={locked || !canRefine} onClick={() => void refine()}>
+          <Icon name="refine" />
           {t('질문 다듬기')}
         </button>
         <select
@@ -616,7 +626,7 @@ export default function Composer({
               ? t('처리 중…')
               : settings.refine && !refined && canRefine
                 ? t('다듬고 검토')
-                : t('질문하기 ↗')}
+                : t('질문하기')}
           </button>
         )}
       </div>
@@ -635,18 +645,38 @@ export default function Composer({
       )}
       <small className="composer-hint">
         {onCapture && includeCapture && (
-          <>
+          <span className="composer-hint-capture">
             {t(
-              '질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 저장만·다듬기에서는 캡처하지 않습니다.'
+              '질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 저장만, 다듬기에서는 캡처하지 않습니다.'
             )}
-            <br />
-          </>
+          </span>
         )}
-        {t(
-          submitOnEnter
-            ? '이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Enter로 전송 · Shift + Enter 줄바꿈'
-            : '이미지 붙여넣기·파일 드래그 가능 · 이미지 1장, 텍스트/코드 최대 5개 · Ctrl + Enter로 전송'
-        )}
+        <span className="composer-hint-keys">
+          <span>{t('이미지 붙여넣기, 파일 드래그 가능')}</span>
+        </span>
+        <span>{t('이미지 1장')}</span>
+        <span>{t('텍스트, 코드 최대 5개')}</span>
+        <span className="composer-hint-keys">
+          {submitOnEnter ? (
+            <>
+              <span>
+                <kbd>Enter</kbd>
+                {t('전송')}
+              </span>
+              <span>
+                <kbd>Shift</kbd>
+                <kbd>Enter</kbd>
+                {t('줄바꿈')}
+              </span>
+            </>
+          ) : (
+            <span>
+              <kbd>Ctrl</kbd>
+              <kbd>Enter</kbd>
+              {t('전송')}
+            </span>
+          )}
+        </span>
       </small>
     </div>
   )

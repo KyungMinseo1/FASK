@@ -1,5 +1,6 @@
 import { memo, useRef } from 'react'
 import CopyButton from './CopyButton'
+import { Icon } from './ToolbarIcons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -70,7 +71,9 @@ function MarkdownAnswer({
           ...(preview
             ? {
                 input: ({ checked }: { checked?: boolean }) => (
-                  <span aria-label={checked ? t('완료') : t('미완료')}>{checked ? '☑' : '☐'}</span>
+                  <span className="markdown-task" aria-label={checked ? t('완료') : t('미완료')}>
+                    <Icon name={checked ? 'boxChecked' : 'box'} size={14} />
+                  </span>
                 )
               }
             : { pre: CodeBlock })

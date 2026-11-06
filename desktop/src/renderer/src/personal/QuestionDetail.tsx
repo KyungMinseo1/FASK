@@ -4,6 +4,7 @@ import { questionHeading } from '../../../shared/questions'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
 import TurnNav from './TurnNav'
+import { Icon } from './ToolbarIcons'
 import { useApi } from './api'
 import { loadAttachment } from './attachment-cache'
 import { dateLabel } from './common'
@@ -50,21 +51,28 @@ export default function QuestionDetail({
   return (
     <aside className="question-detail">
       <header>
-        <span className="eyebrow">QUESTION NOTES</span>
-        {onClose && <button onClick={onClose}>{t('닫기 ×')}</button>}
+        <span>{t('질문 노트')}</span>
+        {onClose && (
+          <button onClick={onClose}>
+            <Icon name="close" size={14} />
+            {t('닫기')}
+          </button>
+        )}
       </header>
       <div className="detail-title">
         <h2>{questionHeading(q)}</h2>
         <button
           className={q.important ? 'star active' : 'star'}
           aria-label={t('중요 표시')}
+          aria-pressed={q.important}
           onClick={() => void run(() => api.updateQuestion(q.id, { important: !q.important }))}
         >
-          {q.important ? '★' : '☆'}
+          <Icon name="star" size={20} />
         </button>
       </div>
       <p className="detail-meta">
-        {dateLabel(q.createdAt)} · {t('대화 {{count}}개', { count: q.turns.length })}
+        <span>{dateLabel(q.createdAt)}</span>
+        <span>{t('대화 {{count}}개', { count: q.turns.length })}</span>
       </p>
       {(earlierOnly ? q.turns.slice(0, -1) : q.turns).map((t, i) => (
         <TurnView key={t.id} questionId={q.id} turn={t} index={i} run={run} />
@@ -92,10 +100,11 @@ export default function QuestionDetail({
       </div>
       {q.suggestions.length > 0 && (
         <div className="suggestions">
-          <small>{t('새 개념 제안 · 클릭하면 연결')}</small>
+          <small>{t('새 개념 제안, 누르면 연결됩니다')}</small>
           {q.suggestions.map((s) => (
             <button key={s} onClick={() => void run(() => onCreateConcept(s))}>
-              ＋ {s}
+              <Icon name="plus" size={14} />
+              {s}
             </button>
           ))}
         </div>
@@ -116,17 +125,21 @@ export default function QuestionDetail({
         disabled={!memoDirty || memoState === 'saving'}
         onClick={() => void saveMemo()}
       >
-        {memoState === 'saving'
-          ? t('저장 중…')
-          : memoDirty
-            ? t('메모 저장')
-            : memoState === 'saved'
-              ? t('메모 저장됨 ✓')
-              : t('메모 저장')}
+        {memoState === 'saving' ? (
+          t('저장 중…')
+        ) : !memoDirty && memoState === 'saved' ? (
+          <>
+            <Icon name="check" size={14} />
+            {t('메모 저장됨')}
+          </>
+        ) : (
+          t('메모 저장')
+        )}
       </button>
       {onContinue && (
         <button className="reply-button" onClick={onContinue}>
-          {t('이 대화에 이어서 질문 ↗')}
+          <Icon name="reply" />
+          {t('이 대화에 이어서 질문')}
         </button>
       )}
       {!earlierOnly && (
@@ -198,7 +211,7 @@ function TurnView({
   }, [t.sent, expanded])
   return (
     <section className="detail-turn">
-      <span className="eyebrow">{tr('질문 {{n}}', { n: index + 1 })}</span>
+      <small className="turn-label">{tr('질문 {{n}}', { n: index + 1 })}</small>
       <p
         ref={questionRef}
         className={`turn-question${expanded ? ' expanded' : clamped ? ' clamped' : ''}`}
@@ -207,11 +220,16 @@ function TurnView({
       </p>
       {(clamped || expanded || !!t.attachment) && (
         <button className="turn-question-toggle" onClick={toggle}>
-          {expanded
-            ? tr('질문 접기')
-            : t.attachment
-              ? tr('▧ 캡처 이미지 · 펼쳐서 보기')
-              : tr('질문 더보기')}
+          {expanded ? (
+            tr('질문 접기')
+          ) : t.attachment ? (
+            <>
+              <Icon name="image" size={14} />
+              {tr('캡처 이미지 펼쳐 보기')}
+            </>
+          ) : (
+            tr('질문 더보기')
+          )}
         </button>
       )}
       {t.refined && (
@@ -243,7 +261,10 @@ function TurnView({
       )}
       {t.documents.map((d, i) => (
         <details key={`${d.name}:${i}`} className="document-detail">
-          <summary>▤ {d.name}</summary>
+          <summary>
+            <Icon name="file" size={14} />
+            {d.name}
+          </summary>
           <pre>{d.text}</pre>
         </details>
       ))}

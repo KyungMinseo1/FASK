@@ -44,7 +44,7 @@ export const overlayControl: OverlayPlugin = {
   consumeRevocation: async () => (await plugin.consumeRevocation()) ?? null
 }
 
-/** Mirrors the app's theme choice (system/light/dark/sepia/forest/rose) to the native overlay toolbar. */
+/** Mirrors the app's theme choice (system/navy/white/ivory/lavender/night) to the native overlay toolbar. */
 export function syncOverlayTheme(pref: string): void {
   if (isAndroidOverlay()) void plugin.setTheme({ pref }).catch(() => {})
 }

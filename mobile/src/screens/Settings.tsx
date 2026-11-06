@@ -29,8 +29,35 @@ import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { RELAY_ADDRESS } from '../transport'
 import { demoAvailable } from '../demo-hub'
+import { Icon } from '../icons'
 
 const STATE_LABEL = { online: '연결됨', offline: '오프라인', blocked: '차단됨' } as const
+
+/** Mobile kit order: system first, then light themes from plainest to most tinted, night last. */
+const THEME_ORDER = ['system', 'white', 'ivory', 'navy', 'lavender', 'night']
+const MOBILE_THEMES = [...THEME_OPTIONS].sort((a, b) => THEME_ORDER.indexOf(a.value) - THEME_ORDER.indexOf(b.value))
+
+/** Fixed swatches (page, primary): each previews its theme regardless of the active one. */
+const SWATCH: Record<string, readonly [string, string]> = {
+  system: ['#FFFFFF', '#0B0B0B'],
+  navy: ['#F4EDE0', '#14213D'],
+  white: ['#FFFFFF', '#0B0B0C'],
+  ivory: ['#F3ECDD', '#1F3D2B'],
+  lavender: ['#E7DAF5', '#3B2160'],
+  night: ['#0B0B0B', '#D4FF3F']
+}
+
+function Swatch({ theme }: { theme: string }): React.JSX.Element | null {
+  const colors = SWATCH[theme]
+  if (!colors) return null
+  return (
+    <svg className="theme-swatch" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M17.07 2.93A10 10 0 0 0 2.93 17.07z" fill={colors[0]} />
+      <path d="M17.07 2.93A10 10 0 0 1 2.93 17.07z" fill={colors[1]} />
+      <circle cx="10" cy="10" r="9.5" fill="none" stroke="currentColor" strokeOpacity=".3" />
+    </svg>
+  )
+}
 
 export default function Settings(): React.JSX.Element {
   const { data, pairing, client, conn, unpair, demo, enterDemo } = useMobile()
@@ -47,7 +74,7 @@ export default function Settings(): React.JSX.Element {
     <>
       <header className="mobile-top">
         <button aria-label={t('뒤로')} onClick={() => navigate(-1)}>
-          ←
+          <Icon name="back" />
         </button>
         <h1>{t('설정')}</h1>
         <span />
@@ -57,19 +84,19 @@ export default function Settings(): React.JSX.Element {
           <h2>{t('화면 테마')}</h2>
           <p>{t('이 휴대폰에만 적용되며 바로 바뀝니다.')}</p>
           <div className="theme-grid" role="radiogroup" aria-label={t('테마')}>
-            {THEME_OPTIONS.map((o) => (
+            {MOBILE_THEMES.map((o) => (
               <button
                 key={o.value}
                 role="radio"
                 aria-checked={theme === o.value}
-                className={`theme-chip theme-${o.value}${theme === o.value ? ' on' : ''}`}
+                className={`theme-chip${theme === o.value ? ' on' : ''}`}
                 onClick={() => {
                   setThemeState(o.value)
                   setTheme(o.value as ThemePref)
                   syncOverlayTheme(o.value)
                 }}
               >
-                <i aria-hidden />
+                <Swatch theme={o.value} />
                 {t(o.label)}
               </button>
             ))}

@@ -28,7 +28,7 @@ export type OverlayState = {
   region?: { width: number; height: number }
   mode: string
   theme: 'light' | 'dark'
-  /** App palette mirrored by the native chrome: light, dark, sepia, forest or rose. */
+  /** App theme key mirrored by the native chrome: navy, white, ivory, lavender or night. */
   palette?: string
   /** Resolved UI language from the app (FaskOverlay.setLanguage); the panel's origin has no shared localStorage. */
   lang?: 'ko' | 'en'
@@ -155,10 +155,10 @@ export function createBridge(port: Port) {
 }
 export type Bridge = ReturnType<typeof createBridge>
 
-/** Mirrors the native chrome's theme onto the panel, including light-based palettes. */
+/** Mirrors the native chrome's theme onto the panel: data-theme light/dark plus the theme key as data-palette. */
 export function applyOverlayTheme(state: Pick<OverlayState, 'theme' | 'palette'>): void {
   const root = document.documentElement
   root.dataset.theme = state.theme
-  if (state.palette && state.palette !== 'light' && state.palette !== 'dark') root.dataset.palette = state.palette
+  if (state.palette) root.dataset.palette = state.palette
   else delete root.dataset.palette
 }

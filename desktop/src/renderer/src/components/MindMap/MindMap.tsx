@@ -15,6 +15,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
   useNodesInitialized,
+  type EdgeTypes,
   type NodeChange,
   type NodeMouseHandler,
   type NodeTypes,
@@ -23,7 +24,7 @@ import {
 } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
 import { layoutMindMap, type MindFlowNode } from './layout'
-import MindNodeView from './MindNodeView'
+import MindNodeView, { CurveEdge } from './MindNodeView'
 import { useT } from '../../../../shared/i18n/react'
 
 export interface MindMapProps {
@@ -45,6 +46,7 @@ export interface MindMapProps {
 }
 
 const nodeTypes: NodeTypes = { mind: MindNodeView }
+const edgeTypes: EdgeTypes = { curve: CurveEdge }
 
 function toggled(set: Set<string>, id: string): Set<string> {
   const next = new Set(set)
@@ -54,8 +56,8 @@ function toggled(set: Set<string>, id: string): Set<string> {
 }
 
 const centerOf = (n: MindFlowNode, pos: XYPosition = n.position): XYPosition => ({
-  x: pos.x + n.data.diameter / 2,
-  y: pos.y + n.data.diameter / 2
+  x: pos.x + n.data.width / 2,
+  y: pos.y + n.data.height / 2
 })
 
 const LONG_PRESS_MS = 380
@@ -176,8 +178,8 @@ function MindMapInner({
     () =>
       layout.nodes.map((n) => ({
         ...n,
-        width: n.data.diameter,
-        height: n.data.diameter,
+        width: n.data.width,
+        height: n.data.height,
         draggable: !!onMoveNode && n.data.depth > 0 && (canMove?.(n.data.mind) ?? true),
         data: {
           ...n.data,
@@ -240,7 +242,7 @@ function MindMapInner({
     }
   }, [])
 
-  /** Nearest valid node whose circle overlaps the dragged circle's centre. */
+  /** Nearest valid node whose pill holds the dragged pill's centre. */
   const findDropTarget = useCallback(
     (dragged: MindFlowNode, position: XYPosition): MindFlowNode | null => {
       const c = centerOf(dragged, position)
@@ -250,8 +252,11 @@ function MindMapInner({
         if (n.id === dragged.id || n.data.mind.kind === 'question') continue
         if (canDrop && !canDrop(dragged.data.mind, n.data.mind)) continue
         const t = centerOf(n)
+        // Inside the target pill (plus a margin), measured on each axis.
+        const inside =
+          Math.abs(c.x - t.x) < n.data.width / 2 + 14 && Math.abs(c.y - t.y) < n.data.height / 2 + 14
         const dist = Math.hypot(c.x - t.x, c.y - t.y)
-        if (dist < n.data.diameter / 2 + 14 && dist < bestDist) {
+        if (inside && dist < bestDist) {
           best = n
           bestDist = dist
         }
@@ -349,6 +354,7 @@ function MindMapInner({
       nodes={nodes}
       edges={layout.edges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       onNodeClick={onNodeClick}
       onNodeContextMenu={(event, node) => {
         if (onContextMenu) {
@@ -370,7 +376,7 @@ function MindMapInner({
       maxZoom={2}
       proOptions={{ hideAttribution: true }}
     >
-      <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#d3d2ca" />
+      <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--graph-dots)" />
       <div
         ref={boxRef}
         className={`graph-dock${dockOpen ? ' open' : ''}`}
@@ -440,8 +446,13 @@ function MindMapInner({
 export default function MindMap(props: MindMapProps): React.JSX.Element {
   return (
     <div
-      style={{ height: props.height ?? '100%', width: '100%' }}
-      className={`mind-map-box instance-${props.root.id.replace(/[^\w-]/g, '')} overflow-hidden rounded-xl border border-gray-200 bg-gray-50`}
+      style={{
+        height: props.height ?? '100%',
+        width: '100%',
+        background: 'var(--graph-board)',
+        border: '1px solid var(--hairline)'
+      }}
+      className={`mind-map-box instance-${props.root.id.replace(/[^\w-]/g, '')} overflow-hidden rounded-[10px]`}
     >
       <ReactFlowProvider>
         {/* Remount (reset expansion) when the root identity changes, e.g. switching tabs/modes. */}

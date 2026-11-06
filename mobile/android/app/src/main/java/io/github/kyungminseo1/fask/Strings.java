@@ -26,7 +26,7 @@ final class Strings {
         EN.put("지우개", "Eraser");
         EN.put("모두 지우기", "Clear all");
         EN.put("질문", "Ask");
-        EN.put("질문 · 앱 열기", "Ask · open app");
+        EN.put("질문, 앱 열기", "Ask, open app");
         EN.put("대시보드", "Dashboard");
         EN.put("캡처 영역", "Region");
         EN.put("캡처 영역 선택", "Select capture region");
@@ -37,7 +37,7 @@ final class Strings {
         EN.put("펜 색상 {{n}}", "Pen color {{n}}");
         EN.put("손가락으로도 그리기", "Draw with finger too");
         EN.put("손가락과 펜 모두 필기됩니다", "Both finger and pen draw");
-        EN.put("S펜만 필기 · 손가락은 화면 조작", "Only the S Pen draws · finger controls the screen");
+        EN.put("S펜만 필기, 손가락은 화면 조작", "Only the S Pen draws, finger controls the screen");
         EN.put("PC에서 프로젝트를 만들어 주세요.", "Create a project on your PC.");
         // Panel and ink windows (OverlayWindowController, OverlayInkView)
         EN.put("FASK 편집", "FASK editor");
@@ -50,7 +50,7 @@ final class Strings {
         EN.put("FASK 펜 및 캡처 영역 편집", "FASK pen and capture region editor");
         EN.put("취소", "Cancel");
         EN.put("확인", "OK");
-        EN.put("드래그하여 영역 선택 · 가장자리로 크기 조절", "Drag to select a region · drag the edges to resize");
+        EN.put("드래그하여 영역 선택, 가장자리로 크기 조절", "Drag to select a region, drag the edges to resize");
         // Notification and toasts (OverlaySessionService, OverlayPlugin preview)
         EN.put("FASK 화면 질문 사용 중", "FASK screen question is on");
         EN.put("토글 또는 알림에서 화면 공유를 종료할 수 있습니다.", "Stop screen sharing from the toggle or this notification.");

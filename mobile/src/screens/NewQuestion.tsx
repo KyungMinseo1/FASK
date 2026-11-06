@@ -2,6 +2,7 @@ import { useNavigate, useParams } from 'react-router'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
+import { Icon } from '../icons'
 import { useT } from '@desktop/shared/i18n/react'
 
 export default function NewQuestion(): React.JSX.Element {
@@ -14,7 +15,7 @@ export default function NewQuestion(): React.JSX.Element {
     <>
       <header className="mobile-top">
         <button aria-label={t('뒤로')} onClick={() => navigate(`/p/${projectId}`)}>
-          ←
+          <Icon name="back" />
         </button>
         <h1>{project?.name ?? t('새 질문')}</h1>
         <span />

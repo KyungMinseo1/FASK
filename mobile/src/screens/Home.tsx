@@ -1,7 +1,9 @@
 import { useNavigate } from 'react-router'
 import type { PeerStatus } from '@desktop/preload/personal'
 import { useT } from '@desktop/shared/i18n/react'
+import { Wordmark } from '@desktop/renderer/src/personal/Wordmark'
 import { useMobile } from '../context'
+import { Icon } from '../icons'
 
 const PEER_STATUS: Record<PeerStatus, string> = {
   online: '온라인',
@@ -17,7 +19,9 @@ export default function Home(): React.JSX.Element {
   return (
     <>
       <header className="mobile-top">
-        <h1>FASK</h1>
+        <h1>
+          <Wordmark />
+        </h1>
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className="mobile-body">
@@ -25,10 +29,14 @@ export default function Home(): React.JSX.Element {
           const unavailable = !!w.remote && w.remote.status !== 'online'
           return (
             <section key={w.id} className="mobile-workspace">
-              <h2>{w.remote ? `🌐 ${w.name}` : w.name}</h2>
+              <h2>
+                {w.remote && <Icon name="globe" size={16} />}
+                {w.name}
+              </h2>
               {w.remote && (
                 <small className="mobile-remote-status">
-                  {w.remote.name} · {t(PEER_STATUS[w.remote.status])}
+                  <span>{w.remote.name}</span>
+                  <span>{t(PEER_STATUS[w.remote.status])}</span>
                 </small>
               )}
               {data.projects
@@ -42,12 +50,16 @@ export default function Home(): React.JSX.Element {
                       if (!unavailable) navigate(`/p/${p.id}`)
                     }}
                   >
-                    <span className="space-icon">◈</span>
+                    <span className="space-icon">
+                      <Icon name="project" />
+                    </span>
                     <h3>{p.name}</h3>
                     <small>
                       {t('{{n}}개 질문', { n: data.questions.filter((q) => q.projectId === p.id).length })}
                     </small>
-                    <b>↗</b>
+                    <b>
+                      <Icon name="right" size={18} />
+                    </b>
                   </button>
                 ))}
             </section>

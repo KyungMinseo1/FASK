@@ -12,6 +12,8 @@ mobile/android/.gradle/
 
 # Environment and local files
 .env
+.env.local
+.env.*.local
 .envrc
 *.log
 
@@ -21,3 +23,5 @@ mobile/android/.gradle/
 keystore.properties
 # Local docs
 docs/
+# hallmark
+.hallmark/
