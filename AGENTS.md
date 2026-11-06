@@ -2,18 +2,17 @@
 
 ## 프로젝트 개요
 
-ASKKUP(질문, 잇다)은 수업 중 생긴 학생 질문을 정리해 교사에게 익명으로 전달하는 AI 학습 지원 앱입니다. 학생은 투명 오버레이에 표시하거나 질문을 입력하고, AI가 다듬은 질문을 확인해 등록합니다. 교사는 강의계획서와 교안을 바탕으로 생성된 주차별 개념 맵을 편집하고, 실시간 수업 화면에서 질문을 확인합니다.
+FASK는 화면 위에 펜으로 표시하고 AI에게 질문한 뒤, 답변을 프로젝트와 개념 그래프로 쌓는 개인용 학습 도구입니다. 투명 오버레이에서 화면을 표시·캡처해 질문하고, 질문과 답변은 프로필 > 워크스페이스 > 프로젝트 단위로 로컬에 저장됩니다.
 
 ## 아키텍처
 
-학생·교사 기능은 하나의 Electron 앱으로 제공하며, 화면은 React와 TypeScript로 구성합니다. Python FastAPI 서버가 인증, 질문 처리, AI 연동, 실시간 전달을 담당하고 SQLite에 커리큘럼과 질문을 저장합니다. AI 기능은 질문 다듬기와 필터링, 강의자료 기반 개념 생성, 질문 분류로 나뉩니다.
+데스크톱은 Electron 앱(React, TypeScript)이며 메인 프로세스가 로컬 SQLite 저장소, 화면 캡처, 단축키, OpenAI 호환 로컬 API(EasyCLIProxyAPI) 연결을 담당합니다. 모바일 동반 앱은 데스크톱 허브에 페어링해 같은 데이터를 보고 질문하며, 원격 연결은 Cloudflare 중계 서버가 암호화된 데이터만 전달합니다.
 
 ## 저장소 구조
 
-`desktop/`은 Electron 앱(electron-vite, React, Tailwind), `mobile/`은 Capacitor Android 동반 앱, `relay/`는 Cloudflare 중계 서버입니다. `docs/`는 로컬 전용(gitignore)이며 기준 문서로 참조하지 않습니다.
+`desktop/`은 Electron 앱(electron-vite, React, Tailwind), `mobile/`은 Capacitor Android 동반 앱, `relay/`는 Cloudflare 중계 서버입니다. 모바일은 데스크톱의 `personal.css`와 `personal/theme.ts`를 그대로 가져다 씁니다. 디자인 기준은 루트 `DESIGN.md`입니다. `docs/`는 로컬 전용(gitignore)이며 기준 문서로 참조하지 않습니다.
 
 ## 실행·검증
 
-- 서버: `server/.env.example`을 `server/.env`로 복사해 키 설정 → `cd server && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000`
-- 서버 테스트: `cd server && uv run pytest -q`
-- 데스크톱: `cd desktop && npm run dev` (학생 프로필 분리: `npm run build && npx electron . --profile=student`), 타입체크 `npm run typecheck`
+- 데스크톱: `cd desktop && npm run dev`, 타입체크 `npm run typecheck`, 단위 테스트 `npm test`
+- 모바일: `cd mobile && npm run typecheck`, 테스트 `npm test`, 디버그 APK `npm run apk`

@@ -12,6 +12,8 @@ mobile/android/.gradle/
 
 # Environment and local files
 .env
+.env.local
+.env.*.local
 .envrc
 *.log
 
