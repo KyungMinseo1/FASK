@@ -990,7 +990,7 @@ final class OverlayChrome {
         if (joined == Attach.NONE) {
             int ix = Math.max(0, (handleRect.width() - dp(TILE)) / 2), iy = Math.max(0, (handleRect.height() - dp(TILE)) / 2);
             styleCard(handle, palette.tb, palette.ring, R_TB, Attach.NONE, true, ix, iy);
-            handle.setShape(ix, iy, 22, ToggleMarkView.Side.NONE);
+            handle.setShape(ix, iy, ToggleMarkView.Side.NONE);
             handle.setForeground(ripple(R_TB, palette.tbInk, ix, iy));
             handle.setAlpha(COLLAPSED_ALPHA);
         } else {
@@ -998,7 +998,7 @@ final class OverlayChrome {
             ToggleMarkView.Side seam = joined == Attach.BELOW ? ToggleMarkView.Side.BOTTOM
                 : joined == Attach.ABOVE ? ToggleMarkView.Side.TOP
                 : joined == Attach.LEFT ? ToggleMarkView.Side.LEFT : ToggleMarkView.Side.RIGHT;
-            handle.setShape(0, 0, 24, seam);
+            handle.setShape(0, 0, seam);
             handle.setForeground(ripple(R_TB, palette.tbInk, 0, 0));
             handle.setAlpha(1f);
         }

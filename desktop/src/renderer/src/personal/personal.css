@@ -1943,9 +1943,11 @@ button.memo-saved:disabled {
 .overlay-toolbar.edge-bottom {
   flex-direction: column-reverse;
 }
-/* Collapsed: a 52px tile; fully opaque on hover, where the hint explains click and drag. */
+/* Collapsed: a 52px tile centred in the 64x58 anchor (Android OverlayChrome TILE), so the mark keeps
+   its place and size in every state; fully opaque on hover, where the hint explains click and drag. */
 .overlay-toolbar.collapsed {
   width: 52px;
+  margin: 3px 6px;
   padding: 3px;
   opacity: 0.9;
   transition: opacity 0.15s;
@@ -1953,11 +1955,15 @@ button.memo-saved:disabled {
 .overlay-toolbar.collapsed:hover {
   opacity: 1;
 }
-.overlay-toolbar.collapsed b {
-  font-size: 22px;
-}
 .overlay-toolbar.collapsed .toolbar-tools {
   display: none;
+}
+/* Peek: the tile takes the expanded 64x58 header and the tools join it seamlessly on the open side. */
+.overlay-toolbar.collapsed.peek {
+  width: 64px;
+  margin: 0;
+  padding: 6px 4px;
+  opacity: 1;
 }
 .overlay-toolbar.collapsed.peek .toolbar-tools {
   display: flex;
@@ -1973,12 +1979,26 @@ button.memo-saved:disabled {
   max-height: var(--tools-max, calc(100vh - 16px));
   overflow-y: auto;
 }
+.overlay-toolbar.peek.up {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
 .overlay-toolbar.peek.up .toolbar-tools {
   bottom: 100%;
+  border-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
   animation: toolbar-peek-up 0.16s ease-out;
+}
+.overlay-toolbar.peek.down {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .overlay-toolbar.peek.down .toolbar-tools {
   top: 100%;
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
   animation: toolbar-peek-down 0.16s ease-out;
 }
 @keyframes toolbar-peek-up {

@@ -18,6 +18,8 @@ final class ToggleMarkView extends View {
     enum Side { NONE, TOP, BOTTOM, LEFT, RIGHT }
 
     private static final float TRACKING = -0.06f;
+    /** One mark size for the collapsed tile and the open handle (desktop .overlay-toolbar b). */
+    private static final float SIZE_DP = 24;
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
     private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Rect glyphs = new Rect();
@@ -25,7 +27,6 @@ final class ToggleMarkView extends View {
     private float density;
     private int ink, dot, markAlpha = 255;
     private int insetX, insetY;
-    private float sizeDp = 24;
     private Side separator = Side.NONE;
 
     ToggleMarkView(Context context, float density) {
@@ -55,9 +56,9 @@ final class ToggleMarkView extends View {
         invalidate();
     }
 
-    /** Collapsed: a smaller mark in a tile inset from the touch area. */
-    void setShape(int insetX, int insetY, float sizeDp, Side separator) {
-        this.insetX = insetX; this.insetY = insetY; this.sizeDp = sizeDp; this.separator = separator;
+    /** Collapsed: the tile is inset from the touch area; open: the seam joined to the toolbar. */
+    void setShape(int insetX, int insetY, Side separator) {
+        this.insetX = insetX; this.insetY = insetY; this.separator = separator;
         invalidate();
     }
 
@@ -65,7 +66,7 @@ final class ToggleMarkView extends View {
     protected void onDraw(Canvas canvas) {
         float l = insetX, t = insetY, r = getWidth() - insetX, b = getHeight() - insetY;
         if (r <= l || b <= t) return;
-        float size = dp(sizeDp);
+        float size = dp(SIZE_DP);
         text.setTextSize(size);
         float fw = text.measureText("f"), pw = text.measureText(".");
         float kern = TRACKING * size;

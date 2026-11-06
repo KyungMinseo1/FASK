@@ -534,7 +534,7 @@ export default function Overlay(): React.JSX.Element {
             }}
           >
             <Icon name="capture" size={18} />
-            <small>{t('캡처 영역')}</small>
+            <small>{t('캡처 영역', { context: 'toolbar' })}</small>
           </button>
           <hr />
           <button
