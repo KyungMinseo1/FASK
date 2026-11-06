@@ -7,6 +7,9 @@
   font-size: 15px;
   padding-top: env(safe-area-inset-top);
   box-sizing: border-box;
+  /* The single gradient of the system: the accent fades out over the top 260px. */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--grad) var(--grad-a), transparent) 0, transparent 260px)
+    no-repeat var(--canvas);
 }
 .fask-mobile button,
 .fask-mobile select,
@@ -21,19 +24,19 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  min-height: 56px;
+  min-height: 68px;
   box-sizing: border-box;
   padding: 8px 16px;
-  background: var(--surface-1);
+  background: transparent;
   border-bottom: 1px solid var(--hairline);
 }
 .fask-mobile .mobile-top h1 {
   flex: 1 1 0;
   min-width: 0;
   margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -59,12 +62,23 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+.fask-mobile .mobile-top h1 .wordmark {
+  font-size: 24px;
+  line-height: 1;
+}
+.fask-mobile .mobile-top > button:has(> .ico:only-child) {
+  width: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
 .fask-mobile .mobile-workspace h2 {
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--ink-subtle);
+  color: var(--ink-muted);
   margin: 24px 0 8px;
 }
 .fask-mobile .space-card {
@@ -99,11 +113,26 @@
   grid-column: 3;
   grid-row: 1 / 3;
 }
+.fask-mobile .space-card .space-icon {
+  display: grid;
+  place-items: center;
+}
+.fask-mobile .space-card > b {
+  display: grid;
+  place-items: center;
+  color: var(--ink-subtle);
+}
 .fask-mobile .space-card[aria-disabled='true'] {
-  opacity: 0.45;
+  background: var(--dis-bg);
+  color: var(--dis-ink);
+}
+.fask-mobile .space-card[aria-disabled='true'] h3 {
+  color: var(--dis-ink);
 }
 .fask-mobile .mobile-remote-status {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   margin: -4px 0 8px;
   color: var(--ink-subtle);
 }
@@ -116,26 +145,74 @@
 .fask-mobile .mobile-chips button {
   flex: none;
   border-radius: var(--r-pill);
-  background: var(--surface-3);
-  border-color: var(--hairline);
-  color: var(--ink-muted);
-  font-size: 12px;
-  padding: 2px 12px;
+  background: var(--surface-1);
+  border-color: var(--hairline-strong);
+  color: var(--ink);
+  font-size: 15px;
+  padding: 0 14px;
 }
 .fask-mobile .mobile-chips button.active {
-  background: var(--primary-soft);
-  border-color: var(--primary-border);
-  color: var(--primary);
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  font-weight: 700;
 }
 .fask-mobile .segmented {
   margin: 4px 0 12px;
 }
-.fask-mobile .filter-row input {
+.fask-mobile .filter-row .search-field {
+  max-width: none;
+}
+.fask-mobile .search-field > .ico {
+  position: absolute;
+  left: 14px;
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+.fask-mobile .search-field input {
   width: 100%;
+  min-height: 48px;
+  padding-left: 40px;
 }
 .fask-mobile .question-card {
   width: 100%;
   text-align: left;
+}
+/* 320px screens: meta items wrap as whole units instead of breaking mid-label. */
+.fask-mobile .question-card .question-meta {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.fask-mobile .question-card .question-meta > * {
+  white-space: nowrap;
+}
+.fask-mobile .question-meta .memo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+}
+.fask-mobile .question-footer {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.fask-mobile .question-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  margin-right: auto;
+}
+.fask-mobile .question-tags .tag {
+  color: var(--tag);
+  font-weight: 600;
+}
+.fask-mobile .question-footer small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: inherit;
 }
 .fask-mobile .question-detail {
   position: static;
@@ -153,9 +230,9 @@
   mask-image: linear-gradient(to bottom, #000 75%, transparent);
 }
 .fask-mobile .turn-question-toggle {
-  min-height: 32px;
+  min-height: 44px;
   margin: -4px 0 8px;
-  padding: 0 10px;
+  padding: 0 14px;
   font-size: 13px;
   color: var(--primary);
   background: transparent;
@@ -166,11 +243,33 @@
     display: none;
   }
 }
-.fask-mobile .composer textarea {
+/* Touch sizes for the shared composer (phone app and the screen-question overlay). */
+.fask-mobile .composer textarea,
+.screen-q-panel .composer textarea {
+  min-height: 132px;
   font-size: 16px;
+  line-height: 1.55;
 }
-.fask-mobile .composer-actions {
+.fask-mobile .composer-actions,
+.screen-q-panel .composer-actions {
   flex-wrap: wrap;
+  gap: 8px;
+}
+.fask-mobile .composer-actions > button,
+.fask-mobile .composer-actions > select,
+.fask-mobile .composer-actions > .capture-toggle,
+.screen-q-panel .composer-actions > button,
+.screen-q-panel .composer-actions > select,
+.screen-q-panel .composer-actions > .capture-toggle {
+  min-height: 44px;
+  font-size: 15px;
+}
+.fask-mobile .detail-title h2 {
+  font-size: 20px;
+}
+/* Keyboard shortcuts and file drag do not exist on a phone. */
+.fask-mobile .composer-hint-keys {
+  display: none;
 }
 .fask-mobile .mobile-fab {
   position: static;
@@ -182,8 +281,18 @@
 }
 .fask-mobile .mobile-fab button {
   width: 100%;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border-radius: var(--r-md);
-  box-shadow: var(--shadow-float);
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: none;
 }
 .fask-mobile .mobile-banner {
   display: flex;
@@ -206,9 +315,12 @@
 }
 .fask-mobile .mobile-banner.dev {
   background: var(--nav-canvas);
-  color: #fff;
+  color: var(--nav-ink);
 }
 .fask-mobile .mobile-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   flex: none;
   margin: 12px 16px 0;
   white-space: pre-line;
@@ -216,7 +328,7 @@
 .fask-mobile .mobile-pair {
   max-width: 560px;
   margin: 0 auto;
-  padding: 40px 20px 20px;
+  padding: 32px 20px 40px;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -224,38 +336,243 @@
   box-sizing: border-box;
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: 24px;
 }
 .fask-mobile .mobile-pair h1 {
   margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
 }
-.fask-mobile .pair-link,
-.fask-mobile .mobile-field {
+.fask-mobile .mobile-pair h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.fask-mobile .mobile-pair p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.fask-mobile .pair-hero {
+  display: grid;
+  gap: 12px;
+}
+.fask-mobile .mobile-pair .pair-hero p {
+  color: var(--ink-muted);
+}
+.fask-mobile .mobile-pair-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.fask-mobile .mobile-pair-brand .wordmark {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--ink);
+}
+/* The QR path: one card with the illustration, the steps as plain rows, then the scan action. */
+.fask-mobile .pair-scan {
+  display: grid;
+  gap: 16px;
+  padding: 24px 20px 20px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xl);
+}
+.fask-mobile .pair-scan-art {
+  justify-self: center;
+  width: 112px;
+  height: 112px;
+  color: var(--ink);
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fask-mobile .pair-scan-frame,
+.fask-mobile .pair-scan-code {
+  stroke: currentColor;
+}
+.fask-mobile .pair-scan-dots {
+  fill: currentColor;
+}
+.fask-mobile .pair-scan-line {
+  stroke: var(--logo-acc);
+}
+.fask-mobile .pair-guide {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fask-mobile .pair-guide li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.fask-mobile .pair-n {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+.fask-mobile .pair-scan button.primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 700;
+}
+/* Code pairing: numbered fields, each with a visible label and where-to-find-it help. */
+.fask-mobile .pair-code {
   display: grid;
   gap: 8px;
+  padding-top: 24px;
+  border-top: 1px solid var(--hairline);
 }
-.fask-mobile .pair-link textarea {
-  min-height: 110px;
-  font-size: 14px;
-}
-.fask-mobile fieldset.pair-link {
+.fask-mobile .mobile-pair .pair-help {
   margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+.fask-mobile .pair-code fieldset {
+  display: grid;
+  gap: 20px;
+  margin: 12px 0 0;
   padding: 0;
   border: 0;
   min-width: 0;
 }
-.fask-mobile fieldset.pair-link legend {
-  padding: 0;
-  margin-bottom: 8px;
-  font-weight: 600;
+.fask-mobile .pair-step {
+  display: grid;
+  gap: 8px;
 }
-.fask-mobile fieldset.pair-link p {
-  margin: 0;
-}
-.fask-mobile fieldset.pair-link label {
+.fask-mobile .pair-step-label {
   display: flex;
   align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.fask-mobile .pair-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-3);
+  border-radius: var(--r-md);
+}
+.fask-mobile .pair-seg label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  color: var(--ink-muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+}
+.fask-mobile .pair-seg label.on {
+  background: var(--surface-1);
+  color: var(--ink);
+  font-weight: 700;
+  box-shadow: 0 0 0 1px var(--hairline-strong);
+}
+.fask-mobile .pair-seg label.off {
+  color: var(--dis-ink);
+  cursor: default;
+}
+.fask-mobile .pair-seg label:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.fask-mobile .pair-seg input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.fask-mobile .pair-code fieldset > button,
+.fask-mobile .pair-alt button,
+.fask-mobile .pair-test button {
+  justify-content: center;
+  min-height: 48px;
+  font-size: 15px;
+}
+.fask-mobile .pair-status {
+  font-size: 14px;
+}
+/* The pairing link is a test-build alternative, kept folded under the code form. */
+.fask-mobile .pair-alt {
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+.fask-mobile .pair-alt summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  list-style: none;
+  cursor: pointer;
+}
+.fask-mobile .pair-alt summary::-webkit-details-marker {
+  display: none;
+}
+.fask-mobile .pair-alt[open] summary .chev {
+  transform: rotate(180deg);
+}
+.fask-mobile .pair-alt > .pair-step {
+  margin-bottom: 12px;
+}
+.fask-mobile .pair-alt textarea {
+  min-height: 96px;
+  font-size: 14px;
+}
+.fask-mobile .pair-test {
+  display: grid;
   gap: 8px;
+}
+.fask-mobile .mobile-field {
+  display: grid;
+  gap: 8px;
+}
+/* Share: the project picker and the composer read as separate steps. */
+.fask-mobile .mobile-share {
+  display: grid;
+  align-content: start;
+  gap: 16px;
 }
 /* Settings: card sections like the desktop settings, without hover effects. */
 .fask-mobile .mobile-settings {
@@ -272,19 +589,9 @@
   border-radius: var(--r-xl);
 }
 .fask-mobile .mobile-settings h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   margin: 0;
   font-size: 16px;
-  font-weight: 600;
-}
-.fask-mobile .mobile-settings h2::before {
-  content: '';
-  width: 4px;
-  height: 16px;
-  border-radius: var(--r-pill);
-  background: linear-gradient(180deg, var(--primary), var(--accent-3));
+  font-weight: 700;
 }
 .fask-mobile .mobile-settings p {
   margin: 0;
@@ -293,15 +600,53 @@
 }
 .fask-mobile .mobile-settings label.check {
   display: flex;
+  flex-direction: row-reverse;
+  justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-height: 44px;
-  font-size: 14px;
+  font-size: 15px;
 }
+/* Settings toggles render as a switch; the native checkbox keeps its semantics. */
 .fask-mobile .mobile-settings label.check input {
+  appearance: none;
+  flex: none;
+  position: relative;
+  min-height: 0;
+  width: 44px;
+  height: 26px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--hairline-strong);
+  cursor: pointer;
+}
+.fask-mobile .mobile-settings label.check input::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
   width: 20px;
   height: 20px;
-  accent-color: var(--primary);
+  border-radius: 50%;
+  background: var(--surface-1);
+  transition: transform 0.15s ease-out;
+}
+.fask-mobile .mobile-settings label.check input:checked {
+  background: var(--primary);
+}
+.fask-mobile .mobile-settings label.check input:checked::after {
+  transform: translateX(18px);
+  background: var(--on-primary);
+}
+.fask-mobile .mobile-settings label.check input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fask-mobile .mobile-settings label.check input::after {
+    transition: none;
+  }
 }
 .fask-mobile .theme-grid {
   display: grid;
@@ -322,24 +667,21 @@
 }
 .fask-mobile .theme-chip.on {
   border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-weight: 600;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 700;
 }
-.fask-mobile .theme-chip i {
+.fask-mobile .theme-swatch {
   flex: none;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
-  border: 1px solid #0000001f;
 }
-/* Fixed swatches: each previews its theme regardless of the active one. */
-.theme-system i { background: linear-gradient(135deg, #f5f6fa 50%, #0f1220 50%); }
-.theme-light i { background: linear-gradient(135deg, #ffffff 50%, #5b51df 50%); }
-.theme-dark i { background: linear-gradient(135deg, #0f1220 50%, #7b72f0 50%); }
-.theme-sepia i { background: linear-gradient(135deg, #f4ecdc 50%, #a0612b 50%); }
-.theme-forest i { background: linear-gradient(135deg, #eef3ee 50%, #2f7d55 50%); }
-.theme-rose i { background: linear-gradient(135deg, #fbf1f3 50%, #c94f7c 50%); }
+/* 320px screens: one chip per row so labels like 시스템 설정 따르기 stay on one line. */
+@media (max-width: 359px) {
+  .fask-mobile .theme-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .fask-mobile .settings-rows {
   display: grid;
   margin: 0;
@@ -416,7 +758,7 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgb(0 0 0 / 0.35);
+  background: var(--scrim);
 }
 .mobile-sheet {
   position: fixed;
@@ -428,12 +770,30 @@
   max-height: 80vh;
   overflow-y: auto;
   padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
-  border-radius: 16px 16px 0 0;
+  border-top: 1px solid var(--hairline-strong);
+  border-radius: 14px 14px 0 0;
   background: var(--surface-1);
 }
 .mobile-sheet-group {
   display: grid;
   gap: 8px;
+}
+.mobile-sheet > strong {
+  margin-bottom: 6px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.mobile-sheet button {
+  min-height: 48px;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+}
+.mobile-sheet-group > small {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-muted);
 }
 
 .mobile-spinner {
@@ -450,6 +810,13 @@
 @keyframes mobile-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-spinner {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.5;
   }
 }
 

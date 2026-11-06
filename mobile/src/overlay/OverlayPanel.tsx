@@ -10,6 +10,7 @@ import TurnNav from '@desktop/renderer/src/personal/TurnNav'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
 import type { HubClient, HubConn } from '../hub'
+import { Icon } from '../icons'
 import { applyOverlayTheme, type Bootstrap, type Bridge, type OverlayState } from './bridge'
 
 type Interaction = { busy: boolean; running: boolean; unresolved: boolean }
@@ -207,7 +208,7 @@ export default function OverlayPanel({
   const projectsKey = JSON.stringify([data.projects, data.workspaces, projectId, lockReason, notice])
   // The native toolbar's project popover mirrors this list; resent after every switch attempt.
   useEffect(() => {
-    const groups = new Map(data.workspaces.map((w) => [w.id, w.remote ? `🌐 ${w.name}` : w.name]))
+    const groups = new Map(data.workspaces.map((w) => [w.id, w.remote ? `${w.name} (${w.remote.name})` : w.name]))
     const projects = [...data.projects]
       .sort((a, b) => (groups.get(a.workspaceId) ?? '').localeCompare(groups.get(b.workspaceId) ?? ''))
       .map((p) => ({ id: p.id, name: p.name, group: groups.get(p.workspaceId) ?? null }))
@@ -253,12 +254,12 @@ export default function OverlayPanel({
         <div className="screen-q-followup" role="status">
           {questionId ? (
             <>
-              <span className="screen-q-followup-tag">↪ {t('이어서 질문 중')}</span>
+              <span className="screen-q-followup-tag">{t('이어서 질문 중')}</span>
               <b title={question ? questionHeading(question) : undefined}>
                 {question ? questionHeading(question) : ''}
               </b>
               <button disabled={locked} onClick={newConversation}>
-                {confirmNew ? t('다시 눌러 새 대화 시작') : t('＋ 새 질문')}
+                {confirmNew ? t('다시 눌러 새 대화 시작') : t('새 질문')}
               </button>
             </>
           ) : (
@@ -274,11 +275,12 @@ export default function OverlayPanel({
         )}
         {blocked && <p className="notice error">{blocked}</p>}
         <small className="overlay-capture-note">
-          {overlay.region
-            ? t('캡처 영역 {{width}}×{{height}}px', overlay.region)
-            : t('영역 미설정 · 화면 첨부 전에 영역을 선택하세요')}
-          {overlay.hasInk ? t(' · 필기 있음') : ''}
-          {t(' · 캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}
+          <b>
+            {overlay.region ? t('캡처 영역 {{width}}×{{height}}px', overlay.region) : t('영역 미설정')}
+          </b>
+          {!overlay.region && <span>{t('화면을 첨부하기 전에 영역을 선택하세요.')}</span>}
+          {overlay.hasInk && <span>{t('필기 있음')}</span>}
+          <span>{t('화면 캡처 포함을 선택하면 질문을 보낼 때 촬영합니다.')}</span>
           <button
             disabled={locked}
             onClick={() => void bridge.call('selectRegion').catch((e) => setNotice(errorText(e)))}
@@ -296,7 +298,8 @@ export default function OverlayPanel({
               {t('이전 대화 {{count}}개', { count: question.turns.length - 1 })}
               {question.memo.trim() !== '' && (
                 <span className="memo-badge" title={t('메모 있음')}>
-                  ✎ {t('메모')}
+                  <Icon name="pen" size={14} />
+                  {t('메모')}
                 </span>
               )}
             </summary>

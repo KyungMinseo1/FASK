@@ -16,6 +16,8 @@ import MarkdownAnswer from './MarkdownAnswer'
 import Pager from './Pager'
 import QuestionDetail from './QuestionDetail'
 import Settings from './Settings'
+import { Icon } from './ToolbarIcons'
+import { Wordmark } from './Wordmark'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
 import { questionTree } from './questionTree'
 import { canDropGraphNode, canMoveGraphNode, moveGraphNode } from './graphMove'
@@ -181,7 +183,8 @@ export default function Dashboard(): React.JSX.Element {
     <div className="fask-app">
       <aside className="fask-sidebar">
         <div className="fask-wordmark">
-          <span>f</span> FASK <small>PERSONAL</small>
+          <Wordmark />
+          <small>{t('개인용')}</small>
         </div>
         <label className="sidebar-label">
           {t('프로필')}
@@ -214,12 +217,13 @@ export default function Dashboard(): React.JSX.Element {
           </select>
         </label>
         <button className="sidebar-add" onClick={() => beginCreate('profile')}>
-          {t('＋ 프로필 추가')}
+          <Icon name="plus" size={14} />
+          {t('프로필 추가')}
         </button>
         <div className="sidebar-heading">
-          WORKSPACE
+          {t('워크스페이스')}
           <button aria-label={t('워크스페이스 추가')} onClick={() => beginCreate('workspace')}>
-            ＋
+            <Icon name="plus" size={14} />
           </button>
         </div>
         <select
@@ -236,21 +240,24 @@ export default function Dashboard(): React.JSX.Element {
         >
           {data.workspaces.map((w) => (
             <option key={w.id} value={w.id}>
-              {w.remote ? `🌐 ${w.name}` : w.name}
+              {w.remote ? t('{{name}} (원격)', { name: w.name }) : w.name}
             </option>
           ))}
         </select>
         {workspace?.remote && (
-          <span className="sidebar-rename">
-            🌐 {workspace.remote.name} ·{' '}
-            {t(
-              {
-                online: '온라인',
-                offline: '오프라인 (변경 불가)',
-                revoked: '연결 해제됨',
-                blocked: '인증서 불일치'
-              }[workspace.remote.status]
-            )}
+          <span className="sidebar-remote">
+            <Icon name="globe" size={14} />
+            <span>{workspace.remote.name}</span>
+            <small>
+              {t(
+                {
+                  online: '온라인',
+                  offline: '오프라인 (변경 불가)',
+                  revoked: '연결 해제됨',
+                  blocked: '인증서 불일치'
+                }[workspace.remote.status]
+              )}
+            </small>
           </span>
         )}
         {workspace && (
@@ -259,17 +266,18 @@ export default function Dashboard(): React.JSX.Element {
             disabled={locked}
             onClick={() => beginRename('workspace', workspace.id, workspace.name)}
           >
-            {t('워크스페이스 이름 변경 ✎')}
+            <Icon name="edit" size={14} />
+            {t('워크스페이스 이름 변경')}
           </button>
         )}
         <div className="sidebar-heading">
-          PROJECTS
+          {t('프로젝트')}
           <button
             aria-label={t('프로젝트 추가')}
             disabled={locked}
             onClick={() => beginCreate('project', workspace?.id)}
           >
-            ＋
+            <Icon name="plus" size={14} />
           </button>
         </div>
         <nav>
@@ -284,7 +292,6 @@ export default function Dashboard(): React.JSX.Element {
                 setCompose(false)
               }}
             >
-              <span>◈</span>
               {p.name}
               <small>{data.questions.filter((q) => q.projectId === p.id).length}</small>
             </button>
@@ -292,15 +299,25 @@ export default function Dashboard(): React.JSX.Element {
         </nav>
         <div className="sidebar-bottom">
           <div className="local-status">
-            <i /> {t('로컬에 저장 중')}
+            {t('로컬에 저장 중')}
             <small>{t('이미지 {{size}} MB', { size: (data.storageBytes / 1024 / 1024).toFixed(1) })}</small>
           </div>
-          <button onClick={() => setSettingsOpen(true)}>{t('⚙ 설정 · AI 연결')}</button>
+          <button onClick={() => setSettingsOpen(true)}>
+            <Icon name="gear" />
+            {t('설정과 AI 연결')}
+          </button>
           <small>
-            {shortcut?.accelerator?.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + ') ||
-              t('단축키 등록 불가 · 다른 앱 점유 확인')}
+            {shortcut?.accelerator ? (
+              shortcut.accelerator.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + ')
+            ) : (
+              <>
+                <b>{t('단축키를 등록하지 못했습니다')}</b>
+                {t('다른 앱이 같은 키를 쓰는지 확인하세요.')}
+              </>
+            )}
             <br />
-            {shortcut?.fallback ? t('대체 단축키 · 화면 질문 열기 / 패널 토글') : t('화면 질문 열기 / 패널 토글')}
+            {shortcut?.fallback && `${t('대체 단축키')}: `}
+            {t('화면 질문 열기, 패널 토글')}
           </small>
         </div>
       </aside>
@@ -311,7 +328,7 @@ export default function Dashboard(): React.JSX.Element {
             disabled={!window.history.state?.idx}
             onClick={() => navigate(-1)}
           >
-            ←
+            <Icon name="back" />
           </button>
           <button
             onClick={() => {
@@ -353,15 +370,6 @@ export default function Dashboard(): React.JSX.Element {
         </nav>
         <header className={collapsedHeader ? 'project-header collapsed' : 'project-header'}>
           <div>
-            {!collapsedHeader && (
-              <span className="eyebrow">
-                {scope === 'project'
-                  ? 'PROJECT LIBRARY'
-                  : scope === 'workspace'
-                    ? 'WORKSPACE'
-                    : 'YOUR SPACE'}
-              </span>
-            )}
             <h1>
               {scope === 'home'
                 ? t('내 공간')
@@ -374,7 +382,7 @@ export default function Dashboard(): React.JSX.Element {
                   aria-label={t('프로젝트 이름 변경')}
                   onClick={() => beginRename('project', project.id, project.name)}
                 >
-                  ✎
+                  <Icon name="edit" />
                 </button>
               )}
               {scope === 'project' && (
@@ -385,9 +393,7 @@ export default function Dashboard(): React.JSX.Element {
                   title={headerCollapsed ? t('정보 펼치기') : t('정보 접기')}
                   onClick={() => setHeaderCollapsed((c) => !c)}
                 >
-                  <svg viewBox="0 0 24 24" aria-hidden>
-                    <path d="M6 15l6-6 6 6" />
-                  </svg>
+                  <Icon name="up" />
                 </button>
               )}
             </h1>
@@ -406,14 +412,16 @@ export default function Dashboard(): React.JSX.Element {
                   disabled={!project}
                   onClick={() => void run(() => window.fask.exportContext(project!.id))}
                 >
-                  {t('기억 내보내기 ↗')}
+                  <Icon name="export" />
+                  {t('기억 내보내기')}
                 </button>
                 <button
-                  className="primary"
+                  className={compose ? undefined : 'primary'}
                   disabled={!project}
                   onClick={() => void run(() => window.fask.openOverlay(project!.id))}
                 >
-                  {t('▧ 화면에서 질문')}
+                  <Icon name="capture" />
+                  {t('화면에서 질문')}
                 </button>
               </>
             ) : (
@@ -427,7 +435,8 @@ export default function Dashboard(): React.JSX.Element {
                   )
                 }
               >
-                {scope === 'home' ? t('＋ 워크스페이스 만들기') : t('＋ 프로젝트 만들기')}
+                <Icon name="plus" />
+                {scope === 'home' ? t('워크스페이스 만들기') : t('프로젝트 만들기')}
               </button>
             )}
           </div>
@@ -448,14 +457,16 @@ export default function Dashboard(): React.JSX.Element {
                   else setSearch({ scope: 'project', workspace: workspace!.id, project: item.id })
                 }}
               >
-                <span className="space-icon">{scope === 'home' ? '▦' : '◈'}</span>
+                <span className="space-icon">
+                  <Icon name={scope === 'home' ? 'workspace' : 'project'} size={18} />
+                </span>
+                <Icon name="right" className="space-card-go" />
                 <h2>{item.name}</h2>
                 <small>
                   {scope === 'home'
                     ? t('{{n}}개 프로젝트', { n: data.projects.filter((p) => p.workspaceId === item.id).length })
                     : t('{{n}}개 질문', { n: data.questions.filter((q) => q.projectId === item.id).length })}
                 </small>
-                <b>↗</b>
               </button>
             ))}
             {!(scope === 'home' ? data.workspaces : projects).length && (
@@ -481,15 +492,23 @@ export default function Dashboard(): React.JSX.Element {
                 <span>{t('중요한 기억')}</span>
               </div>
               <div className="connection-note">
-                <i className={data.settings.model ? 'connected' : ''} />
-                {data.settings.model || t('AI 연결을 설정해 주세요')}
+                {data.settings.model ? (
+                  <>
+                    <span>{t('AI 모델')}</span>
+                    <b>{data.settings.model}</b>
+                  </>
+                ) : (
+                  t('AI 연결을 설정해 주세요')
+                )}
               </div>
             </div>
             )}
             {(notice || error) && (
               <div className="notice error" role="alert">
                 {notice || error}
-                <button onClick={() => setNotice('')}>×</button>
+                <button aria-label={t('닫기')} onClick={() => setNotice('')}>
+                  <Icon name="close" size={14} />
+                </button>
               </div>
             )}
             <div className="view-bar">
@@ -517,7 +536,8 @@ export default function Dashboard(): React.JSX.Element {
                   setSelectedId('')
                 }}
               >
-                {t('＋ 새 질문')}
+                <Icon name="plus" />
+                {t('새 질문')}
               </button>
             </div>
             {compose && project && (
@@ -536,15 +556,18 @@ export default function Dashboard(): React.JSX.Element {
             )}
             {(!headerCollapsed || query !== '' || filter !== 'all') && (
             <div className="filter-row">
-              <input
-                aria-label={t('기록 검색')}
-                placeholder={t('⌕ 질문, 답변, 메모 검색')}
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value)
-                  setPage(1)
-                }}
-              />
+              <label className="search-field">
+                <Icon name="search" />
+                <input
+                  aria-label={t('기록 검색')}
+                  placeholder={t('질문, 답변, 메모 검색')}
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value)
+                    setPage(1)
+                  }}
+                />
+              </label>
               <select
                 aria-label={t('질문 필터')}
                 value={filter}
@@ -575,10 +598,7 @@ export default function Dashboard(): React.JSX.Element {
                       actions={
                         !locked && (
                           <button onClick={() => beginCreate('concept', project.id)}>
-                            <svg viewBox="0 0 24 24" aria-hidden>
-                              <circle cx="12" cy="12" r="8" />
-                              <path d="M12 8.5v7M8.5 12h7" />
-                            </svg>
+                            <Icon name="plus" size={18} />
                             {t('개념 추가')}
                           </button>
                         )
@@ -609,66 +629,82 @@ export default function Dashboard(): React.JSX.Element {
                   <>
                   <div className="records-scroll" ref={scrollRef}>
                   <div className={view === 'list' ? 'question-list compact' : 'question-list'}>
-                    {paged.items.map((q, index) => (
-                      <div key={q.id}>
-                        {view === 'timeline' &&
-                          (index === 0 ||
-                            new Date(paged.items[index - 1].createdAt).toDateString() !==
-                              new Date(q.createdAt).toDateString()) && (
-                            <h3 className="day-label">
-                              {new Date(q.createdAt).toLocaleDateString(i18n.language === 'en' ? 'en-US' : 'ko-KR', {
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric',
-                                weekday: 'short'
-                              })}
-                            </h3>
-                          )}
-                        <button
-                          className={`question-card ${selectedId === q.id ? 'selected' : ''}`}
-                          onContextMenu={(e) => openContext(e, 'question', q.id, questionHeading(q))}
-                          onClick={() => {
-                            setSelectedId(q.id)
-                            setCompose(false)
-                          }}
-                        >
-                          <div className="question-meta">
-                            <span>
-                              {questionComplexity(q) === 'complex'
-                                ? t('깊이 탐구')
-                                : questionComplexity(q) === 'simple'
-                                  ? t('빠른 질문')
-                                  : t('미확정')}
-                            </span>
-                            <time>{dateLabel(q.createdAt)}</time>
-                            {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
-                            {q.important && <span>★</span>}
-                            {q.memo.trim() !== '' && (
-                              <span className="memo-badge" title={t('메모 있음')}>
-                                ✎ {t('메모')}
-                              </span>
+                    {paged.items.map((q, index) => {
+                      const tags = q.conceptIds
+                        .map((id) => concepts.find((c) => c.id === id)?.name)
+                        .filter((name): name is string => !!name)
+                      return (
+                        <div key={q.id}>
+                          {view === 'timeline' &&
+                            (index === 0 ||
+                              new Date(paged.items[index - 1].createdAt).toDateString() !==
+                                new Date(q.createdAt).toDateString()) && (
+                              <h3 className="day-label">
+                                {new Date(q.createdAt).toLocaleDateString(i18n.language === 'en' ? 'en-US' : 'ko-KR', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric',
+                                  weekday: 'short'
+                                })}
+                              </h3>
                             )}
-                          </div>
-                          <h3>{questionHeading(q)}</h3>
-                          {view !== 'list' && (
-                            <CardPreview
-                              text={lastTurn(q).answer || t(lastTurn(q).error || '아직 답변이 없습니다.')}
-                            />
-                          )}
-                          <div className="question-footer">
-                            <span>
-                              {q.conceptIds
-                                .map((id) => concepts.find((c) => c.id === id)?.name)
-                                .filter(Boolean)
-                                .join(' · ') || t('미분류')}
-                            </span>
-                            <small>
-                              {t(statuses[questionStatus(q)])} {questionImages(q).length ? '· ▧' : ''}
-                            </small>
-                          </div>
-                        </button>
-                      </div>
-                    ))}
+                          <button
+                            className={`question-card ${selectedId === q.id ? 'selected' : ''}`}
+                            onContextMenu={(e) => openContext(e, 'question', q.id, questionHeading(q))}
+                            onClick={() => {
+                              setSelectedId(q.id)
+                              setCompose(false)
+                            }}
+                          >
+                            <div className="question-meta">
+                              <span className="chip">
+                                {questionComplexity(q) === 'complex'
+                                  ? t('깊이 탐구')
+                                  : questionComplexity(q) === 'simple'
+                                    ? t('빠른 질문')
+                                    : t('미확정')}
+                              </span>
+                              {q.important && <span className="signal-chip">{t('중요')}</span>}
+                              <span className="question-meta-end">
+                                <time>{dateLabel(q.createdAt)}</time>
+                                {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
+                                {q.memo.trim() !== '' && (
+                                  <span className="memo-badge">
+                                    <Icon name="note" size={14} />
+                                    {t('메모 있음')}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <h3>{questionHeading(q)}</h3>
+                            {view !== 'list' && (
+                              <CardPreview
+                                text={lastTurn(q).answer || t(lastTurn(q).error || '아직 답변이 없습니다.')}
+                              />
+                            )}
+                            <div className="question-footer">
+                              <span className="question-tags">
+                                {tags.length
+                                  ? tags.map((name, i) => (
+                                      <span key={i} className="concept-tag">
+                                        {name}
+                                      </span>
+                                    ))
+                                  : t('미분류')}
+                              </span>
+                              <span className="question-status">
+                                {questionImages(q).length > 0 && (
+                                  <span title={t('이미지 있음')} aria-label={t('이미지 있음')}>
+                                    <Icon name="image" size={14} />
+                                  </span>
+                                )}
+                                {t(statuses[questionStatus(q)])}
+                              </span>
+                            </div>
+                          </button>
+                        </div>
+                      )
+                    })}
                   </div>
                   </div>
                   <Pager
@@ -682,7 +718,9 @@ export default function Dashboard(): React.JSX.Element {
                   </>
                 ) : (
                   <div className="empty-state">
-                    <div>✳</div>
+                    <span className="empty-state-mark">
+                      <Icon name="ask" size={20} />
+                    </span>
                     <h2>
                       {query || filter !== 'all'
                         ? t('일치하는 기록이 없습니다')
@@ -693,8 +731,9 @@ export default function Dashboard(): React.JSX.Element {
                       <br />
                       {t('질문과 답변은 이 프로젝트에 차곡차곡 쌓입니다.')}
                     </p>
-                    <button className="primary" onClick={() => setCompose(true)}>
-                      {t('＋ 새 질문')}
+                    <button onClick={() => setCompose(true)}>
+                      <Icon name="plus" />
+                      {t('새 질문')}
                     </button>
                   </div>
                 )}
@@ -725,7 +764,9 @@ export default function Dashboard(): React.JSX.Element {
       {notice && scope !== 'project' && (
         <div className="global-notice notice error" role="alert">
           {notice}
-          <button onClick={() => setNotice('')}>×</button>
+          <button aria-label={t('닫기')} onClick={() => setNotice('')}>
+            <Icon name="close" size={14} />
+          </button>
         </div>
       )}
       {context && (
@@ -744,7 +785,8 @@ export default function Dashboard(): React.JSX.Element {
               setContext(null)
             }}
           >
-            {t('편집 · 이름 바꾸기')}
+            <Icon name="edit" />
+            {t('편집, 이름 바꾸기')}
           </button>
           {context.kind === 'question' && (
             <button
@@ -756,9 +798,11 @@ export default function Dashboard(): React.JSX.Element {
                 setContext(null)
               }}
             >
+              <Icon name="move" />
               {t('다른 프로젝트로 이동')}
             </button>
           )}
+          <hr />
           <button
             role="menuitem"
             className="danger"
@@ -775,6 +819,7 @@ export default function Dashboard(): React.JSX.Element {
               })
             }}
           >
+            <Icon name="trash" />
             {t('삭제')}
           </button>
         </div>
@@ -801,7 +846,6 @@ export default function Dashboard(): React.JSX.Element {
               })
             }}
           >
-            <span className="eyebrow">MAKE ROOM FOR YOUR IDEAS</span>
             <h2>
               {t(create.id ? '{{kind}} 이름 변경' : '{{kind}} 만들기', {
                 kind: t(
@@ -849,7 +893,6 @@ export default function Dashboard(): React.JSX.Element {
               })
             }}
           >
-            <span className="eyebrow">MOVE QUESTION</span>
             <h2>{t('다른 프로젝트로 이동')}</h2>
             <p>{move.name}</p>
             <select

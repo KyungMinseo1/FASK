@@ -5,7 +5,8 @@ import Composer from './Composer'
 import QuestionDetail from './QuestionDetail'
 import TurnNav from './TurnNav'
 import ProjectPicker from './ProjectPicker'
-import { ToolIcon } from './ToolbarIcons'
+import { Icon } from './ToolbarIcons'
+import { MarkF } from './Wordmark'
 import { errorText, useSnapshot } from './common'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
@@ -322,11 +323,8 @@ export default function Overlay(): React.JSX.Element {
     setMode('idle')
   }
   const project = data?.projects.find((p) => p.id === projectId)
-  const projectName = !project
-    ? ''
-    : data?.workspaces.find((w) => w.id === project.workspaceId)?.remote
-      ? `🌐 ${project.name}`
-      : project.name
+  const projectName = project?.name ?? ''
+  const remote = !!project && !!data?.workspaces.find((w) => w.id === project.workspaceId)?.remote
   const heading = recent ? questionHeading(recent).replace(/\s+/g, ' ').trim() : ''
   const headingChars = [...heading]
   const threadName =
@@ -393,7 +391,7 @@ export default function Overlay(): React.JSX.Element {
             height: `${region.rect.height * 100}%`
           }}
         >
-          <span>{t('이 영역 안쪽만 캡처 · 우클릭/Esc로 배경 앱 사용')}</span>
+          <span>{t('이 영역 안쪽만 캡처, 우클릭이나 Esc로 배경 앱 사용')}</span>
         </div>
       )}
       <div
@@ -419,7 +417,6 @@ export default function Overlay(): React.JSX.Element {
           className="toolbar-drag-handle"
           aria-label={t('토글 접기/펼치기')}
           aria-expanded={!collapsed}
-          title={t('클릭: 접기/펼치기 · 드래그: 이동')}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
             toolbarMoving.current = {
@@ -462,19 +459,23 @@ export default function Overlay(): React.JSX.Element {
           }}
         >
           <b className={attention && blinkOn ? 'attention' : undefined}>
-            f<span>{projectName || 'FASK'}</span>
+            <MarkF dot={mode === 'pen' ? penColor : undefined} />
+            <span className="toolbar-hint">
+              {collapsed ? t('클릭해서 펼치기, 끌어서 이동') : projectName || 'FASK'}
+            </span>
           </b>
+          <i className="toolbar-grip" aria-hidden="true" />
         </button>
         <div className="toolbar-tools">
           <button
             className={mode === 'pen' ? 'active' : ''}
-            title={t('펜 · 우클릭/Esc로 배경 앱 조작')}
+            title={t('펜, 우클릭이나 Esc로 배경 앱 조작')}
             onClick={() => {
               setMode('pen')
               setPanel(false)
             }}
           >
-            <ToolIcon kind="pen" ink={penColor} />
+            <Icon name="pen" size={18} />
             <small>{t('펜')}</small>
           </button>
           {mode === 'pen' && (
@@ -494,33 +495,33 @@ export default function Overlay(): React.JSX.Element {
           )}
           <button
             className={mode === 'eraser' ? 'active' : ''}
-            title={t('지우개 · 우클릭/Esc로 배경 앱 조작')}
+            title={t('지우개, 우클릭이나 Esc로 배경 앱 조작')}
             onClick={() => {
               setMode('eraser')
               setPanel(false)
             }}
           >
-            <ToolIcon kind="eraser" />
+            <Icon name="eraser" size={18} />
             <small>{t('지우개')}</small>
           </button>
           <button onClick={() => setStrokes([])}>
-            <ToolIcon kind="clear" />
+            <Icon name="trash" size={18} />
             <small>{t('모두 지우기')}</small>
           </button>
           <hr />
           <button
-            className={`question-trigger ${panel ? 'active' : ''}`}
+            className={panel ? 'active' : ''}
             aria-expanded={panel}
             onClick={() => {
               setPanel((s) => !s)
               setMode('idle')
             }}
           >
-            <ToolIcon kind="question" />
+            <Icon name="ask" size={18} />
             <small>{t('질문')}</small>
           </button>
           <button onClick={() => void window.fask.showDashboard()}>
-            <ToolIcon kind="dashboard" />
+            <Icon name="dashboard" size={18} />
             <small>{t('대시보드')}</small>
           </button>
           <button
@@ -532,14 +533,14 @@ export default function Overlay(): React.JSX.Element {
               })
             }}
           >
-            <ToolIcon kind="region" />
+            <Icon name="capture" size={18} />
             <small>{t('캡처 영역')}</small>
           </button>
           <hr />
           <button
             className={`toolbar-project ${picker ? 'active' : ''}`}
             aria-expanded={!!picker}
-            title={t('프로젝트 바꾸기 · 현재: {{name}}', { name: projectName })}
+            title={t('프로젝트 바꾸기, 지금은 {{name}}', { name: projectName })}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect()
               setPicker((p) =>
@@ -552,7 +553,7 @@ export default function Overlay(): React.JSX.Element {
               )
             }}
           >
-            <ToolIcon kind="project" />
+            <Icon name="project" size={18} />
             <small>{t('프로젝트')}</small>
           </button>
         </div>
@@ -620,25 +621,38 @@ export default function Overlay(): React.JSX.Element {
             }}
           >
             <div>
-              <span className="eyebrow">ASK IN CONTEXT</span>
-              <b>{projectName || t('화면 질문')}</b>
+              <small>
+                {projectName || t('화면 질문')}
+                {remote && <Icon name="globe" size={12} />}
+              </small>
               {project && (
-                <small className="overlay-panel-thread" title={heading || undefined}>
-                  {recent ? `↪ ${threadName}` : t('새 대화')}
-                </small>
+                <b className="overlay-panel-thread" title={heading || undefined}>
+                  {recent ? (
+                    <>
+                      <Icon name="reply" size={14} />
+                      {threadName}
+                    </>
+                  ) : (
+                    t('새 대화')
+                  )}
+                </b>
               )}
             </div>
-            <button onClick={() => setPanel(false)}>{t('접기 ×')}</button>
+            <button onClick={() => setPanel(false)}>
+              <Icon name="close" size={14} />
+              {t('접기')}
+            </button>
           </header>
           <div
             className="overlay-panel-content"
             ref={panelContent}
             onScroll={() => saveScroll(historyOpen)}
           >
-            <small className="overlay-capture-note">
-              {region ? t('설정한 영역만 캡처') : t('영역 미설정 · 전체 모니터 캡처')} ·{' '}
-              {t('캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}
-            </small>
+            <div className="overlay-capture-note">
+              <span className="chip">{region ? t('캡처 영역 있음') : t('캡처 영역 없음')}</span>
+              <span>{region ? t('설정한 영역만 캡처') : t('전체 모니터')}</span>
+              <span>{t('캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}</span>
+            </div>
             {data && !project && <p className="notice error">{t('프로젝트를 찾을 수 없습니다.')}</p>}
             {data && project && recent && recent.turns.length > 1 && (
               <details
@@ -653,8 +667,9 @@ export default function Overlay(): React.JSX.Element {
                 <summary>
                   {t('이전 대화 {{count}}개', { count: recent.turns.length - 1 })}
                   {recent.memo.trim() !== '' && (
-                    <span className="memo-badge" title={t('메모 있음')}>
-                      ✎ {t('메모')}
+                    <span className="memo-badge">
+                      <Icon name="note" size={14} />
+                      {t('메모 있음')}
                     </span>
                   )}
                 </summary>
@@ -773,7 +788,7 @@ export default function Overlay(): React.JSX.Element {
                 setPanelInteraction(false)
               }}
             >
-              ◢
+              <Icon name="resize" size={14} />
             </button>
           </footer>
         </section>

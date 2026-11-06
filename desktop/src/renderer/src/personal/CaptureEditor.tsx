@@ -115,8 +115,11 @@ export default function CaptureEditor(): React.JSX.Element {
             onPointerDown={(e) => down(e, 'move')}
           >
             <span className="capture-size">
-              {Math.round(rect.width * preview.display.width)} ×{' '}
-              {Math.round(rect.height * preview.display.height)} · {t('안쪽만 캡처')}
+              <span>
+                {Math.round(rect.width * preview.display.width)} ×{' '}
+                {Math.round(rect.height * preview.display.height)}
+              </span>
+              <span>{t('안쪽만 캡처')}</span>
             </span>
             {['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((mode) => (
               <span
@@ -140,9 +143,13 @@ export default function CaptureEditor(): React.JSX.Element {
           {t('전체 화면')}
         </button>
         <button onClick={() => setRect(initial)}>{t('초기화')}</button>
-        <button onClick={() => void window.fask.closeCaptureEditor()}>{t('취소 · Esc')}</button>
+        <button onClick={() => void window.fask.closeCaptureEditor()}>
+          {t('취소')}
+          <kbd>Esc</kbd>
+        </button>
         <button className="primary" onClick={() => void apply()}>
-          {t('적용 · Enter')}
+          {t('적용')}
+          <kbd>Enter</kbd>
         </button>
       </div>
       {error && (

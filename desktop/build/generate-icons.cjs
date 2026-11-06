@@ -1,26 +1,58 @@
 // Run with Electron: npx electron build/generate-icons.cjs
-// Reproduces the dashboard's Georgia italic f on its violet rounded tile.
+// Draws the FASK "f." mark: cream Pretendard 850 f + coral period on a navy tile.
+// Also regenerates the Android launcher mipmaps in ../mobile/android.
 const { app, BrowserWindow, nativeImage } = require('electron')
-const { writeFileSync } = require('node:fs')
+const { writeFileSync, readFileSync } = require('node:fs')
 const { join } = require('node:path')
+const NAVY = '#14213D'
+const CREAM = '#F4EDE0'
+const CORAL = '#FF6B5B'
+const fontPath = join(__dirname, '../node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2')
+const res = join(__dirname, '../../mobile/android/app/src/main/res')
 app.whenReady().then(async () => {
   try {
     const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
     await win.loadURL('data:text/html,<html></html>')
-    const png = Buffer.from(
-      await win.webContents.executeJavaScript(`(() => {
-      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1024;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#7567ef'; ctx.beginPath(); ctx.roundRect(0, 0, 1024, 1024, 260); ctx.fill();
-      ctx.fillStyle = '#ffffff'; ctx.font = 'italic bold 900px Georgia'; ctx.textAlign = 'center';
-      ctx.fillText('f', 505, 794);
-      return canvas.toDataURL('image/png').split(',')[1];
-    })()`),
-      'base64'
-    )
+    const font = readFileSync(fontPath).toString('base64')
+    await win.webContents.executeJavaScript(`(async () => {
+      const face = new FontFace('PretendardIcon', 'url(data:font/woff2;base64,${font})', { weight: '45 920' });
+      await face.load(); document.fonts.add(face);
+      // shape: 'tile' rounded square, 'circle', 'none' transparent; scale: mark height share of canvas
+      window.drawMark = (size, shape, scale) => {
+        const c = document.createElement('canvas'); c.width = c.height = size;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '${NAVY}'; ctx.beginPath();
+        if (shape === 'tile') { ctx.roundRect(0, 0, size, size, size * 0.254); ctx.fill(); }
+        else if (shape === 'circle') { ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2); ctx.fill(); }
+        ctx.font = '850 ' + 100 + 'px PretendardIcon';
+        const m = ctx.measureText('f.');
+        const h = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+        const k = (size * scale) / h;
+        ctx.font = '850 ' + (100 * k) + 'px PretendardIcon';
+        const mm = ctx.measureText('f.');
+        const w = mm.actualBoundingBoxLeft + mm.actualBoundingBoxRight;
+        const x = (size - w) / 2 + mm.actualBoundingBoxLeft;
+        const y = (size - (mm.actualBoundingBoxAscent + mm.actualBoundingBoxDescent)) / 2 + mm.actualBoundingBoxAscent;
+        ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+        ctx.fillStyle = '${CREAM}'; ctx.fillText('f', x, y);
+        ctx.fillStyle = '${CORAL}'; ctx.fillText('.', x + ctx.measureText('f').width, y);
+        return c.toDataURL('image/png').split(',')[1];
+      };
+    })()`)
+    const draw = async (size, shape, scale) =>
+      Buffer.from(await win.webContents.executeJavaScript(`drawMark(${size}, '${shape}', ${scale})`), 'base64')
+    const png = await draw(1024, 'tile', 0.62)
     const image = nativeImage.createFromBuffer(png)
     writeFileSync(join(__dirname, 'icon.png'), png)
     writeFileSync(join(__dirname, '../resources/icon.png'), png)
+    const densities = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 }
+    for (const [d, f] of Object.entries(densities)) {
+      const dir = join(res, `mipmap-${d}`)
+      writeFileSync(join(dir, 'ic_launcher.png'), await draw(48 * f, 'tile', 0.62))
+      writeFileSync(join(dir, 'ic_launcher_round.png'), await draw(48 * f, 'circle', 0.56))
+      // 108dp canvas, 72dp visible, 66dp safe zone: mark height ~40% of canvas stays inside
+      writeFileSync(join(dir, 'ic_launcher_foreground.png'), await draw(108 * f, 'none', 0.4))
+    }
     const sizes = [16, 32, 48, 64, 128, 256]
     const images = sizes.map((size) => image.resize({ width: size, height: size }).toPNG())
     const header = Buffer.alloc(6 + sizes.length * 16)

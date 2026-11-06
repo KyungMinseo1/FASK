@@ -27,6 +27,7 @@ import { questionTree } from '@desktop/renderer/src/personal/questionTree'
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
+import { Icon } from '../icons'
 import {
   isAndroidOverlay,
   isOverlayCancellation,
@@ -95,15 +96,18 @@ export default function ProjectScreen(): React.JSX.Element {
   const list = (
     <section className="mobile-list" ref={listRef}>
       <div className="filter-row">
-        <input
-          aria-label={t('기록 검색')}
-          placeholder={t('⌕ 질문, 답변, 메모 검색')}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setPage(1)
-          }}
-        />
+        <label className="search-field">
+          <Icon name="search" size={18} />
+          <input
+            aria-label={t('기록 검색')}
+            placeholder={t('질문, 답변, 메모 검색')}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setPage(1)
+            }}
+          />
+        </label>
       </div>
       <div className="mobile-chips" role="tablist">
         {FILTERS.map(([id, label]) => (
@@ -195,7 +199,8 @@ export default function ProjectScreen(): React.JSX.Element {
   const fab = (
     <div className="mobile-fab">
       <button className="primary" onClick={() => navigate(`/p/${projectId}/new`)}>
-        {t('＋ 새 질문')}
+        <Icon name="plus" size={18} />
+        {t('새 질문')}
       </button>
     </div>
   )
@@ -203,7 +208,7 @@ export default function ProjectScreen(): React.JSX.Element {
     <>
       <header className="mobile-top">
         <button aria-label={t('뒤로')} onClick={() => navigate(questionId && !wide ? `/p/${projectId}` : '/')}>
-          ←
+          <Icon name="back" />
         </button>
         <h1>{project.name}</h1>
         {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} />}
@@ -412,9 +417,22 @@ function QuestionSheet({
       setBusy(false)
     }
   }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !busy) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy, onClose])
   return (
     <div className="mobile-sheet-backdrop" onClick={() => !busy && onClose()}>
-      <div className="mobile-sheet" role="dialog" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="mobile-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={questionHeading(q)}
+        onClick={(e) => e.stopPropagation()}
+      >
         <strong>{questionHeading(q)}</strong>
         {mode === 'actions' && (
           <>
@@ -543,29 +561,39 @@ function QuestionCard({
       }}
     >
       <div className="question-meta">
-        <span>{t(complexity === 'complex' ? '깊이 탐구' : complexity === 'simple' ? '빠른 질문' : '미확정')}</span>
-        <time>{dateLabel(q.createdAt)}</time>
-        {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
-        {q.important && <span>★</span>}
+        <span className="chip">
+          {t(complexity === 'complex' ? '깊이 탐구' : complexity === 'simple' ? '빠른 질문' : '미확정')}
+        </span>
+        {q.important && <span className="signal-chip">{t('중요')}</span>}
         {q.memo.trim() !== '' && (
           <span className="memo-badge" title={t('메모 있음')}>
-            ✎ {t('메모')}
+            <Icon name="pen" size={14} />
+            {t('메모')}
           </span>
         )}
+        <time className="question-meta-end">{dateLabel(q.createdAt)}</time>
       </div>
       <h3>{questionHeading(q)}</h3>
       <MarkdownAnswer preview>
         {lastTurn(q).answer || lastTurn(q).error || t('아직 답변이 없습니다.')}
       </MarkdownAnswer>
       <div className="question-footer">
-        <span>
-          {q.conceptIds
-            .map((id) => concepts.find((c) => c.id === id)?.name)
-            .filter(Boolean)
-            .join(' · ') || t('미분류')}
+        <span className="question-tags">
+          {(() => {
+            const names = q.conceptIds
+              .map((id) => concepts.find((c) => c.id === id)?.name)
+              .filter((name): name is string => !!name)
+            return (names.length ? names : [t('미분류')]).map((name, i) => (
+              <span key={i} className="tag">
+                {name}
+              </span>
+            ))
+          })()}
         </span>
+        {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}
         <small>
-          {t(statuses[questionStatus(q)])} {questionImages(q).length ? '· ▧' : ''}
+          {t(statuses[questionStatus(q)])}
+          {questionImages(q).length > 0 && <Icon name="image" size={16} />}
         </small>
       </div>
     </button>

@@ -1,5 +1,6 @@
 import type { Project, Workspace } from '../../../preload/personal'
 import { useT } from '../../../shared/i18n/react'
+import { Icon } from './ToolbarIcons'
 
 /** Projects grouped by workspace; shared by the desktop overlay and the Android panel. */
 export default function ProjectPicker({
@@ -26,7 +27,7 @@ export default function ProjectPicker({
       {workspaces.map((w) => {
         const list = projects.filter((p) => p.workspaceId === w.id)
         if (!list.length) return null
-        const label = w.remote ? `🌐 ${w.name}` : w.name
+        const label = w.remote ? t('{{name}} (원격)', { name: w.name }) : w.name
         return (
           <div key={w.id} role="group" aria-label={label}>
             <small className="project-picker-group">{label}</small>
@@ -40,7 +41,7 @@ export default function ProjectPicker({
                 disabled={!!disabledReason}
                 onClick={() => onSelect(p.id)}
               >
-                {p.id === currentId ? '✓ ' : ''}
+                {p.id === currentId && <Icon name="check" size={14} />}
                 {p.name}
               </button>
             ))}

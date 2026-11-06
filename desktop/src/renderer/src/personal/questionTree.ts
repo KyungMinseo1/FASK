@@ -13,12 +13,14 @@ export function questionTree(data: Snapshot, projectId: string, questions: Quest
     detail: questionHeading(q),
     children: []
   })
-  const node = (c: Concept, seen: Set<string>): MindNode => ({
-    id: `c:${c.id}`,
-    label: c.name,
-    kind: 'concept',
-    count: questions.filter((q) => q.conceptIds.includes(c.id)).length,
-    children: seen.has(c.id)
+  /** Distinct questions anywhere under a node (a question filed under two sub-concepts counts once). */
+  const questionIds = (n: MindNode, into: Set<string>): Set<string> => {
+    if (n.kind === 'question') into.add(n.id.split(':')[1])
+    for (const child of n.children) questionIds(child, into)
+    return into
+  }
+  const node = (c: Concept, seen: Set<string>): MindNode => {
+    const children = seen.has(c.id)
       ? []
       : [
           ...concepts
@@ -26,7 +28,9 @@ export function questionTree(data: Snapshot, projectId: string, questions: Quest
             .map((s) => node(s, new Set([...seen, c.id]))),
           ...questions.filter((q) => q.conceptIds.includes(c.id)).map((q) => leaf(q, c.id))
         ]
-  })
+    const self: MindNode = { id: `c:${c.id}`, label: c.name, kind: 'concept', children }
+    return { ...self, count: questionIds(self, new Set()).size }
+  }
   return {
     id: `project:${projectId}`,
     label: data.projects.find((p) => p.id === projectId)?.name || t('프로젝트'),
@@ -39,6 +43,7 @@ export function questionTree(data: Snapshot, projectId: string, questions: Quest
         id: 'unfiled',
         label: t('미분류'),
         kind: 'group',
+        count: questions.filter((q) => !q.conceptIds.length).length,
         children: questions.filter((q) => !q.conceptIds.length).map((q) => leaf(q, 'unfiled'))
       }
     ]

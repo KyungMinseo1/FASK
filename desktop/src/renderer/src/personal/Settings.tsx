@@ -10,6 +10,7 @@ import type {
   PeerStatus
 } from '../../../preload/personal'
 import { errorText } from './common'
+import { Icon } from './ToolbarIcons'
 import {
   FONT_SCALE_OPTIONS,
   readFontScale,
@@ -69,18 +70,18 @@ export default function Settings({
     <div className="modal-backdrop">
       <section className="settings-modal" role="dialog" aria-modal="true" aria-label={t('설정')}>
         <header>
-          <div>
-            <span className="eyebrow">PREFERENCES</span>
-            <h2>{t('나에게 맞는 질문 환경')}</h2>
-          </div>
-          <button onClick={onClose}>{t('닫기 ×')}</button>
+          <h2>{t('나에게 맞는 질문 환경')}</h2>
+          <button onClick={onClose}>
+            <Icon name="close" size={14} />
+            {t('닫기')}
+          </button>
         </header>
         <div className="settings-body">
           <section>
             <h3>{t('로컬 AI 연결')}</h3>
-            <p>{t('EasyCLIProxyAPI에서 계정을 연결하고, Home의 OpenAI 호환 endpoint를 붙여넣으세요.')}</p>
+            <p>{t('EasyCLIProxyAPI에서 계정을 연결하고, Home에 있는 OpenAI 호환 주소를 붙여넣으세요.')}</p>
             <label>
-              Local API endpoint
+              {t('로컬 API 주소')}
               <input
                 value={draft.endpoint}
                 onChange={(e) => change('endpoint', e.target.value)}
@@ -95,7 +96,7 @@ export default function Settings({
                 onChange={(e) => setKey(e.target.value)}
                 placeholder={
                   settings.hasKey
-                    ? t('저장된 키 사용 · 바꾸려면 입력')
+                    ? t('저장된 키 사용 중, 바꾸려면 입력')
                     : t('프록시가 요구하는 경우에만 입력')
                 }
               />
@@ -109,10 +110,11 @@ export default function Settings({
                   setDraft((s) => ({ ...s, models, model: s.model || models[0] || '' }))
                   if (!models.length)
                     throw new Error(t('연결됐지만 모델이 없습니다. 프록시에서 계정을 연결해 주세요.'))
-                }, t('연결 확인 완료 · 모델 목록을 갱신했습니다. 저장을 눌러 적용하세요.'))
+                }, t('연결을 확인하고 모델 목록을 갱신했습니다. 저장을 눌러 적용하세요.'))
               }
             >
-              {busy ? t('확인 중…') : t('연결 확인 · 모델 불러오기')}
+              <Icon name="key" />
+              {busy ? t('확인 중…') : t('연결 확인하고 모델 불러오기')}
             </button>
             <datalist id="local-models">
               {draft.models.map((m) => (
@@ -149,7 +151,7 @@ export default function Settings({
             </div>
             <small>
               {t(
-                '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인과 계정·폴백 설정은 EasyCLIProxyAPI에서 관리하세요.'
+                '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 EasyCLIProxyAPI에서 관리하세요.'
               )}
             </small>
           </section>
@@ -162,7 +164,7 @@ export default function Settings({
                 onChange={(e) => change('routing', e.target.value as LocalSettings['routing'])}
               >
                 <option value="manual">{t('직접 선택')}</option>
-                <option value="recommend">{t('추천 표시 · 전송 전 변경 가능')}</option>
+                <option value="recommend">{t('추천 표시, 전송 전에 바꿀 수 있음')}</option>
                 <option value="auto">{t('복잡도에 따라 자동 선택')}</option>
               </select>
             </label>
@@ -180,7 +182,7 @@ export default function Settings({
                 checked={draft.organize}
                 onChange={(e) => change('organize', e.target.checked)}
               />
-              {t('답변 후 기존 개념 연결 · 새 개념 제안 (추가 모델 요청)')}
+              {t('답변 후 기존 개념 연결과 새 개념 제안 (추가 모델 요청)')}
             </label>
             <label className="check">
               <input
@@ -188,7 +190,7 @@ export default function Settings({
                 checked={draft.autoTitle}
                 onChange={(e) => change('autoTitle', e.target.checked)}
               />
-              {t('새 질문 제목 자동 생성 · 질문·이미지·첨부 기반 (추가 모델 요청)')}
+              {t('새 질문 제목 자동 생성, 질문과 이미지와 첨부 기반 (추가 모델 요청)')}
             </label>
             <label className="check">
               <input
@@ -214,7 +216,7 @@ export default function Settings({
               >
                 {displays.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.label} · {d.width} × {d.height}
+                    {d.label} ({d.width} × {d.height})
                   </option>
                 ))}
               </select>
@@ -229,7 +231,8 @@ export default function Settings({
                 }, '')
               }
             >
-              {t('▧ 캡처 영역 설정')}
+              <Icon name="capture" />
+              {t('캡처 영역 설정')}
             </button>
             <small>
               {settings.regions.length
@@ -245,9 +248,9 @@ export default function Settings({
                 value={draft.retention}
                 onChange={(e) => change('retention', e.target.value as LocalSettings['retention'])}
               >
-                <option value="minimal">{t('최소 · 답변 완료 후 캡처 제거')}</option>
-                <option value="balanced">{t('균형 · 선택 영역 JPEG 보관')}</option>
-                <option value="preserve">{t('보존 · 선택 영역 PNG 보관')}</option>
+                <option value="minimal">{t('최소: 답변 완료 후 캡처 제거')}</option>
+                <option value="balanced">{t('균형: 선택 영역 JPEG 보관')}</option>
+                <option value="preserve">{t('보존: 선택 영역 PNG 보관')}</option>
               </select>
             </label>
             <p>
@@ -329,7 +332,7 @@ export default function Settings({
             <h3>{t('백업과 복원')}</h3>
             <p>
               {t(
-                '현재 프로필의 질문·개념·이미지를 백업합니다. 복원은 새 프로필에 추가하며 접속 키는 포함하지 않습니다.'
+                '현재 프로필의 질문, 개념, 이미지를 백업합니다. 복원은 새 프로필에 추가하며 접속 키는 포함하지 않습니다.'
               )}
             </p>
             <div className="button-row">
@@ -477,7 +480,7 @@ function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
           </span>
           {left > 0 && code.expiresAt > now && (
             <span className="peer-code-progress">
-              <span style={{ width: `${Math.min(100, (left / 300) * 100)}%` }} />
+              <span style={{ transform: `scaleX(${Math.min(1, left / 300)})` }} />
             </span>
           )}
           {(code.addresses.length > 0 || code.relay) && (
@@ -491,7 +494,7 @@ function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
           </button>
         </div>
       ) : (
-        <button className="primary peer-code-start" disabled={busy} onClick={() => void share.begin()}>
+        <button className="peer-code-start" disabled={busy} onClick={() => void share.begin()}>
           {t('기기 연결 코드 만들기')}
         </button>
       )}
@@ -546,7 +549,9 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
         <ul className="peer-list">
           {grants.map((g) => (
             <li key={g.id}>
-              <span className="peer-avatar">💻</span>
+              <span className="peer-avatar">
+                <Icon name="device" size={18} />
+              </span>
               <span className="peer-info">
                 <strong>{g.name}</strong>
                 <small>{new Date(g.createdAt).toLocaleString()}</small>
@@ -592,7 +597,6 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
           onChange={(e) => setCode(e.target.value)}
         />
         <button
-          className="primary"
           disabled={busy || !code.trim() || (mode === 'direct' && !address.trim())}
           onClick={() =>
             void act(async () => {
@@ -612,10 +616,12 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
         <ul className="peer-list">
           {links.map((l) => (
             <li key={l.id}>
-              <span className="peer-avatar">🌐</span>
+              <span className="peer-avatar">
+                <Icon name="globe" size={18} />
+              </span>
               <span className="peer-info">
                 <strong>{l.name}</strong>
-                <small>{l.paths.map((p) => (p === 'tailscale' ? 'Tailscale' : t('릴레이'))).join(' · ')}</small>
+                <small>{l.paths.map((p) => (p === 'tailscale' ? 'Tailscale' : t('릴레이'))).join(', ')}</small>
               </span>
               <span className={`status-pill ${l.status}`}>{t(STATUS_LABEL[l.status])}</span>
               <button disabled={busy} onClick={() => void act(() => window.fask.peerUnlink(l.id))}>
@@ -708,13 +714,15 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
                   void apply(() => window.fask.setHubAddresses(next))
                 }}
               />
-              {a.address} ·{' '}
-              {a.kind === 'tailscale'
-                ? t('Tailscale · 외부에서도 연결')
-                : a.kind === 'lan'
-                  ? t('같은 Wi‑Fi')
-                  : t('기타 네트워크')}{' '}
-              {a.recommended ? t('권장') : t('권장하지 않음')}
+              <span>{a.address}</span>
+              <span className="check-meta">
+                {a.kind === 'tailscale'
+                  ? t('Tailscale, 외부에서도 연결')
+                  : a.kind === 'lan'
+                    ? t('같은 Wi‑Fi')
+                    : t('기타 네트워크')}
+              </span>
+              <span className="check-meta">{a.recommended ? t('권장') : t('권장하지 않음')}</span>
               {a.error && <small className="error"> {t(a.error)}</small>}
             </label>
           ))}
@@ -728,7 +736,7 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
                 void apply(() => window.fask.setHubRelay(enabled, relayUrl))
               }}
             />
-            {t('중계 서버로 외부 연결 · Tailscale 없이')}
+            {t('중계 서버로 외부 연결 (Tailscale 없이)')}
           </label>
           <input
             type="url"
@@ -749,7 +757,7 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
           {pairing && qr && <img className="hub-qr" src={qr} alt={t('모바일 연결 QR 코드')} />}
           <PeerCodeBox share={share} />
           <button disabled={busy} onClick={() => void apply(() => window.fask.resetHubPairing())}>
-            {t('연결 초기화 · 모든 기기 해제')}
+            {t('연결 초기화하고 모든 기기 해제')}
           </button>
         </>
       )}

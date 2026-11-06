@@ -1,37 +1,49 @@
-export type ThemePref = 'system' | 'light' | 'dark' | 'sepia' | 'forest' | 'rose'
+export type ThemePref = 'system' | 'navy' | 'white' | 'ivory' | 'lavender' | 'night'
+type Palette = Exclude<ThemePref, 'system'>
 
-/** Light-based palettes: `data-theme` stays `light`, `data-palette` swaps the colors on top. */
-const PALETTES: readonly ThemePref[] = ['sepia', 'forest', 'rose']
-const PREFS: readonly ThemePref[] = ['system', 'light', 'dark', ...PALETTES]
+const PREFS: readonly ThemePref[] = ['system', 'navy', 'white', 'ivory', 'lavender', 'night']
 export const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: 'system', label: '시스템 설정 따르기' },
-  { value: 'light', label: '라이트' },
-  { value: 'dark', label: '다크' },
-  { value: 'sepia', label: '세피아 (종이)' },
-  { value: 'forest', label: '포레스트 (그린)' },
-  { value: 'rose', label: '로즈 (핑크)' }
+  { value: 'navy', label: '네이비' },
+  { value: 'white', label: '화이트' },
+  { value: 'ivory', label: '아이보리' },
+  { value: 'lavender', label: '라벤더' },
+  { value: 'night', label: '제트 블랙' }
 ]
+
+/** Values saved by earlier versions, mapped onto the current themes. */
+const LEGACY: Record<string, ThemePref> = {
+  light: 'white',
+  sepia: 'ivory',
+  forest: 'ivory',
+  dark: 'night',
+  rose: 'lavender'
+}
 
 const KEY = 'fask:theme'
 const dark = (): MediaQueryList => matchMedia('(prefers-color-scheme: dark)')
 
+/** The saved theme; legacy or unknown values are migrated (unknown → navy) and saved back. */
 export function readTheme(): ThemePref {
-  const value = localStorage.getItem(KEY) as ThemePref | null
-  return value && PREFS.includes(value) ? value : 'system'
+  const value = localStorage.getItem(KEY)
+  if (value === null) return 'navy'
+  if ((PREFS as readonly string[]).includes(value)) return value as ThemePref
+  const migrated = LEGACY[value] ?? 'navy'
+  localStorage.setItem(KEY, migrated)
+  return migrated
 }
 
-/** The light/dark base of a preference. */
-function themeBase(pref: ThemePref): 'system' | 'light' | 'dark' {
-  return PALETTES.includes(pref) ? 'light' : (pref as 'system' | 'light' | 'dark')
+/** The palette a preference resolves to; `system` follows the OS between white and night. */
+export function resolvePalette(pref: ThemePref): Palette {
+  if (pref !== 'system') return pref
+  return dark().matches ? 'night' : 'white'
 }
 
 function apply(): void {
-  const pref = readTheme()
-  const base = themeBase(pref)
+  const palette = resolvePalette(readTheme())
   const root = document.documentElement
-  root.dataset.theme = base === 'system' ? (dark().matches ? 'dark' : 'light') : base
-  if (PALETTES.includes(pref)) root.dataset.palette = pref
-  else delete root.dataset.palette
+  root.dataset.theme = palette === 'night' ? 'dark' : 'light'
+  root.dataset.palette = palette
 }
 
 export function setTheme(pref: ThemePref): void {

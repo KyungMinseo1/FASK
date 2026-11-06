@@ -50,6 +50,6 @@ export const choosePhoto = (): Promise<File[]> =>
   })
 /** Labels are translated at call time so they follow the current UI language. */
 export const mediaActions = (): { label: string; pick: () => Promise<File[]> }[] => [
-  { label: t('📷 촬영'), pick: takePhoto },
-  { label: t('🖼 사진'), pick: choosePhoto }
+  { label: t('촬영'), pick: takePhoto },
+  { label: t('사진'), pick: choosePhoto }
 ]

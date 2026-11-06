@@ -72,7 +72,7 @@ function mount(hub: ReturnType<typeof fakeHub>, props: Partial<React.ComponentPr
 }
 const type = (text: string) => fireEvent.change(screen.getByLabelText('질문'), { target: { value: text } })
 const send = async () => {
-  await act(async () => fireEvent.click(screen.getByText('질문하기 ↗')))
+  await act(async () => fireEvent.click(screen.getByText('질문하기')))
 }
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
 const complete = async (hub: ReturnType<typeof fakeHub>, turnId: string, answer: string) => {

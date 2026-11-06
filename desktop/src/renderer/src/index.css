@@ -1,67 +1,6 @@
 @import 'tailwindcss';
 @import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
 
-/* ASKKUP palette: sage green brand + warm off-white neutrals (overrides Tailwind gray). */
-@theme {
-  --color-brand-50: #f1f5f3;
-  --color-brand-100: #e0eae5;
-  --color-brand-200: #c3d5cc;
-  --color-brand-300: #9dbbac;
-  --color-brand-400: #7a9d8d;
-  --color-brand-500: #658a7b;
-  --color-brand-600: #5b7f71;
-  --color-brand-700: #4a6a5d;
-  --color-brand-800: #3e574d;
-  --color-brand-900: #344940;
-  --color-brand-950: #1c2823;
-
-  --color-gray-50: #f4f4f0;
-  --color-gray-100: #ebebe5;
-  --color-gray-200: #deddd6;
-  --color-gray-300: #c9c8c0;
-  --color-gray-400: #a3a29a;
-  --color-gray-500: #7d7c75;
-  --color-gray-600: #5f5e58;
-  --color-gray-700: #4a4944;
-  --color-gray-800: #3a3a37;
-  --color-gray-900: #2b2b29;
-  --color-gray-950: #1a1a19;
-}
-
-/* Recall quiz call-to-action: soft glow pulse so it catches the eye without being jarring. */
-@keyframes recall-blink {
-  0%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 rgb(245 158 11 / 0.55);
-  }
-  50% {
-    opacity: 0.72;
-    box-shadow: 0 0 0 6px rgb(245 158 11 / 0);
-  }
-}
-
-.recall-blink {
-  animation: recall-blink 1.2s ease-in-out infinite;
-}
-
-/* Nodes that hold student questions get a slowly breathing halo. */
-@keyframes question-halo {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.9;
-  }
-  50% {
-    transform: scale(1.06);
-    opacity: 0.5;
-  }
-}
-
-.question-halo {
-  animation: question-halo 2.4s ease-in-out infinite;
-}
-
 html,
 body,
 #root {
@@ -69,7 +8,12 @@ body,
   margin: 0;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   font-family: 'Pretendard Variable', Pretendard, 'Malgun Gothic', system-ui, sans-serif;
-  color: var(--color-gray-800);
+  color: var(--ink);
 }

@@ -20,6 +20,7 @@ import { isDevWeb, transport, type Pairing } from './transport'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
 import { onOverlayRevoked, overlayRevoked, stopOverlay } from './overlay/control'
+import { Icon } from './icons'
 
 export default function MobileApp(): React.JSX.Element {
   const navigate = useNavigate()
@@ -246,8 +247,8 @@ function Shell({
     conn.state === 'offline' ? (
       <div className="mobile-banner offline" role="status">
         {conn.savedAt
-          ? t('PC에 연결할 수 없습니다 · {{date}} 기록을 표시합니다', { date: dateLabel(conn.savedAt) })
-          : t('PC에 연결할 수 없습니다 · 저장된 기록을 표시합니다')}
+          ? t('PC에 연결할 수 없습니다. {{date}} 기록을 표시합니다.', { date: dateLabel(conn.savedAt) })
+          : t('PC에 연결할 수 없습니다. 저장된 기록을 표시합니다.')}
         {retryButton}
       </div>
     ) : conn.state === 'blocked' ? (
@@ -270,7 +271,9 @@ function Shell({
       {notice && (
         <div className="notice mobile-notice" role="status">
           {notice}
-          <button onClick={() => setNotice('')}>×</button>
+          <button aria-label={t('닫기')} onClick={() => setNotice('')}>
+            <Icon name="close" size={18} />
+          </button>
         </div>
       )}
       {!data ? (
