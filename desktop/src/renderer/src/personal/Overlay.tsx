@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
@@ -38,6 +38,23 @@ export default function Overlay(): React.JSX.Element {
     [size, setSize] = useState({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })
   const canvas = useRef<HTMLCanvasElement>(null),
     drawing = useRef<Stroke | null>(null)
+  // Ink is spent once the hub accepts a question carrying it; closing the panel then clears it.
+  // Until acceptance (capture failure, rejection, unconfirmed send) the ink survives for a retry.
+  const captured = useRef(false),
+    asked = useRef(false),
+    panelRef = useRef(panel)
+  panelRef.current = panel
+  const closePanel = useCallback((): void => {
+    setPanel(false)
+    if (asked.current) {
+      asked.current = false
+      setStrokes([])
+    }
+  }, [])
+  const togglePanel = useCallback((): void => {
+    if (panelRef.current) closePanel()
+    else setPanel(true)
+  }, [closePanel])
   const geometryKey = `fask:geometry:${profileId}:${innerWidth}x${innerHeight}`
   const savedPosition = (
     key: string,
@@ -214,11 +231,11 @@ export default function Overlay(): React.JSX.Element {
     const off = window.fask.onEscape(reset)
     const offOutside = window.fask.onOutsideClick(() => {
       reset()
-      setPanel(false)
+      closePanel()
     })
     const offToggle = window.fask.onTogglePanel(() => {
       setMode('idle')
-      setPanel((p) => !p)
+      togglePanel()
       drawing.current = null
     })
     return () => {
@@ -504,7 +521,12 @@ export default function Overlay(): React.JSX.Element {
             <Icon name="eraser" size={18} />
             <small>{t('지우개')}</small>
           </button>
-          <button onClick={() => setStrokes([])}>
+          <button
+            onClick={() => {
+              asked.current = false
+              setStrokes([])
+            }}
+          >
             <Icon name="trash" size={18} />
             <small>{t('모두 지우기')}</small>
           </button>
@@ -513,7 +535,7 @@ export default function Overlay(): React.JSX.Element {
             className={panel ? 'active' : ''}
             aria-expanded={panel}
             onClick={() => {
-              setPanel((s) => !s)
+              togglePanel()
               setMode('idle')
             }}
           >
@@ -638,7 +660,7 @@ export default function Overlay(): React.JSX.Element {
                 </b>
               )}
             </div>
-            <button onClick={() => setPanel(false)}>
+            <button onClick={closePanel}>
               <Icon name="close" size={14} />
               {t('접기')}
             </button>
@@ -707,12 +729,19 @@ export default function Overlay(): React.JSX.Element {
                 questionId={questionId}
                 recentQuestion={recent}
                 hasInk={strokes.length > 0}
-                onCapture={() =>
-                  window.fask.captureQuestion(
+                onCapture={() => {
+                  captured.current = true
+                  return window.fask.captureQuestion(
                     strokes.length ? canvas.current?.toDataURL('image/png') : undefined
                   )
-                }
+                }}
+                onTurnIdentified={() => {
+                  if (!captured.current) return
+                  captured.current = false
+                  asked.current = true
+                }}
                 onCompleted={() => {
+                  asked.current = false
                   setStrokes([])
                 }}
                 onInteractionState={(s) => setComposerLock(s.busy || s.unresolved)}

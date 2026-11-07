@@ -56,8 +56,7 @@
   align-items: stretch;
 }
 .fask-mobile .project-split > .mobile-list-column,
-.fask-mobile .project-split > .mobile-detail,
-.fask-mobile .project-split > .empty-state {
+.fask-mobile .project-split > .mobile-detail {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
