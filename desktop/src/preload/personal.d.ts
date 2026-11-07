@@ -28,7 +28,14 @@ export interface LocalSettings {
   routing: 'manual' | 'recommend' | 'auto'
   refine: boolean
   organize: boolean
-  memory: boolean
+  /** Knowledge injected into answers: off, current project, or the whole workspace. */
+  memoryScope: 'off' | 'project' | 'workspace'
+  /** Budget for injected knowledge (estimated as characters / 3). */
+  memoryTokens: number
+  /** Seconds after a completed turn before its concepts are extracted. */
+  extractDelaySec: number
+  /** Model for extraction and tidy; empty uses fastModel, then model. */
+  organizeModel: string
   retention: 'minimal' | 'balanced' | 'preserve'
   autoTitle: boolean
   regions: CaptureRegion[]
@@ -76,12 +83,51 @@ export interface Project {
   name: string
   description: string
 }
+/** Exactly three levels; a parent is exactly one level up (detail→concept→topic), topics have no parent. */
+export type ConceptLevel = 'topic' | 'concept' | 'detail'
 export interface Concept {
   id: string
-  projectId: string
+  workspaceId: string
   name: string
+  /** SKOS broader. */
   parentId: string | null
   manual: boolean
+  aliases: string[]
+  definition: string
+  level: ConceptLevel
+  /** Topics only: direct concept count when tidy last reviewed this topic (absent = never). */
+  tidiedCount?: number
+  /**
+   * Placement (`placementKey`) in which tidy last reviewed this parentless or misplaced concept and
+   * left it as it was; tidy skips it until the placement changes. Any write that moves it drops this.
+   */
+  tidyReviewed?: string
+  /** Similar-name partners tidy reviewed with this concept and left apart; skipped as tidy pairs. */
+  tidyPairs?: string[]
+}
+export type RelationType = 'prerequisite' | 'part' | 'uses' | 'contrast' | 'example'
+export interface Relation {
+  id: string
+  workspaceId: string
+  /** Concept ids in the same workspace. */
+  from: string
+  to: string
+  type: RelationType
+  /** Provenance. */
+  questionId: string | null
+  turnIds: string[]
+  /** 0..1 */
+  confidence: number
+  /** false = low-confidence, waiting for user approval */
+  approved: boolean
+  createdAt: string
+  /** Relations are never deleted by tidy or extraction; the user's "remove" sets this. */
+  invalidatedAt: string | null
+}
+export interface Reference {
+  kind: 'concept' | 'question'
+  id: string
+  name: string
 }
 export type TurnStatus = 'saved' | 'running' | 'completed' | 'failed' | 'cancelled'
 export interface Turn {
@@ -101,6 +147,8 @@ export interface Turn {
   error: string
   /** Incremented whenever answer or status changes; a new turn starts at 0. */
   revision: number
+  /** Knowledge injected into this turn's prompt ("참고한 지식"). */
+  references?: Reference[]
 }
 export interface Question {
   id: string
@@ -112,6 +160,10 @@ export interface Question {
   /** One or more turns in chronological order. */
   turns: Turn[]
   conceptIds: string[]
+  /** conceptId -> turn ids where it appears; a link without a key has no recorded turn. */
+  conceptTurns: Record<string, string[]>
+  /** Number of leading turns already sent to concept extraction. */
+  extractedTurns: number
   suggestions: string[]
   memo: string
   important: boolean
@@ -134,6 +186,7 @@ export interface Snapshot {
   workspaces: Workspace[]
   projects: Project[]
   concepts: Concept[]
+  relations: Relation[]
   questions: Question[]
   settings: LocalSettings
   storageBytes: number
@@ -152,6 +205,8 @@ export interface AskInput {
   saveOnly?: boolean
   /** The image is a screen capture with the user's pen marks drawn on it. */
   annotated?: boolean
+  /** Per-question knowledge override; undefined follows settings.memoryScope. */
+  useMemory?: boolean
 }
 export interface StreamEvent {
   requestId: string
@@ -174,6 +229,45 @@ export interface CapturePreview {
   display: DisplayInfo
   region: CaptureRegion | null
 }
+/** A concept named by a tidy proposal; `id` is null for one the proposal itself creates. */
+export interface TidyRef {
+  id: string | null
+  name: string
+}
+/** A concept going under a parent: where it sits now and the level it takes there. */
+export interface TidyPlacement {
+  concept: TidyRef
+  from: TidyRef | null
+  levelFrom: ConceptLevel
+  levelTo: ConceptLevel
+}
+/**
+ * One reviewable change of a tidy proposal, accepted or rejected as a whole. `newParent` creates a
+ * concept at `level` under `parent` (an id-less parent is a new topic created with it) and moves
+ * `children` under it; `move` puts an existing concept under an existing (or earlier created) one.
+ */
+export type TidyChange =
+  | { kind: 'merge'; source: TidyRef; target: TidyRef }
+  | { kind: 'newParent'; name: string; level: ConceptLevel; parent: TidyRef | null; children: TidyPlacement[] }
+  | ({ kind: 'move'; to: TidyRef } & TidyPlacement)
+  | { kind: 'level'; concept: TidyRef; from: ConceptLevel; to: ConceptLevel }
+  | { kind: 'relation'; from: TidyRef; to: TidyRef; type: RelationType; confidence: number }
+/** A tidy preview: nothing is written until `tidyApply` with its id. */
+export interface TidyProposal {
+  id: string
+  changes: TidyChange[]
+}
+/**
+ * What applying a tidy proposal changed; `moved` counts existing concepts whose parent or level
+ * changed. `skipped` lists accepted change indexes the current graph no longer allows.
+ */
+export interface TidyResult {
+  merged: number
+  parents: number
+  moved: number
+  relations: number
+  skipped: number[]
+}
 /** Knowledge operations shared by the desktop preload and the mobile hub client. */
 export interface KnowledgeApi {
   snapshot(): Promise<Snapshot>
@@ -193,11 +287,28 @@ export interface KnowledgeApi {
   ): Promise<void>
   updateQuestion(
     id: string,
-    patch: Partial<Pick<Question, 'memo' | 'important' | 'conceptIds' | 'suggestions'>>
+    patch: Partial<Pick<Question, 'memo' | 'important' | 'conceptIds' | 'conceptTurns' | 'suggestions'>>
   ): Promise<void>
   moveQuestion(id: string, projectId: string): Promise<void>
   editConcept(id: string, name: string, parentId: string | null): Promise<void>
+  editConceptInfo(
+    id: string,
+    info: Partial<Pick<Concept, 'aliases' | 'definition' | 'level'>>
+  ): Promise<void>
   mergeConcept(source: string, target: string): Promise<void>
+  /** remove => invalidatedAt = now. */
+  setRelation(id: string, action: 'approve' | 'remove'): Promise<void>
+  /** The question open on screen; leaving one extracts it immediately. */
+  focusQuestion(questionId: string | null): Promise<void>
+  /** Local estimate only, no LLM call. */
+  tidyPlan(workspaceId: string): Promise<{ candidates: number; estimatedTokens: number }>
+  /** One LLM call, user-triggered; returns the proposed changes without writing anything. */
+  tidyPreview(workspaceId: string): Promise<TidyProposal>
+  /**
+   * Applies the accepted changes of the latest proposal; the proposal's other candidates are
+   * recorded as reviewed so tidy stops offering them until they change.
+   */
+  tidyApply(workspaceId: string, proposalId: string, accepted: number[]): Promise<TidyResult>
   ask(input: AskInput): Promise<AskResult>
   /** Accepts a requestId or a turnId, never a question ID. */
   cancel(id: string): Promise<void>
@@ -242,7 +353,8 @@ export interface PersonalApi extends KnowledgeApi {
   switchProfile(id: string): Promise<void>
   saveSettings(settings: LocalSettings, key?: string): Promise<void>
   models(endpoint: string, key?: string): Promise<string[]>
-  exportContext(projectId: string): Promise<boolean>
+  /** Zip with README, JSONL and SKOS; images only when chosen. */
+  export(projectId: string, options: { images: boolean }): Promise<boolean>
   backup(): Promise<boolean>
   restore(): Promise<boolean>
   displays(): Promise<DisplayInfo[]>

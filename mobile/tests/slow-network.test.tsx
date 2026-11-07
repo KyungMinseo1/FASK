@@ -54,6 +54,8 @@ const question: Question = {
   createdAt: '2026-11-04T00:00:00.000Z',
   turns: [turn('t1', `${'a'.repeat(64)}.jpg`), turn('t2', `${'b'.repeat(64)}.jpg`)],
   conceptIds: [],
+  conceptTurns: {},
+  extractedTurns: 0,
   suggestions: [],
   memo: '',
   important: false

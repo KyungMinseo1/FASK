@@ -13,6 +13,7 @@ import {
   BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
+  getViewportForBounds,
   useReactFlow,
   useNodesInitialized,
   type EdgeTypes,
@@ -20,12 +21,24 @@ import {
   type NodeMouseHandler,
   type NodeTypes,
   type OnNodeDrag,
+  type Edge,
   type XYPosition
 } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
-import { layoutMindMap, type MindFlowNode } from './layout'
-import MindNodeView, { CurveEdge } from './MindNodeView'
+import { HANDLE, layoutMindMap, type MindFlowNode } from './layout'
+import MindNodeView, { CurveEdge, RelationEdgeView, type RelationFlowEdge } from './MindNodeView'
 import { useT } from '../../../../shared/i18n/react'
+
+/** A non-tree edge drawn over the graph between two node ids (e.g. a selected concept's relation). */
+export interface RelationEdge {
+  id: string
+  source: string
+  target: string
+  /** Korean source text, shown through `t()`. */
+  label: string
+  /** Not yet approved: drawn fainter. */
+  pending?: boolean
+}
 
 export interface MindMapProps {
   root: MindNode
@@ -43,10 +56,14 @@ export interface MindMapProps {
   actions?: ReactNode
   canMove?: (node: MindNode) => boolean
   canDrop?: (node: MindNode, target: MindNode) => boolean
+  /** Overlay edges; only those whose both ends are currently visible are drawn. */
+  relations?: RelationEdge[]
+  /** When set, automatic fits frame these node ids (those currently visible) instead of the whole graph. */
+  focusIds?: string[]
 }
 
 const nodeTypes: NodeTypes = { mind: MindNodeView }
-const edgeTypes: EdgeTypes = { curve: CurveEdge }
+const edgeTypes: EdgeTypes = { curve: CurveEdge, relation: RelationEdgeView }
 
 function toggled(set: Set<string>, id: string): Set<string> {
   const next = new Set(set)
@@ -137,10 +154,12 @@ function MindMapInner({
   canMove,
   canDrop,
   allowCopy = true,
-  actions
+  actions,
+  relations,
+  focusIds
 }: MindMapProps): React.JSX.Element {
   const t = useT()
-  const { fitView, zoomIn, zoomOut } = useReactFlow()
+  const { fitView, setViewport, zoomIn, zoomOut } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   // Only the root and its direct children are visible initially (max-depth = 1).
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([root.id]))
@@ -167,6 +186,36 @@ function MindMapInner({
     () => layoutMindMap(root, expanded, selectedId),
     [root, expanded, selectedId]
   )
+
+  const edges = useMemo((): Edge[] => {
+    if (!relations?.length) return layout.edges
+    const shown = new Map(layout.nodes.map((n) => [n.id, n.data]))
+    return [
+      ...layout.edges,
+      ...relations.flatMap((r): RelationFlowEdge[] => {
+        const from = shown.get(r.source)
+        const to = shown.get(r.target)
+        if (!from || !to || r.source === r.target) return []
+        return [
+          {
+            id: `rel:${r.id}`,
+            source: r.source,
+            target: r.target,
+            sourceHandle: HANDLE.center,
+            targetHandle: HANDLE.center,
+            type: 'relation',
+            zIndex: 5,
+            data: {
+              label: r.label,
+              pending: !!r.pending,
+              sourceSize: [from.width, from.height],
+              targetSize: [to.width, to.height]
+            }
+          }
+        ]
+      })
+    ]
+  }, [layout, relations])
 
   // Only a long-pressed node follows the pointer; other drags are ignored.
   const activeDrag = armed && drag?.id === armed ? drag : null
@@ -207,6 +256,41 @@ function MindMapInner({
     [baseNodes, armed, activeDrag, activeDropId]
   )
 
+  const focusKey = focusIds?.join('\n') ?? ''
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * Frames the visible focus nodes, or the whole graph when there are none.
+   * The focus frame is computed from the layout and the live container size and applied directly:
+   * a queued fitView waits for React Flow to re-measure nodes and can land late or not at all.
+   */
+  const fitTarget = useCallback(
+    (duration: number) => {
+      const focus = new Set(focusKey ? focusKey.split('\n') : [])
+      const shown = layout.nodes.filter((n) => focus.has(n.id))
+      const flow = boxRef.current?.closest('.react-flow')
+      if (!shown.length || !flow?.clientWidth || !flow.clientHeight) {
+        void fitView({ padding: 0.15, duration, maxZoom: 1.2 })
+        return
+      }
+      const x = Math.min(...shown.map((n) => n.position.x))
+      const y = Math.min(...shown.map((n) => n.position.y))
+      const right = Math.max(...shown.map((n) => n.position.x + n.data.width))
+      const bottom = Math.max(...shown.map((n) => n.position.y + n.data.height))
+      const viewport = getViewportForBounds(
+        { x, y, width: right - x, height: bottom - y },
+        flow.clientWidth,
+        flow.clientHeight,
+        0.1,
+        1.2,
+        0.25
+      )
+      void setViewport(viewport, { duration })
+    },
+    [fitView, setViewport, focusKey, layout.nodes]
+  )
+  const fitTargetRef = useRef(fitTarget)
+  fitTargetRef.current = fitTarget
+
   const fittedExpansion = useRef<Set<string> | null>(null)
   // Fit only on first render and when the expansion state changes — not on live data updates.
   useEffect(() => {
@@ -218,10 +302,23 @@ function MindMapInner({
     }
     const timer = setTimeout(() => {
       fittedExpansion.current = expanded
-      void fitView({ padding: 0.15, duration: 400, maxZoom: 1.2 })
+      fitTargetRef.current(400)
     }, 50)
     return () => clearTimeout(timer)
-  }, [expanded, fitView, nodesInitialized, armed])
+  }, [expanded, nodesInitialized, armed])
+
+  // A new focus set reframes after the container settles (the host may shrink or scroll it);
+  // the second pass catches a resize that landed after the first. The focus frame uses layout
+  // sizes, so it needs no node measurement to have finished.
+  useEffect(() => {
+    if (!focusKey) return
+    const first = setTimeout(() => fitTargetRef.current(300), 150)
+    const settled = setTimeout(() => fitTargetRef.current(300), 600)
+    return () => {
+      clearTimeout(first)
+      clearTimeout(settled)
+    }
+  }, [focusKey])
 
   const onNodeClick: NodeMouseHandler<MindFlowNode> = useCallback(
     (_event, node) => {
@@ -295,24 +392,31 @@ function MindMapInner({
   }, [activeDropId, layout.nodes, expanded])
 
   // When the box resizes (e.g. the question panel opens beside it), refit into the new area.
-  const boxRef = useRef<HTMLDivElement | null>(null)
+  // With a focus set, height changes count too, so the focus stays framed in the visible area.
+  const focusedRef = useRef(false)
+  focusedRef.current = !!focusKey
   useEffect(() => {
     const box = boxRef.current?.closest('.mind-map-box')
     if (!box) return
     let timer = 0
-    let last = box.clientWidth
+    let lastWidth = box.clientWidth
+    let lastHeight = box.clientHeight
     const observer = new ResizeObserver(() => {
-      if (Math.abs(box.clientWidth - last) < 8) return
-      last = box.clientWidth
+      const widthMoved = Math.abs(box.clientWidth - lastWidth) >= 8
+      const heightMoved = focusedRef.current && Math.abs(box.clientHeight - lastHeight) >= 2
+      if (!widthMoved && !heightMoved) return
+      lastWidth = box.clientWidth
+      lastHeight = box.clientHeight
       clearTimeout(timer)
-      timer = window.setTimeout(() => void fitView({ padding: 0.15, duration: 300, maxZoom: 1.2 }), 80)
+      // Long enough for React Flow's own observer to store the new size first.
+      timer = window.setTimeout(() => fitTargetRef.current(300), 120)
     })
     observer.observe(box)
     return () => {
       observer.disconnect()
       clearTimeout(timer)
     }
-  }, [fitView])
+  }, [])
 
   const [dockOpen, setDockOpen] = useState(false)
   const [full, setFull] = useState(false)
@@ -352,7 +456,7 @@ function MindMapInner({
       fitView
       fitViewOptions={{ padding: 0.15, maxZoom: 1.2 }}
       nodes={nodes}
-      edges={layout.edges}
+      edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodeClick={onNodeClick}

@@ -9,10 +9,11 @@ export const canDropGraphNode = (node: MindNode, target: MindNode): boolean =>
 
 /**
  * Applies a long-press drop in the concept graph. A question moves its concept link (or adds one
- * when `copy`); a concept moves under the target (or a same-named concept is created there).
+ * when `copy`); a concept moves under the target. Concepts are workspace-wide and names are unique
+ * there, so a concept is never copied.
  */
 export async function moveGraphNode(
-  api: Pick<KnowledgeApi, 'updateQuestion' | 'editConcept' | 'create'>,
+  api: Pick<KnowledgeApi, 'updateQuestion' | 'editConcept'>,
   concepts: Concept[],
   questions: Question[],
   node: MindNode,
@@ -31,8 +32,5 @@ export async function moveGraphNode(
   }
   const concept = concepts.find((c) => `c:${c.id}` === node.id)
   if (!concept || concept.id === to) return
-  if (copy) {
-    const id = await api.create('concept', concept.name, concept.projectId)
-    if (to) await api.editConcept(id, concept.name, to)
-  } else if ((concept.parentId || null) !== to) await api.editConcept(concept.id, concept.name, to)
+  if ((concept.parentId || null) !== to) await api.editConcept(concept.id, concept.name, to)
 }

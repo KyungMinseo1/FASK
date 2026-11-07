@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AskInput,
   LocalSettings,
+  Reference,
   Question,
   TextAttachment,
   TurnState
@@ -16,6 +17,7 @@ import { attachmentAccept, readAttachment } from './attachments'
 import { errorText } from './common'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
+import ReferenceChips from './ReferenceChips'
 import { Icon } from './ToolbarIcons'
 import { useApi } from './api'
 import { useT } from '../../../shared/i18n/react'
@@ -59,6 +61,8 @@ interface Props {
   persistDraft?: boolean
   /** Enter sends and Shift+Enter breaks the line; when false, Ctrl/Cmd+Enter sends (soft keyboards). */
   submitOnEnter?: boolean
+  /** Opens a "참고한 지식" chip of the shown answer; chips are hidden when omitted. */
+  onReference?: (ref: Reference) => void
 }
 export default function Composer({
   projectId,
@@ -77,7 +81,8 @@ export default function Composer({
   initialFiles,
   mediaActions,
   submitOnEnter = true,
-  persistDraft = true
+  persistDraft = true,
+  onReference
 }: Props): React.JSX.Element {
   const t = useT()
   const api = useApi()
@@ -114,6 +119,8 @@ export default function Composer({
   const fileInput = useRef<HTMLInputElement>(null)
   const canRefine = !!raw.trim() || !!image || documents.length > 0
   const hasInput = canRefine || (!!onCapture && includeCapture)
+  // Per-question knowledge injection; the settings scope supplies the default.
+  const [useMemory, setUseMemory] = useState(settings.memoryScope !== 'off')
   const attach = async (files: File[]): Promise<void> => {
     if (locked) return
     setBusy(true)
@@ -367,7 +374,8 @@ export default function Composer({
       refined,
       model,
       documents: [...documents],
-      saveOnly
+      saveOnly,
+      useMemory
     }
     setBusy(true)
     setError('')
@@ -458,6 +466,12 @@ export default function Composer({
                 ? t('현재 화면을 캡처하고 있습니다…')
                 : t('모델 응답을 기다리고 있습니다…'))}
           </MarkdownAnswer>
+          {onReference && !running && (
+            <ReferenceChips
+              references={recentQuestion?.turns.find((x) => x.id === live.turnId)?.references}
+              onReference={onReference}
+            />
+          )}
         </div>
       )}
       <input
@@ -592,6 +606,21 @@ export default function Composer({
               }}
             />
             {t('화면 캡처 포함')}
+          </label>
+        )}
+        {settings.memoryScope !== 'off' && (
+          <label
+            className={`capture-toggle ${useMemory ? 'checked' : ''}`}
+            title={t('저장된 지식을 찾아 이번 질문에 참고합니다')}
+          >
+            <input
+              type="checkbox"
+              aria-label={t('지식 참고')}
+              checked={useMemory}
+              disabled={locked}
+              onChange={(e) => setUseMemory(e.target.checked)}
+            />
+            {t('지식 참고')}
           </label>
         )}
         <button disabled={locked || !canRefine} onClick={() => void refine()}>

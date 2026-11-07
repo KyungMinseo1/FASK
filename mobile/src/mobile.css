@@ -207,6 +207,15 @@
   color: var(--tag);
   font-weight: 600;
 }
+.fask-mobile .question-tags .shared-badge {
+  margin-left: 4px;
+  padding: 0 5px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
 .fask-mobile .question-footer small {
   display: inline-flex;
   align-items: center;
@@ -793,6 +802,89 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--ink-muted);
+}
+/* Anchors the tidy bar to the graph, so it scrolls with it instead of floating over the header. */
+.mobile-graph {
+  position: relative;
+}
+/* Non-modal half sheet over the graph: it scrolls inside, the handle toggles full height. */
+.mobile-sheet.concept-sheet {
+  z-index: 50;
+  align-content: start;
+  height: calc(50dvh / var(--ui-zoom, 1));
+  max-height: none;
+  padding-top: 0;
+  overscroll-behavior: contain;
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.18);
+  transition: height 0.2s ease;
+}
+.mobile-sheet.concept-sheet.full {
+  height: calc(88dvh / var(--ui-zoom, 1));
+}
+.mobile-sheet.concept-sheet > .sheet-handle {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  width: 100%;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-1);
+}
+.mobile-sheet.concept-sheet > .sheet-handle::before {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: var(--hairline-strong);
+}
+/* Room to scroll the shrunken graph to the top above the half sheet. */
+.fask-mobile .mobile-list.sheet-open {
+  padding-bottom: calc(50dvh / var(--ui-zoom, 1));
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-sheet.concept-sheet {
+    transition: none;
+  }
+}
+.mobile-sheet.concept-sheet button {
+  min-height: 40px;
+  font-size: 14px;
+}
+/* Tidy review as a bottom sheet (portaled to <body>, so not under .fask-mobile). */
+.modal-backdrop.tidy-sheet {
+  align-items: flex-end;
+  padding: 0;
+}
+.tidy-sheet > .tidy-dialog {
+  width: 100%;
+  max-height: calc(88dvh / var(--ui-zoom, 1));
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+}
+.tidy-sheet .tidy-dialog > header,
+.tidy-sheet .tidy-body {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.tidy-sheet .tidy-dialog > footer {
+  flex-wrap: wrap;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+}
+.tidy-sheet .tidy-dialog button {
+  min-height: 44px;
+}
+.tidy-sheet .tidy-change {
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.tidy-sheet .tidy-change input {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
 }
 
 .mobile-spinner {

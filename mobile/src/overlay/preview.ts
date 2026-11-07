@@ -24,6 +24,7 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       { id: 'preview-3', workspaceId: 'preview-w2', name: t('선형대수 스터디'), description: '' }
     ],
     concepts: [],
+    relations: [],
     questions: [],
     settings: {
       endpoint: 'preview',
@@ -35,7 +36,10 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       routing: 'manual',
       refine: false,
       organize: false,
-      memory: false,
+      memoryScope: 'project',
+      memoryTokens: 1500,
+      extractDelaySec: 120,
+      organizeModel: '',
       retention: 'balanced',
       autoTitle: false,
       regions: []
@@ -52,7 +56,16 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     snapshot: async () => structuredClone(data),
     create: async (_kind, name, parentId) => {
       const conceptId = id('concept')
-      data.concepts.push({ id: conceptId, projectId: parentId ?? '', name, parentId: null, manual: true })
+      data.concepts.push({
+        id: conceptId,
+        workspaceId: data.projects.find((p) => p.id === parentId)?.workspaceId ?? '',
+        name,
+        parentId: null,
+        manual: true,
+        aliases: [],
+        definition: '',
+        level: 'concept'
+      })
       changed()
       return conceptId
     },
@@ -60,7 +73,9 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     remove: async () => {},
     moveQuestion: async (questionId, projectId) => {
       const q = data.questions.find((x) => x.id === questionId)
-      if (q) Object.assign(q, { projectId, conceptIds: [], suggestions: [] })
+      const workspace = (pid: string): string | undefined => data.projects.find((p) => p.id === pid)?.workspaceId
+      if (q && workspace(q.projectId) === workspace(projectId)) q.projectId = projectId
+      else if (q) Object.assign(q, { projectId, conceptIds: [], conceptTurns: {}, suggestions: [] })
       changed()
     },
     updateQuestion: async (questionId, patch) => {
@@ -70,6 +85,12 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     },
     editConcept: async () => {},
     mergeConcept: async () => {},
+    editConceptInfo: async () => {},
+    setRelation: async () => {},
+    focusQuestion: async () => {},
+    tidyPlan: async () => ({ candidates: 0, estimatedTokens: 0 }),
+    tidyPreview: async () => ({ id: 'preview-tidy', changes: [] }),
+    tidyApply: async () => ({ merged: 0, parents: 0, moved: 0, relations: 0, skipped: [] }),
     ask: async (input) => {
       let q: Question | undefined = input.questionId
         ? data.questions.find((x) => x.id === input.questionId)
@@ -82,6 +103,8 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
           title: input.raw.slice(0, 40),
           turns: [],
           conceptIds: [],
+          conceptTurns: {},
+          extractedTurns: 0,
           suggestions: [],
           memo: '',
           important: false

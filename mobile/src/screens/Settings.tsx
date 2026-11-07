@@ -32,6 +32,7 @@ import { demoAvailable } from '../demo-hub'
 import { Icon } from '../icons'
 
 const STATE_LABEL = { online: '연결됨', offline: '오프라인', blocked: '차단됨' } as const
+const MEMORY_SCOPE_LABEL = { off: '끄기', project: '현재 프로젝트', workspace: '워크스페이스' } as const
 
 /** Mobile kit order: system first, then light themes from plainest to most tinted, night last. */
 const THEME_ORDER = ['system', 'white', 'ivory', 'navy', 'lavender', 'night']
@@ -184,6 +185,28 @@ export default function Settings(): React.JSX.Element {
           <button className="danger" onClick={() => void unpair(demo ? '' : t('연결을 해제했습니다.'))}>
             {demo ? t('데모 종료') : t('연결 해제')}
           </button>
+        </section>
+        <section>
+          <h2>{t('지식 활용')}</h2>
+          <p>{t('PC의 FASK 설정에서 바꿀 수 있습니다.')}</p>
+          <dl className="settings-rows">
+            <div>
+              <dt>{t('개념 정리')}</dt>
+              <dd>{data.settings.organize ? t('켜짐') : t('꺼짐')}</dd>
+            </div>
+            <div>
+              <dt>{t('개념 추출 대기')}</dt>
+              <dd>{t('{{n}}초', { n: data.settings.extractDelaySec })}</dd>
+            </div>
+            <div>
+              <dt>{t('질문에 참고할 지식')}</dt>
+              <dd>{t(MEMORY_SCOPE_LABEL[data.settings.memoryScope])}</dd>
+            </div>
+            <div>
+              <dt>{t('참고 토큰 상한')}</dt>
+              <dd>{data.settings.memoryTokens.toLocaleString()}</dd>
+            </div>
+          </dl>
         </section>
         {(overlayPreviewAvailable() || (demoAvailable() && !demo)) && (
           <section>

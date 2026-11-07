@@ -3,8 +3,12 @@
 import type {
   Concept,
   Question,
+  Relation,
   Snapshot,
   StreamEvent,
+  TidyChange,
+  TidyRef,
+  TidyResult,
   Turn,
   TurnState
 } from '@desktop/preload/personal'
@@ -54,14 +58,64 @@ function turn(over: Partial<Turn> & Pick<Turn, 'id' | 'createdAt' | 'raw'>): Tur
 function seed(): { data: Snapshot; images: Map<string, string> } {
   const day = (n: number, h = 10): string =>
     new Date(Date.now() - n * 86_400_000 - (12 - h) * 3_600_000).toISOString()
+  const concept = (
+    id: string,
+    name: string,
+    parentId: string | null,
+    level: Concept['level'],
+    definition = '',
+    aliases: string[] = []
+  ): Concept => ({ id, workspaceId: 'w-sem', name, parentId, manual: false, aliases, definition, level })
   const concepts: Concept[] = [
-    { id: 'c-sort', projectId: 'p-ds', name: '정렬', parentId: null, manual: false },
-    { id: 'c-merge', projectId: 'p-ds', name: '병합 정렬', parentId: 'c-sort', manual: false },
-    { id: 'c-quick', projectId: 'p-ds', name: '퀵 정렬', parentId: 'c-sort', manual: false },
-    { id: 'c-tree', projectId: 'p-ds', name: '트리', parentId: null, manual: false },
-    { id: 'c-heap', projectId: 'p-ds', name: '힙', parentId: 'c-tree', manual: true },
-    { id: 'c-sched', projectId: 'p-os', name: '스케줄링', parentId: null, manual: false },
-    { id: 'c-dead', projectId: 'p-os', name: '교착 상태', parentId: null, manual: false }
+    concept('c-sort', '정렬', null, 'topic', '원소를 정해진 순서로 나열하는 알고리즘'),
+    concept('c-merge', '병합 정렬', 'c-sort', 'concept', '반으로 나눠 정렬한 뒤 합치는 분할 정복 정렬', ['merge sort']),
+    concept('c-quick', '퀵 정렬', 'c-sort', 'concept', '피벗을 기준으로 나누는 정렬', ['quick sort']),
+    concept('c-tree', '트리', null, 'topic'),
+    { ...concept('c-heap', '힙', 'c-tree', 'concept', '부모가 자식보다 항상 작거나 큰 완전 이진 트리'), manual: true },
+    concept('c-queue', '큐', null, 'concept', '먼저 들어온 원소가 먼저 나가는 자료구조', ['queue']),
+    concept('c-sched', '스케줄링', null, 'topic'),
+    concept('c-dead', '교착 상태', null, 'concept', '', ['deadlock'])
+  ]
+  const relations: Relation[] = [
+    {
+      id: 'r-merge-quick',
+      workspaceId: 'w-sem',
+      from: 'c-merge',
+      to: 'c-quick',
+      type: 'contrast',
+      questionId: 'q-merge',
+      turnIds: ['t-merge-2'],
+      confidence: 0.9,
+      approved: true,
+      createdAt: day(0, 10),
+      invalidatedAt: null
+    },
+    {
+      id: 'r-sched-queue',
+      workspaceId: 'w-sem',
+      from: 'c-sched',
+      to: 'c-queue',
+      type: 'uses',
+      questionId: 'q-rr',
+      turnIds: ['t-rr-1'],
+      confidence: 0.8,
+      approved: true,
+      createdAt: day(3),
+      invalidatedAt: null
+    },
+    {
+      id: 'r-queue-heap',
+      workspaceId: 'w-sem',
+      from: 'c-queue',
+      to: 'c-heap',
+      type: 'prerequisite',
+      questionId: 'q-heap',
+      turnIds: ['t-heap-1'],
+      confidence: 0.5,
+      approved: false,
+      createdAt: day(1),
+      invalidatedAt: null
+    }
   ]
   const questions: Question[] = [
     {
@@ -69,7 +123,9 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
       projectId: 'p-ds',
       createdAt: day(0, 9),
       title: '병합 정렬 시간 복잡도',
-      conceptIds: ['c-merge'],
+      conceptIds: ['c-merge', 'c-quick'],
+      conceptTurns: { 'c-merge': ['t-merge-1'], 'c-quick': ['t-merge-2'] },
+      extractedTurns: 2,
       suggestions: ['분할 정복'],
       memo: '시험 범위. 점화식 풀이 다시 보기',
       important: true,
@@ -87,6 +143,10 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
           id: 't-merge-2',
           createdAt: day(0, 10),
           raw: '그럼 퀵 정렬은 왜 최악이 n² 인가요?',
+          references: [
+            { kind: 'concept', id: 'c-merge', name: '병합 정렬' },
+            { kind: 'question', id: 'q-heap', name: '힙과 우선순위 큐 차이' }
+          ],
           answer:
             '피벗이 매번 최솟값이나 최댓값이면 한쪽 부분 배열이 비어서 단계 수가 **n**이 됩니다. 각 단계 비용이 n이므로 최악은 $O(n^2)$ 입니다.\n\n- 무작위 피벗을 쓰면 기대 시간은 $O(n \\log n)$\n- 이미 정렬된 입력에서 첫 원소를 피벗으로 쓰면 최악이 됩니다.'
         })
@@ -97,7 +157,9 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
       projectId: 'p-ds',
       createdAt: day(1),
       title: '힙과 우선순위 큐 차이',
-      conceptIds: ['c-heap'],
+      conceptIds: ['c-heap', 'c-queue'],
+      conceptTurns: { 'c-heap': ['t-heap-1'], 'c-queue': ['t-heap-1'] },
+      extractedTurns: 1,
       suggestions: [],
       memo: '',
       important: false,
@@ -117,6 +179,8 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
       createdAt: day(2),
       title: '나중에 물어볼 질문',
       conceptIds: [],
+      conceptTurns: {},
+      extractedTurns: 0,
       suggestions: ['트리'],
       memo: '',
       important: false,
@@ -135,7 +199,9 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
       projectId: 'p-os',
       createdAt: day(3),
       title: '라운드 로빈 타임 퀀텀',
-      conceptIds: ['c-sched'],
+      conceptIds: ['c-sched', 'c-queue'],
+      conceptTurns: { 'c-sched': ['t-rr-1'], 'c-queue': ['t-rr-1'] },
+      extractedTurns: 1,
       suggestions: [],
       memo: '',
       important: false,
@@ -172,6 +238,7 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
         { id: 'p-la', workspaceId: 'w-self', name: '선형대수 스터디', description: '' }
       ],
       concepts,
+      relations,
       questions,
       settings: {
         endpoint: 'demo',
@@ -183,7 +250,10 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
         routing: 'manual',
         refine: true,
         organize: true,
-        memory: false,
+        memoryScope: 'project',
+        memoryTokens: 1500,
+        extractDelaySec: 120,
+        organizeModel: '',
         retention: 'balanced',
         autoTitle: true,
         regions: []
@@ -221,16 +291,26 @@ export function createDemoHub(): HubClient {
     timers.get(turnId)?.forEach(clearTimeout)
     timers.delete(turnId)
   }
+  const workspaceOf = (projectId: string): string =>
+    data.projects.find((p) => p.id === projectId)?.workspaceId ?? ''
   const removeConcepts = (ids: Set<string>): void => {
     data.concepts = data.concepts.filter((c) => !ids.has(c.id))
-    for (const q of data.questions) q.conceptIds = q.conceptIds.filter((c) => !ids.has(c))
+    data.relations = data.relations.filter((r) => !ids.has(r.from) && !ids.has(r.to))
+    for (const q of data.questions) {
+      q.conceptIds = q.conceptIds.filter((c) => !ids.has(c))
+      for (const c of ids) delete q.conceptTurns[c]
+    }
   }
   const removeProjects = (ids: Set<string>): void => {
     data.projects = data.projects.filter((p) => !ids.has(p.id))
-    removeConcepts(new Set(data.concepts.filter((c) => ids.has(c.projectId)).map((c) => c.id)))
     for (const q of data.questions) if (ids.has(q.projectId)) q.turns.forEach((x) => stop(x.id))
     data.questions = data.questions.filter((q) => !ids.has(q.projectId))
   }
+  // Demo tidy: parentless concepts are the candidates; the preview proposes fixed changes for the
+  // seeded ones, and applying marks the rest as reviewed (like the PC's tidy).
+  const orphans = (workspaceId: string): Concept[] =>
+    data.concepts.filter((c) => c.workspaceId === workspaceId && c.level !== 'topic' && !c.parentId && !c.tidyReviewed)
+  let proposal: { id: string; workspaceId: string; changes: TidyChange[] } | undefined
 
   return {
     snapshot: async () => structuredClone(data),
@@ -241,7 +321,23 @@ export function createDemoHub(): HubClient {
         data.workspaces.push({ id: newId, profileId: data.activeProfileId, name })
       else if (kind === 'project')
         data.projects.push({ id: newId, workspaceId: parentId ?? data.workspaces[0]?.id ?? '', name, description: '' })
-      else data.concepts.push({ id: newId, projectId: parentId ?? '', name, parentId: null, manual: true })
+      else {
+        const workspaceId = workspaceOf(parentId ?? '')
+        const same = data.concepts.find(
+          (c) => c.workspaceId === workspaceId && (c.name === name || c.aliases.includes(name))
+        )
+        if (same) return same.id
+        data.concepts.push({
+          id: newId,
+          workspaceId,
+          name,
+          parentId: null,
+          manual: true,
+          aliases: [],
+          definition: '',
+          level: 'concept'
+        })
+      }
       changed()
       return newId
     },
@@ -277,12 +373,15 @@ export function createDemoHub(): HubClient {
       } else if (kind === 'project') removeProjects(new Set([target]))
       else if (kind === 'workspace') {
         removeProjects(new Set(data.projects.filter((p) => p.workspaceId === target).map((p) => p.id)))
+        removeConcepts(new Set(data.concepts.filter((c) => c.workspaceId === target).map((c) => c.id)))
         data.workspaces = data.workspaces.filter((w) => w.id !== target)
       } else throw new Error('데모에서는 프로필을 삭제할 수 없습니다.')
       changed()
     },
     moveQuestion: async (qid, projectId) => {
-      Object.assign(question(qid), { projectId, conceptIds: [], suggestions: [] })
+      const q = question(qid)
+      if (workspaceOf(q.projectId) === workspaceOf(projectId)) q.projectId = projectId
+      else Object.assign(q, { projectId, conceptIds: [], conceptTurns: {}, suggestions: [] })
       changed()
     },
     updateQuestion: async (qid, patch) => {
@@ -296,11 +395,102 @@ export function createDemoHub(): HubClient {
     },
     mergeConcept: async (source, target) => {
       for (const c of data.concepts) if (c.parentId === source) c.parentId = target
-      for (const q of data.questions)
+      for (const r of data.relations) {
+        if (r.from === source) r.from = target
+        if (r.to === source) r.to = target
+      }
+      data.relations = data.relations.filter((r) => r.from !== r.to)
+      for (const q of data.questions) {
         if (q.conceptIds.includes(source))
           q.conceptIds = [...new Set(q.conceptIds.map((c) => (c === source ? target : c)))]
+        const turns = q.conceptTurns[source]
+        if (turns) {
+          q.conceptTurns[target] = [...new Set([...(q.conceptTurns[target] ?? []), ...turns])]
+          delete q.conceptTurns[source]
+        }
+      }
       data.concepts = data.concepts.filter((c) => c.id !== source)
       changed()
+    },
+    editConceptInfo: async (cid, patch) => {
+      const c = data.concepts.find((x) => x.id === cid)
+      if (c) Object.assign(c, patch)
+      changed()
+    },
+    setRelation: async (rid, action) => {
+      const r = data.relations.find((x) => x.id === rid)
+      if (r && action === 'approve') r.approved = true
+      else if (r) r.invalidatedAt = new Date().toISOString()
+      changed()
+    },
+    focusQuestion: async () => {},
+    tidyPlan: async (workspaceId) => {
+      const n = orphans(workspaceId).length
+      return { candidates: n, estimatedTokens: n * 400 }
+    },
+    tidyPreview: async (workspaceId) => {
+      await new Promise((resolve) => setTimeout(resolve, 900))
+      const open = orphans(workspaceId)
+      const ref = (c: Concept): TidyRef => ({ id: c.id, name: c.name })
+      const queue = open.find((c) => c.id === 'c-queue'),
+        dead = open.find((c) => c.id === 'c-dead'),
+        sched = data.concepts.find((c) => c.id === 'c-sched'),
+        heap = data.concepts.find((c) => c.id === 'c-heap')
+      const changes: TidyChange[] = []
+      if (queue)
+        changes.push({
+          kind: 'newParent',
+          name: '자료구조',
+          level: 'topic',
+          parent: null,
+          children: [{ concept: ref(queue), from: null, levelFrom: queue.level, levelTo: 'concept' }]
+        })
+      if (dead && sched)
+        changes.push({ kind: 'move', concept: ref(dead), from: null, to: ref(sched), levelFrom: dead.level, levelTo: 'concept' })
+      if (queue && heap && !data.relations.some((r) => r.from === queue.id && r.to === heap.id))
+        changes.push({ kind: 'relation', from: ref(queue), to: ref(heap), type: 'uses', confidence: 0.8 })
+      proposal = { id: id('tidy'), workspaceId, changes }
+      return { id: proposal.id, changes }
+    },
+    tidyApply: async (workspaceId, proposalId, accepted) => {
+      if (proposal?.id !== proposalId || proposal.workspaceId !== workspaceId)
+        throw new Error('정리 제안이 만료되었습니다. 정리 제안을 다시 확인해 주세요.')
+      const { changes: proposed } = proposal
+      proposal = undefined
+      const result: TidyResult = { merged: 0, parents: 0, moved: 0, relations: 0, skipped: [] }
+      const find = (r: TidyRef): Concept | undefined => data.concepts.find((c) => c.id === r.id)
+      proposed.forEach((change, i) => {
+        if (!accepted.includes(i)) return
+        if (change.kind === 'newParent') {
+          const parentId = id('concept')
+          const level = change.level
+          data.concepts.push({ id: parentId, workspaceId, name: change.name, parentId: null, manual: false, aliases: [], definition: '', level })
+          result.parents++
+          for (const p of change.children) Object.assign(find(p.concept) ?? {}, { parentId, level: p.levelTo })
+          result.moved += change.children.length
+        } else if (change.kind === 'move' && find(change.concept) && find(change.to)) {
+          Object.assign(find(change.concept) ?? {}, { parentId: change.to.id, level: change.levelTo })
+          result.moved++
+        } else if (change.kind === 'relation' && change.from.id && change.to.id) {
+          data.relations.push({
+            id: id('relation'),
+            workspaceId,
+            from: change.from.id,
+            to: change.to.id,
+            type: change.type,
+            questionId: null,
+            turnIds: [],
+            confidence: change.confidence,
+            approved: change.confidence >= 0.7,
+            createdAt: new Date().toISOString(),
+            invalidatedAt: null
+          })
+          result.relations++
+        } else result.skipped.push(i)
+      })
+      for (const c of orphans(workspaceId)) c.tidyReviewed = `|${c.level}|`
+      changed()
+      return result
     },
     ask: async (input) => {
       const known = requests.get(input.requestId)
@@ -317,6 +507,8 @@ export function createDemoHub(): HubClient {
           title: (input.refined || input.raw).trim().slice(0, 40) || '이미지 질문',
           turns: [],
           conceptIds: [],
+          conceptTurns: {},
+          extractedTurns: 0,
           suggestions: [],
           memo: '',
           important: false

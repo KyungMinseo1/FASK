@@ -1,12 +1,11 @@
-import { BaseEdge, Handle, Position, type EdgeProps, type NodeProps } from '@xyflow/react'
+import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type NodeProps } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
-import { isUnclassified, type MindFlowNode } from './layout'
+import { HANDLE, isUnclassified, type MindFlowNode } from './layout'
 import { useT } from '../../../../shared/i18n/react'
 import { Chevron } from '../../personal/ToolbarIcons'
 
-/** Invisible handle pinned to the pill centre so edges run centre-to-centre. */
-const centerHandle: React.CSSProperties = {
-  left: '50%',
+const handleStyle = (left: string): React.CSSProperties => ({
+  left,
   top: '50%',
   transform: 'translate(-50%, -50%)',
   width: 1,
@@ -16,7 +15,14 @@ const centerHandle: React.CSSProperties = {
   border: 0,
   background: 'transparent',
   opacity: 0
-}
+})
+
+/** Invisible 1px handles: tree edges attach to the pill sides, relation overlays to the centre. */
+const HANDLES = [
+  { id: HANDLE.left, style: handleStyle('0%'), target: Position.Left, source: Position.Left },
+  { id: HANDLE.right, style: handleStyle('100%'), target: Position.Right, source: Position.Right },
+  { id: HANDLE.center, style: handleStyle('50%'), target: Position.Top, source: Position.Bottom }
+]
 
 /** G1 pills: root in the primary color, unclassified as an empty dashed outline. */
 function pillStyle(mind: MindNode, depth: number): React.CSSProperties {
@@ -35,15 +41,84 @@ function pillStyle(mind: MindNode, depth: number): React.CSSProperties {
   }
 }
 
-/** Gentle quadratic curve between two pill centres, bowed to the left of the travel direction. */
+/** Horizontal S-curve from the parent's side facing the child to the child's near side. */
 export function CurveEdge({ id, sourceX, sourceY, targetX, targetY, style }: EdgeProps): React.JSX.Element {
+  const mx = (sourceX + targetX) / 2
+  return (
+    <BaseEdge
+      id={id}
+      path={`M${sourceX} ${sourceY} C${mx} ${sourceY} ${mx} ${targetY} ${targetX} ${targetY}`}
+      style={style}
+    />
+  )
+}
+
+export type RelationFlowEdge = Edge<
+  {
+    label: string
+    pending: boolean
+    /** Pill sizes of both ends, so the line stops at their borders instead of their centres. */
+    sourceSize: [number, number]
+    targetSize: [number, number]
+  },
+  'relation'
+>
+
+/**
+ * A selected concept's relation: dashed curve between the two pill borders with an arrowhead at
+ * the target and the relation type as label. Pending (unapproved) relations are drawn fainter.
+ */
+export function RelationEdgeView({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  data
+}: EdgeProps<RelationFlowEdge>): React.JSX.Element | null {
+  const t = useT()
+  if (!data) return null
   const dx = targetX - sourceX,
     dy = targetY - sourceY
-  const bow = Math.min(36, Math.hypot(dx, dy) * 0.12)
   const len = Math.hypot(dx, dy) || 1
-  const cx = (sourceX + targetX) / 2 + (dy / len) * bow
-  const cy = (sourceY + targetY) / 2 - (dx / len) * bow
-  return <BaseEdge id={id} path={`M${sourceX} ${sourceY} Q${cx} ${cy} ${targetX} ${targetY}`} style={style} />
+  const ux = dx / len,
+    uy = dy / len
+  // Distance from a pill centre to its border along the line, plus a small gap.
+  const clip = ([w, h]: [number, number]): number =>
+    Math.min(ux ? w / 2 / Math.abs(ux) : Infinity, uy ? h / 2 / Math.abs(uy) : Infinity) + 6
+  const sx = sourceX + ux * clip(data.sourceSize),
+    sy = sourceY + uy * clip(data.sourceSize)
+  const ex = targetX - ux * clip(data.targetSize),
+    ey = targetY - uy * clip(data.targetSize)
+  // Bowed more than tree edges so a relation along a tree edge stays distinguishable.
+  const bow = Math.min(60, len * 0.2)
+  const cx = (sourceX + targetX) / 2 + uy * bow,
+    cy = (sourceY + targetY) / 2 - ux * bow
+  // Arrowhead along the curve's end tangent.
+  const tl = Math.hypot(ex - cx, ey - cy) || 1
+  const ax = (ex - cx) / tl,
+    ay = (ey - cy) / tl
+  const arrow = `M${ex} ${ey} L${ex - ax * 9 - ay * 4.5} ${ey - ay * 9 + ax * 4.5} L${ex - ax * 9 + ay * 4.5} ${ey - ay * 9 - ax * 4.5} Z`
+  const color = data.pending ? 'var(--ink-muted)' : 'var(--primary)'
+  const opacity = data.pending ? 0.6 : 1
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={`M${sx} ${sy} Q${cx} ${cy} ${ex} ${ey}`}
+        style={{ stroke: color, strokeWidth: data.pending ? 1.4 : 2, strokeDasharray: '6 4', opacity }}
+        label={t(data.label)}
+        labelX={(sx + 2 * cx + ex) / 4}
+        labelY={(sy + 2 * cy + ey) / 4}
+        labelStyle={{ fill: color, fontSize: 11.5, fontWeight: 700, opacity }}
+        labelShowBg
+        labelBgStyle={{ fill: 'var(--surface-1)', stroke: color, strokeWidth: 1, opacity }}
+        labelBgPadding={[6, 3]}
+        labelBgBorderRadius={8}
+      />
+      <path d={arrow} fill={color} opacity={opacity} />
+    </>
+  )
 }
 
 export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.JSX.Element {
@@ -58,7 +133,16 @@ export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.J
       className={`relative ${dragging ? 'cursor-grabbing opacity-80' : 'cursor-pointer'}`}
       style={{ width, height }}
     >
-      <Handle type="target" position={Position.Top} style={centerHandle} isConnectable={false} />
+      {HANDLES.map((h) => (
+        <Handle
+          key={`in-${h.id}`}
+          id={h.id}
+          type="target"
+          position={h.target}
+          style={h.style}
+          isConnectable={false}
+        />
+      ))}
       {marked && !dragging && (
         // Nodes holding questions: a static dashed outline around the pill.
         <span
@@ -125,7 +209,16 @@ export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.J
           {mind.badge}
         </span>
       )}
-      <Handle type="source" position={Position.Bottom} style={centerHandle} isConnectable={false} />
+      {HANDLES.map((h) => (
+        <Handle
+          key={`out-${h.id}`}
+          id={h.id}
+          type="source"
+          position={h.source}
+          style={h.style}
+          isConnectable={false}
+        />
+      ))}
     </div>
   )
 }

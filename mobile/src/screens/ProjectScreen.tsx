@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { App } from '@capacitor/app'
-import type { Question } from '@desktop/preload/personal'
+import type { Concept, Question, Reference } from '@desktop/preload/personal'
 import {
   filterQuestions,
   lastTurn,
@@ -20,10 +20,17 @@ import {
 } from '@desktop/renderer/src/personal/graphMove'
 import { dateLabel, errorText, statuses } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
+import ConceptPanel from '@desktop/renderer/src/personal/ConceptPanel'
 import MarkdownAnswer from '@desktop/renderer/src/personal/MarkdownAnswer'
 import Pager from '@desktop/renderer/src/personal/Pager'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
-import { questionTree } from '@desktop/renderer/src/personal/questionTree'
+import TidyBar from '@desktop/renderer/src/personal/TidyBar'
+import {
+  linkableConcepts,
+  projectConcepts,
+  questionTree,
+  relationOverlay
+} from '@desktop/renderer/src/personal/questionTree'
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
@@ -73,14 +80,19 @@ export default function ProjectScreen(): React.JSX.Element {
   const [query, setQuery] = useState(''),
     [filter, setFilter] = useState('all'),
     [view, setView] = useState<'list' | 'graph'>('list'),
-    [menu, setMenu] = useState<Question | null>(null)
+    [menu, setMenu] = useState<Question | null>(null),
+    [conceptId, setConceptId] = useState<string | null>(null),
+    [sheetFull, setSheetFull] = useState(false)
   const questions = useMemo(
     () => data.questions.filter((q) => q.projectId === projectId),
     [data.questions, projectId]
   )
   const filtered = useMemo(() => filterQuestions(questions, filter, query), [questions, filter, query])
   const graph = useMemo(() => questionTree(data, projectId, filtered), [data, projectId, filtered])
-  const projectConcepts = data.concepts.filter((c) => c.projectId === projectId)
+  const { concepts, shared } = useMemo(() => projectConcepts(data, projectId), [data, projectId])
+  const linkable = useMemo(() => linkableConcepts(data, projectId), [data, projectId])
+  // Only while a concept's sheet is open: its relations over the tree.
+  const relations = useMemo(() => relationOverlay(data, conceptId), [data, conceptId])
   const workspace = data.workspaces.find((w) => w.id === project?.workspaceId)
   const locked = !!workspace?.remote && workspace.remote.status !== 'online'
   const [page, setPageState] = useState(() => lastPage.get(projectId) ?? 1)
@@ -90,11 +102,73 @@ export default function ProjectScreen(): React.JSX.Element {
   }
   const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
   const listRef = useRef<HTMLElement>(null)
+  const graphRef = useRef<HTMLDivElement>(null)
+  const sheetRef = useRef<HTMLDivElement>(null)
+  const graphSheet = !!conceptId && view === 'graph' && (wide || !questionId)
+  // The selected concept and its relation partners; MindMap frames those that are visible.
+  const focusIds = useMemo(
+    () =>
+      conceptId ? [...new Set([`c:${conceptId}`, ...relations.flatMap((r) => [r.source, r.target])])] : undefined,
+    [conceptId, relations]
+  )
+  // Graph height while the half sheet is open: from the top of the graph's scroller (where
+  // scrollIntoView puts it) down to the sheet. Measured, since banners above the header move it.
+  const [graphHeight, setGraphHeight] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const sheet = sheetRef.current
+    const scroller = graphRef.current?.closest<HTMLElement>('.mobile-list-column, .mobile-body')
+    if (!graphSheet || sheetFull || !sheet || !scroller) return
+    const measure = (): void => {
+      // The visible top is the lowest top among clipping ancestors: a scrolled column can sit above
+      // the screen while its scrolling parent starts below the header and banners.
+      let top = -Infinity
+      for (let el = graphRef.current?.parentElement; el; el = el.parentElement)
+        if (getComputedStyle(el).overflowY !== 'visible') top = Math.max(top, el.getBoundingClientRect().top)
+      if (top === -Infinity) top = scroller.getBoundingClientRect().top
+      // getBoundingClientRect is in zoomed pixels; style heights are not.
+      const scale = scroller.offsetHeight ? scroller.getBoundingClientRect().height / scroller.offsetHeight : 1
+      setGraphHeight(Math.max(160, Math.round((sheet.getBoundingClientRect().top - top) / scale) - 8))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(sheet)
+    observer.observe(scroller)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [graphSheet, sheetFull, conceptId])
+  // The sheet covers the lower half: bring the (shrunken) graph to the top of its scroller.
+  useEffect(() => {
+    if (graphSheet) graphRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [graphSheet, conceptId, graphHeight])
+  useEffect(() => setSheetFull(false), [conceptId])
   if (!project) return <Navigate404 />
-  const concepts = data.concepts.filter((c) => c.projectId === projectId)
   const open = (id: string): void => void navigate(`/p/${projectId}/q/${id}`)
+  const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      setGraphError('')
+      await fn()
+      await refresh()
+      return true
+    } catch (e) {
+      setGraphError(errorText(e))
+      return false
+    }
+  }
+  /** Opens a question (possibly in another project) scrolled to the turn that mentions `concept`. */
+  const openAt = (id: string, concept?: string): void => {
+    const target = data.questions.find((q) => q.id === id)?.projectId ?? projectId
+    setConceptId(null)
+    navigate(`/p/${target}/q/${id}${concept ? `?concept=${encodeURIComponent(concept)}` : ''}`)
+  }
+  const onReference = (ref: Reference): void => {
+    if (ref.kind === 'concept') setConceptId(ref.id)
+    else openAt(ref.id)
+  }
   const list = (
-    <section className="mobile-list" ref={listRef}>
+    <section className={graphSheet ? 'mobile-list sheet-open' : 'mobile-list'} ref={listRef}>
       <div className="filter-row">
         <label className="search-field">
           <Icon name="search" size={18} />
@@ -138,26 +212,32 @@ export default function ProjectScreen(): React.JSX.Element {
               {graphError}
             </p>
           )}
-          <MindMap
-            root={graph}
-            height="70vh"
-            allowCopy={false}
-            onMoveNode={
-              locked
-                ? undefined
-                : (node, target) => {
-                    setGraphError('')
-                    void moveGraphNode(api, projectConcepts, questions, node, target, false)
-                      .then(refresh)
-                      .catch((e) => setGraphError(errorText(e)))
-                  }
-            }
-            canMove={canMoveGraphNode}
-            canDrop={canDropGraphNode}
-            onSelect={(node) => {
-              if (node.id.startsWith('q:')) open(node.id.split(':')[1])
-            }}
-          />
+          <div className="mobile-graph" ref={graphRef}>
+            <TidyBar workspaceId={project.workspaceId} revision={data} disabled={locked} sheet />
+            <MindMap
+              root={graph}
+              relations={relations}
+              focusIds={graphSheet ? focusIds : undefined}
+              height={graphSheet && graphHeight ? graphHeight : '70vh'}
+              allowCopy={false}
+              onMoveNode={
+                locked
+                  ? undefined
+                  : (node, target) => {
+                      setGraphError('')
+                      void moveGraphNode(api, concepts, questions, node, target, false)
+                        .then(refresh)
+                        .catch((e) => setGraphError(errorText(e)))
+                    }
+              }
+              canMove={canMoveGraphNode}
+              canDrop={canDropGraphNode}
+              onSelect={(node) => {
+                if (node.id.startsWith('q:')) open(node.id.split(':')[1])
+                else if (node.id.startsWith('c:')) setConceptId(node.id.slice(2))
+              }}
+            />
+          </div>
         </>
       ) : filtered.length ? (
         <>
@@ -168,6 +248,7 @@ export default function ProjectScreen(): React.JSX.Element {
               question={q}
               selected={q.id === questionId}
               concepts={concepts}
+              shared={shared}
               onOpen={() => open(q.id)}
               onMenu={() => setMenu(q)}
             />
@@ -189,7 +270,16 @@ export default function ProjectScreen(): React.JSX.Element {
       )}
     </section>
   )
-  const detail = questionId ? <Detail key={questionId} projectId={projectId} questionId={questionId} /> : null
+  const detail = questionId ? (
+    <Detail
+      key={questionId}
+      projectId={projectId}
+      questionId={questionId}
+      concepts={linkable}
+      shared={shared}
+      onReference={onReference}
+    />
+  ) : null
   const fab = (
     <div className="mobile-fab">
       <button className="primary" onClick={() => navigate(`/p/${projectId}/new`)}>
@@ -233,6 +323,33 @@ export default function ProjectScreen(): React.JSX.Element {
           currentId={questionId}
           onClose={() => setMenu(null)}
         />
+      )}
+      {/* Non-modal half sheet: the graph above stays visible and tappable (another concept swaps the sheet). */}
+      {conceptId && data.concepts.some((c) => c.id === conceptId) && (
+        <div
+          ref={sheetRef}
+          className={`mobile-sheet concept-sheet${sheetFull ? ' full' : ''}`}
+          role="dialog"
+          aria-label={concepts.find((c) => c.id === conceptId)?.name ?? t('개념')}
+        >
+          <button
+            type="button"
+            className="sheet-handle"
+            aria-label={sheetFull ? t('시트 줄이기') : t('시트 크게 보기')}
+            aria-expanded={sheetFull}
+            onClick={() => setSheetFull((f) => !f)}
+          />
+          {graphError && <p className="notice error">{graphError}</p>}
+          <ConceptPanel
+            key={conceptId}
+            data={data}
+            conceptId={conceptId}
+            projectId={projectId}
+            run={run}
+            onOpenQuestion={openAt}
+            onClose={() => setConceptId(null)}
+          />
+        </div>
       )}
     </>
   )
@@ -507,12 +624,14 @@ function QuestionCard({
   question: q,
   selected,
   concepts,
+  shared,
   onOpen,
   onMenu
 }: {
   question: Question
   selected: boolean
   concepts: { id: string; name: string }[]
+  shared: Set<string>
   onOpen: () => void
   onMenu: () => void
 }): React.JSX.Element {
@@ -574,12 +693,14 @@ function QuestionCard({
       <div className="question-footer">
         <span className="question-tags">
           {(() => {
-            const names = q.conceptIds
-              .map((id) => concepts.find((c) => c.id === id)?.name)
-              .filter((name): name is string => !!name)
-            return (names.length ? names : [t('미분류')]).map((name, i) => (
-              <span key={i} className="tag">
-                {name}
+            const linked = q.conceptIds
+              .map((id) => concepts.find((c) => c.id === id))
+              .filter((c): c is { id: string; name: string } => !!c)
+            if (!linked.length) return <span className="tag">{t('미분류')}</span>
+            return linked.map((c) => (
+              <span key={c.id} className="tag">
+                {c.name}
+                {shared.has(c.id) && <small className="shared-badge">{t('공유')}</small>}
               </span>
             ))
           })()}
@@ -594,17 +715,35 @@ function QuestionCard({
   )
 }
 
-function Detail({ projectId, questionId }: { projectId: string; questionId: string }): React.JSX.Element {
+function Detail({
+  projectId,
+  questionId,
+  concepts,
+  shared,
+  onReference
+}: {
+  projectId: string
+  questionId: string
+  concepts: Concept[]
+  shared: Set<string>
+  onReference: (ref: Reference) => void
+}): React.JSX.Element {
   const { data, refresh } = useMobile()
   const api = useApi()
   const navigate = useNavigate()
   const t = useT()
+  const [params] = useSearchParams()
   const [notice, setNotice] = useState('')
   const question = data.questions.find((q) => q.id === questionId)
   // A turn already running on arrival (e.g. sent from the new-question screen) keeps streaming here.
   const [running] = useState(() =>
     question && lastTurn(question).status === 'running' ? question : undefined
   )
+  // Leaving a question lets the PC extract its concepts right away instead of after the delay.
+  useEffect(() => {
+    void api.focusQuestion(questionId).catch(() => {})
+    return () => void api.focusQuestion(null).catch(() => {})
+  }, [api, questionId])
   if (!question)
     return (
       <div className="empty-state">
@@ -628,7 +767,10 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
       {notice && <p className="notice error">{notice}</p>}
       <QuestionDetail
         question={question}
-        concepts={data.concepts.filter((c) => c.projectId === projectId)}
+        concepts={concepts}
+        shared={shared}
+        focusConceptId={params.get('concept')}
+        onReference={onReference}
         run={run}
         onClose={() => navigate(`/p/${projectId}`, { replace: true })}
         onCreateConcept={async (name) => {

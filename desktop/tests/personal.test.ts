@@ -24,6 +24,10 @@ import { OpaqueClient } from '@cloudflare/opaque-ts'
 import { validateBackup } from '../src/main/personal-backup'
 import { readAttachment } from '../src/renderer/src/personal/attachments'
 import { previewSource } from '../src/renderer/src/personal/preview-source'
+import { linkableConcepts, projectConcepts, relationOverlay } from '../src/renderer/src/personal/questionTree'
+import './knowledge.test'
+import './knowledge-store.test'
+import './mindmap-layout.test'
 import {
   answerJustCompleted,
   applyDelta,
@@ -115,6 +119,8 @@ function question(id: string, projectId: string, turns: Turn[]): Question {
     createdAt: turns[0].createdAt,
     turns,
     conceptIds: [],
+    conceptTurns: {},
+    extractedTurns: 0,
     suggestions: [],
     memo: '',
     important: false
@@ -129,6 +135,7 @@ test('rename preserves prompts; deletion cascades with shared images and concept
     const project = store.list<Project>('project')[0]
     const concept = store.create('concept', '부모', project.id)
     const child = store.create('concept', '자식', project.id)
+    store.editConceptInfo(child, { level: 'detail' })
     store.editConcept(child, '자식', concept)
     const image = store.saveImage('data:image/png;base64,YWJj')
     const q: Question = {
@@ -156,11 +163,13 @@ test('rename preserves prompts; deletion cascades with shared images and concept
     store.switchProfile(profile)
     store.remove('project', project.id)
     assert.equal(store.snapshot().questions.length, 0)
-    assert.equal(store.snapshot().concepts.length, 0)
+    // Concepts belong to the workspace and outlive the project.
+    assert.equal(store.snapshot().concepts.length, 1)
     assert.equal(store.db.prepare('SELECT id FROM runs WHERE id=?').get('run'), undefined)
     assert.ok(store.image(image), 'other profile still references shared image')
     store.remove('workspace', project.workspaceId)
     assert.equal(store.snapshot().workspaces.length, 0)
+    assert.equal(store.snapshot().concepts.length, 0)
     store.remove('profile', otherProfile)
     assert.equal(store.image(image), null)
     store.remove('profile', profile)
@@ -208,9 +217,14 @@ test('records survive restart; restart recovery bumps revision; profile and proj
     }
     store.put('question', profile, q)
     const other = store.create('project', '다른 프로젝트', project.workspaceId)
-    const otherConcept = store.create('concept', '다른 개념', other)
-    assert.throws(() => store.updateQuestion(q.id, { conceptIds: [otherConcept] }), /프로젝트/)
+    const sameWorkspace = store.create('concept', '다른 개념', other)
+    store.updateQuestion(q.id, { conceptIds: [concept, sameWorkspace] })
+    const elsewhere = store.create('workspace', '다른 워크스페이스')
+    const foreign = store.create('concept', '먼 개념', store.create('project', '먼 프로젝트', elsewhere))
+    assert.throws(() => store.updateQuestion(q.id, { conceptIds: [foreign] }), /워크스페이스/)
+    store.updateQuestion(q.id, { conceptIds: [concept] })
     const child = store.create('concept', '창 입력', project.id)
+    store.editConceptInfo(child, { level: 'detail' })
     store.editConcept(child, '창 입력', concept)
     assert.throws(() => store.editConcept(concept, '투명 창', child), /하위/)
     assert.throws(() => store.mergeConcept(concept, child), /하위/)
@@ -300,15 +314,15 @@ test('endpoint normalization rejects remote hosts and avoids duplicate v1 paths'
   assert.throws(() => normalizeEndpoint('https://example.com/v1'), /로컬/)
   assert.throws(() => normalizeEndpoint('http://key@localhost:8317'), /경로/)
 })
-test('backup validation rejects cyclic concepts and cross-project references before restore', () => {
+test('backup validation rejects cyclic concepts and cross-workspace references before restore', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fask-backup-')),
     store = new PersonalStore(dir)
   try {
     const project = store.list<Project>('project')[0]
     const a = store.create('concept', '부모', project.id),
       b = store.create('concept', '자식', project.id)
-    const backup = { version: 2, snapshot: store.snapshot(), images: {} }
-    assert.equal(validateBackup(backup).version, 2)
+    const backup = { version: 3, snapshot: store.snapshot(), images: {} }
+    assert.equal(validateBackup(backup).version, 3)
     backup.snapshot.concepts.find((c) => c.id === a)!.parentId = b
     backup.snapshot.concepts.find((c) => c.id === b)!.parentId = a
     assert.throws(() => validateBackup(backup), /백업/)
@@ -509,7 +523,7 @@ test('backup v1 conversations import as one question', () => {
       },
       images: {}
     })
-    assert.equal(backup.version, 2)
+    assert.equal(backup.version, 3)
     assert.equal(backup.snapshot.questions.length, 1)
     assert.deepEqual(
       backup.snapshot.questions[0].turns.map((t) => t.id),
@@ -582,7 +596,7 @@ test('recordAsk commits question and run atomically; replays identical requests'
     rmSync(dir, { recursive: true, force: true })
   }
 })
-test('moveQuestion keeps id and turns, changes project, clears concept links', () => {
+test('moveQuestion keeps links within a workspace and clears them across workspaces', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fask-move-')),
     store = new PersonalStore(dir)
   try {
@@ -595,7 +609,18 @@ test('moveQuestion keeps id and turns, changes project, clears concept links', (
     })
     store.recordAsk({ ...base, requestId: 'm2', questionId, turn: turn({ id: 'move-2' }) })
     const concept = store.create('concept', '개념', project.id)
-    store.updateQuestion(questionId, { conceptIds: [concept], suggestions: ['제안'] })
+    store.updateQuestion(questionId, {
+      conceptIds: [concept],
+      conceptTurns: { [concept]: ['move-2'] },
+      suggestions: ['제안']
+    })
+    const sibling = store.create('project', '같은 워크스페이스', project.workspaceId)
+    store.moveQuestion(questionId, sibling)
+    const kept = store.record<Question>('question', questionId)
+    assert.deepEqual(kept.conceptIds, [concept])
+    assert.deepEqual(kept.conceptTurns, { [concept]: ['move-2'] })
+    assert.deepEqual(kept.suggestions, ['제안'])
+    store.put('question', store.active, { ...kept, extractedTurns: 2 })
     const workspace = store.create('workspace', '다른 워크스페이스')
     const target = store.create('project', '다른 프로젝트', workspace)
     store.moveQuestion(questionId, target)
@@ -607,6 +632,8 @@ test('moveQuestion keeps id and turns, changes project, clears concept links', (
     )
     assert.deepEqual(moved.conceptIds, [])
     assert.deepEqual(moved.suggestions, [])
+    assert.deepEqual(moved.conceptTurns, {})
+    assert.equal(moved.extractedTurns, 0)
     assert.throws(() => store.moveQuestion(questionId, 'missing-project'))
     assert.equal(store.record<Question>('question', questionId).projectId, target)
   } finally {
@@ -1565,6 +1592,18 @@ test('peer rules: only records of the active profile; no workspace creation or d
     checkPeerCall(own, 'rename', ['question', 'mine', 'n'])
     checkPeerCall(own, 'create', ['project', 'p', project.workspaceId])
     checkPeerCall(own, 'ask', [{ projectId: project.id, questionId: 'mine' }])
+    const concept = store.create('concept', '개념', project.id)
+    checkPeerCall(own, 'edit-concept-info', [concept, { definition: 'd' }])
+    checkPeerCall(own, 'focus-question', ['mine'])
+    checkPeerCall(own, 'focus-question', [null])
+    checkPeerCall(own, 'tidy-plan', [project.workspaceId])
+    checkPeerCall(own, 'tidy-preview', [project.workspaceId])
+    checkPeerCall(own, 'tidy-apply', [project.workspaceId, 'proposal', [0]])
+    checkPeerCall(own, 'export', [project.id, { images: false }])
+    assert.throws(() => checkPeerCall(own, 'set-relation', ['missing', 'remove']), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'focus-question', ['theirs']), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-preview', [project.id]), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-apply', [project.id, 'proposal', []]), /권한이 없는 요청입니다/)
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
@@ -1602,6 +1641,7 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
     workspaces: [{ id: 'rw', profileId: 'host-profile', name: 'Remote' }],
     projects: [{ id: 'rp', workspaceId: 'rw', name: 'P', description: '' }],
     concepts: [],
+    relations: [],
     questions: [question('rq', 'rp', [turn()])],
     settings: {} as Snapshot['settings'],
     storageBytes: 0
@@ -1707,4 +1747,63 @@ test('linked PC: a change during a snapshot read is re-read, not dropped', async
   } finally {
     await h.hub.stop()
   }
+})
+
+test('project graph: linked concepts plus ancestors, shared and fresh manual ones', () => {
+  const concept = (id: string, parentId: string | null, manual = false): Snapshot['concepts'][number] => ({
+    id,
+    workspaceId: 'W',
+    name: id,
+    parentId,
+    manual,
+    aliases: [],
+    definition: '',
+    level: 'concept'
+  })
+  const question = (id: string, projectId: string, conceptIds: string[]): Question =>
+    ({ id, projectId, conceptIds }) as Question
+  const data = {
+    projects: [
+      { id: 'A', workspaceId: 'W', name: 'A', description: '' },
+      { id: 'B', workspaceId: 'W', name: 'B', description: '' }
+    ],
+    concepts: [
+      concept('root', null),
+      concept('mid', 'root'),
+      concept('leaf', 'mid'),
+      concept('other', null),
+      concept('both', null),
+      concept('fresh', null, true)
+    ],
+    questions: [question('q1', 'A', ['leaf', 'both']), question('q2', 'B', ['other', 'both'])]
+  } as unknown as Snapshot
+  const { concepts, shared } = projectConcepts(data, 'A')
+  assert.deepEqual(
+    concepts.map((c) => c.id),
+    ['root', 'mid', 'leaf', 'both', 'fresh']
+  )
+  assert.deepEqual([...shared], ['both'])
+  // The question picker lists the project's concepts first, then the rest of the workspace.
+  assert.deepEqual(
+    linkableConcepts(data, 'A').map((c) => c.id),
+    ['root', 'mid', 'leaf', 'both', 'fresh', 'other']
+  )
+})
+
+test('relation overlay: only the selected concept’s active relations, pending marked', () => {
+  const relation = (id: string, from: string, to: string, approved: boolean, invalidatedAt: number | null) =>
+    ({ id, from, to, type: 'uses', approved, invalidatedAt }) as Snapshot['relations'][number]
+  const data = {
+    relations: [
+      relation('r1', 'a', 'b', true, null),
+      relation('r2', 'c', 'a', false, null),
+      relation('r3', 'a', 'd', true, 1),
+      relation('r4', 'b', 'c', true, null)
+    ]
+  } as unknown as Snapshot
+  assert.deepEqual(relationOverlay(data, null), [])
+  assert.deepEqual(relationOverlay(data, 'a'), [
+    { id: 'r1', source: 'c:a', target: 'c:b', label: '사용', pending: false },
+    { id: 'r2', source: 'c:c', target: 'c:a', label: '사용', pending: true }
+  ])
 })
