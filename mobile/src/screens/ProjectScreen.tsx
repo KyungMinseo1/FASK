@@ -189,13 +189,7 @@ export default function ProjectScreen(): React.JSX.Element {
       )}
     </section>
   )
-  const detail = questionId ? (
-    <Detail key={questionId} projectId={projectId} questionId={questionId} />
-  ) : (
-    <div className="empty-state">
-      <h2>{t('질문을 선택하세요')}</h2>
-    </div>
-  )
+  const detail = questionId ? <Detail key={questionId} projectId={projectId} questionId={questionId} /> : null
   const fab = (
     <div className="mobile-fab">
       <button className="primary" onClick={() => navigate(`/p/${projectId}/new`)}>
@@ -214,7 +208,7 @@ export default function ProjectScreen(): React.JSX.Element {
         {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} />}
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
-      <main className={wide ? 'mobile-body project-split' : 'mobile-body'}>
+      <main className={wide && questionId ? 'mobile-body project-split' : 'mobile-body'}>
         {wide ? (
           <>
             {/* The button lives in the list column so the detail pane reaches its bottom edge. */}
@@ -636,7 +630,7 @@ function Detail({ projectId, questionId }: { projectId: string; questionId: stri
         question={question}
         concepts={data.concepts.filter((c) => c.projectId === projectId)}
         run={run}
-        onClose={() => navigate(-1)}
+        onClose={() => navigate(`/p/${projectId}`, { replace: true })}
         onCreateConcept={async (name) => {
           const id = await api.create('concept', name, projectId)
           await api.updateQuestion(question.id, {
