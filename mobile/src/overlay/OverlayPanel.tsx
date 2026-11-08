@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Snapshot } from '@desktop/preload/personal'
 import { answerJustCompleted, questionHeading } from '@desktop/shared/questions'
 import { useApi } from '@desktop/renderer/src/personal/api'
@@ -6,6 +6,7 @@ import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import ProjectPicker from '@desktop/renderer/src/personal/ProjectPicker'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
+import { linkableConcepts, projectConcepts } from '@desktop/renderer/src/personal/questionTree'
 import TurnNav from '@desktop/renderer/src/personal/TurnNav'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
@@ -105,6 +106,17 @@ export default function OverlayPanel({
     setBlocked(problem)
     void bridge.call('stop').catch(() => {})
   }, [data, boot.profileId, projectId, questionId, bridge])
+
+  // Leaving a question lets the PC extract its concepts right away instead of after the delay.
+  useEffect(() => {
+    if (!questionId) return
+    void api.focusQuestion(questionId).catch(() => {})
+    return () => void api.focusQuestion(null).catch(() => {})
+  }, [api, questionId])
+  const known = useMemo(
+    () => ({ concepts: linkableConcepts(data, projectId), shared: projectConcepts(data, projectId).shared }),
+    [data, projectId]
+  )
 
   // The Composer's autofocused input otherwise keeps the panel scrolled past the opened list.
   const head = useRef<HTMLDivElement>(null)
@@ -305,7 +317,8 @@ export default function OverlayPanel({
             </summary>
             <QuestionDetail
               question={question}
-              concepts={data.concepts.filter((c) => c.projectId === projectId)}
+              concepts={known.concepts}
+              shared={known.shared}
               run={run}
               earlierOnly
               onCreateConcept={async (name) => {

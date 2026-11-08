@@ -6,6 +6,8 @@ import type {
   KnowledgeApi,
   Snapshot,
   StreamEvent,
+  TidyProposal,
+  TidyResult,
   TurnState
 } from '@desktop/preload/personal'
 import type { SnapshotCache } from './cache'
@@ -131,7 +133,11 @@ const FAILOVER_SAFE: ReadonlySet<string> = new Set([
   'update-question',
   'rename',
   'clear-attachment',
-  'edit-concept'
+  'edit-concept',
+  'edit-concept-info',
+  'set-relation',
+  'focus-question',
+  'tidy-plan'
 ])
 const RETRY_MS = [1000, 2000, 5000, 10000]
 
@@ -415,6 +421,14 @@ export function createHubClient<P extends HubIdentity>(
     editConcept: async (id, name, parentId) =>
       void (await rpc('edit-concept', [id, name, parentId])),
     mergeConcept: async (source, target) => void (await rpc('merge-concept', [source, target])),
+    editConceptInfo: async (id, patch) => void (await rpc('edit-concept-info', [id, patch])),
+    setRelation: async (id, action) => void (await rpc('set-relation', [id, action])),
+    focusQuestion: async (questionId) => void (await rpc('focus-question', [questionId])),
+    tidyPlan: (workspaceId) =>
+      rpc('tidy-plan', [workspaceId]) as Promise<{ candidates: number; estimatedTokens: number }>,
+    tidyPreview: (workspaceId) => rpc('tidy-preview', [workspaceId]) as Promise<TidyProposal>,
+    tidyApply: (workspaceId, proposalId, accepted) =>
+      rpc('tidy-apply', [workspaceId, proposalId, accepted]) as Promise<TidyResult>,
     ask: (input) => rpc('ask', [input]) as Promise<AskResult>,
     cancel: async (id) => void (await rpc('cancel', [id])),
     turnState: (questionId, turnId) =>

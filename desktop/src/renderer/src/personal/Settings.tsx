@@ -148,6 +148,15 @@ export default function Settings({
                   placeholder={t('기본 모델 사용')}
                 />
               </label>
+              <label>
+                {t('개념 정리 모델')}
+                <input
+                  list="local-models"
+                  value={draft.organizeModel}
+                  onChange={(e) => change('organizeModel', e.target.value)}
+                  placeholder={t('빠른 모델 사용')}
+                />
+              </label>
             </div>
             <small>
               {t(
@@ -182,7 +191,18 @@ export default function Settings({
                 checked={draft.organize}
                 onChange={(e) => change('organize', e.target.checked)}
               />
-              {t('답변 후 기존 개념 연결과 새 개념 제안 (추가 모델 요청)')}
+              {t('답변 후 개념과 관계를 자동 추출 (추가 모델 요청)')}
+            </label>
+            <label>
+              {t('추출 대기 시간 (초)')}
+              <input
+                type="number"
+                min={0}
+                max={3600}
+                value={draft.extractDelaySec}
+                disabled={!draft.organize}
+                onChange={(e) => change('extractDelaySec', Math.max(0, Math.round(Number(e.target.value) || 0)))}
+              />
             </label>
             <label className="check">
               <input
@@ -192,13 +212,28 @@ export default function Settings({
               />
               {t('새 질문 제목 자동 생성, 질문과 이미지와 첨부 기반 (추가 모델 요청)')}
             </label>
-            <label className="check">
+            <label>
+              {t('질문에 참고할 지식')}
+              <select
+                value={draft.memoryScope}
+                onChange={(e) => change('memoryScope', e.target.value as LocalSettings['memoryScope'])}
+              >
+                <option value="off">{t('참고하지 않음')}</option>
+                <option value="project">{t('현재 프로젝트')}</option>
+                <option value="workspace">{t('워크스페이스 전체')}</option>
+              </select>
+            </label>
+            <label>
+              {t('참고 지식 최대 토큰')}
               <input
-                type="checkbox"
-                checked={draft.memory}
-                onChange={(e) => change('memory', e.target.checked)}
+                type="number"
+                min={100}
+                max={20000}
+                step={100}
+                value={draft.memoryTokens}
+                disabled={draft.memoryScope === 'off'}
+                onChange={(e) => change('memoryTokens', Math.max(0, Math.round(Number(e.target.value) || 0)))}
               />
-              {t('중요 표시한 프로젝트 기록을 다음 질문에 참고')}
             </label>
           </section>
           <section>

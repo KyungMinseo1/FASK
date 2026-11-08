@@ -50,6 +50,19 @@ export function checkPeerCall(own: (kind: string, id: string) => unknown, name: 
     case 'merge-concept':
       owned('concept', a)
       return owned('concept', b)
+    case 'edit-concept-info':
+      return owned('concept', a)
+    case 'set-relation':
+      return owned('relation', a)
+    case 'focus-question':
+      if (a === null) return
+      return owned('question', a)
+    case 'tidy-plan':
+    case 'tidy-preview':
+    case 'tidy-apply':
+      return owned('workspace', a)
+    case 'export':
+      return owned('project', a)
     case 'attachment':
     case 'cancel':
     case 'refine':
@@ -73,7 +86,7 @@ export interface RemotePeer {
   rpc(name: string, args: unknown[], options?: { retry?: boolean }): Promise<unknown>
 }
 
-type Part = Pick<Snapshot, 'workspaces' | 'projects' | 'concepts' | 'questions'> & { peer: RemotePeer }
+type Part = Pick<Snapshot, 'workspaces' | 'projects' | 'concepts' | 'relations' | 'questions'> & { peer: RemotePeer }
 
 // Which argument names the record a call acts on.
 const ROUTE_KEY: Record<string, (args: unknown[]) => unknown> = {
@@ -85,6 +98,12 @@ const ROUTE_KEY: Record<string, (args: unknown[]) => unknown> = {
   'edit-concept': (a) => a[0],
   attachment: (a) => a[0],
   'merge-concept': (a) => a[0],
+  'edit-concept-info': (a) => a[0],
+  'set-relation': (a) => a[0],
+  'focus-question': (a) => a[0],
+  'tidy-plan': (a) => a[0],
+  'tidy-preview': (a) => a[0],
+  'tidy-apply': (a) => a[0],
   'clear-attachment': (a) => a[0],
   'turn-state': (a) => a[0],
   ask: (a) => (a[0] as Partial<AskInput> | null)?.questionId ?? (a[0] as Partial<AskInput> | null)?.projectId,
@@ -120,12 +139,15 @@ export class RemoteRouter {
       for (const w of s.workspaces) {
         const projects = s.projects.filter((p) => p.workspaceId === w.id)
         const ids = new Set(projects.map((p) => p.id))
-        const concepts = s.concepts.filter((c) => ids.has(c.projectId))
+        const concepts = s.concepts.filter((c) => c.workspaceId === w.id)
+        // A linked PC may run an older build whose snapshot has no relations.
+        const relations = (s.relations ?? []).filter((r) => r.workspaceId === w.id)
         const questions = s.questions.filter((q) => ids.has(q.projectId))
         const all = [
           w.id,
           ...projects.map((p) => p.id),
           ...concepts.map((c) => c.id),
+          ...relations.map((r) => r.id),
           ...questions.flatMap((q) => [q.id, ...questionImages(q)])
         ]
         if (all.some((id) => owners.has(id) || this.localHas(id))) {
@@ -137,7 +159,7 @@ export class RemoteRouter {
           continue
         }
         for (const id of all) owners.set(id, peer.link.id)
-        parts.push({ peer, workspaces: [w], projects, concepts, questions })
+        parts.push({ peer, workspaces: [w], projects, concepts, relations, questions })
       }
     }
     this.owners = owners
@@ -149,12 +171,14 @@ export class RemoteRouter {
     out.workspaces = [...local.workspaces]
     out.projects = [...local.projects]
     out.concepts = [...local.concepts]
+    out.relations = [...local.relations]
     out.questions = [...local.questions]
     for (const part of this.parts) {
       const remote = { peerId: part.peer.link.id, name: part.peer.link.name, status: part.peer.status }
       out.workspaces.push(...part.workspaces.map((w) => ({ ...w, remote })))
       out.projects.push(...part.projects)
       out.concepts.push(...part.concepts)
+      out.relations.push(...part.relations)
       out.questions.push(...part.questions)
     }
     return out

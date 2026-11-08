@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
+import type { Reference } from '../../../preload/personal'
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
@@ -8,6 +9,7 @@ import ProjectPicker from './ProjectPicker'
 import { Icon } from './ToolbarIcons'
 import { MarkF } from './Wordmark'
 import { errorText, useSnapshot } from './common'
+import { linkableConcepts, projectConcepts } from './questionTree'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
 import { answerJustCompleted, questionHeading } from '../../../shared/questions'
@@ -106,6 +108,23 @@ export default function Overlay(): React.JSX.Element {
   const [resetCount, setResetCount] = useState(0)
   const recent = data?.questions.find((q) => q.id === data.recentQuestions?.[projectId])
   const questionId = recent?.id
+  useEffect(() => {
+    void window.fask.focusQuestion(questionId ?? null).catch(() => {})
+  }, [questionId])
+  const known = useMemo(
+    () =>
+      data
+        ? { concepts: linkableConcepts(data, projectId), shared: projectConcepts(data, projectId).shared }
+        : null,
+    [data, projectId]
+  )
+  // The panel has no graph: a concept opens the dashboard, a question becomes the panel conversation.
+  const openReference = (ref: Reference): void => {
+    const target = ref.kind === 'question' ? data?.questions.find((q) => q.id === ref.id) : undefined
+    void (target ? window.fask.openOverlay(target.projectId, target.id) : window.fask.showDashboard()).catch(
+      (e) => setNotice(errorText(e))
+    )
+  }
   const scrollKey = `fask:panel-scroll:${profileId}`
   const conversationKey = `${projectId}:${questionId ?? ''}`
   // Earlier turns start folded in a newly opened overlay and on every conversation change; folding
@@ -697,13 +716,15 @@ export default function Overlay(): React.JSX.Element {
                 </summary>
                 <QuestionDetail
                   question={recent}
-                  concepts={data.concepts.filter((c) => c.projectId === projectId)}
+                  concepts={known?.concepts ?? []}
+                  shared={known?.shared}
+                  onReference={openReference}
                   run={run}
                   earlierOnly
                   onCreateConcept={async (name) => {
                     const id = await window.fask.create('concept', name, projectId)
                     await window.fask.updateQuestion(recent.id, {
-                      conceptIds: [...recent.conceptIds, id],
+                      conceptIds: [...new Set([...recent.conceptIds, id])],
                       suggestions: recent.suggestions.filter((s) => s !== name)
                     })
                   }}
@@ -728,6 +749,7 @@ export default function Overlay(): React.JSX.Element {
                 settings={data.settings}
                 questionId={questionId}
                 recentQuestion={recent}
+                onReference={openReference}
                 hasInk={strokes.length > 0}
                 onCapture={() => {
                   captured.current = true

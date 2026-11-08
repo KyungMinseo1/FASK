@@ -242,6 +242,9 @@ export function mergeLegacyQuestions(records: LegacyQuestion[]): Question[] {
         revision: 0
       })),
       conceptIds: [...new Set(sorted.flatMap((r) => r.conceptIds))],
+      conceptTurns: {},
+      // Existing data is not auto re-extracted; re-organizing it is the user-triggered tidy.
+      extractedTurns: sorted.length,
       suggestions: [...new Set(sorted.flatMap((r) => r.suggestions))].slice(0, 10),
       memo: sorted
         .map((r) => r.memo)

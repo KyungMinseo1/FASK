@@ -13,6 +13,7 @@ import {
   BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
+  getViewportForBounds,
   useReactFlow,
   useNodesInitialized,
   type EdgeTypes,
@@ -20,11 +21,12 @@ import {
   type NodeMouseHandler,
   type NodeTypes,
   type OnNodeDrag,
+  type Edge,
   type XYPosition
 } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
-import { layoutMindMap, type MindFlowNode } from './layout'
-import MindNodeView, { CurveEdge } from './MindNodeView'
+import { layoutMindMap, type GraphHighlight, type MindFlowNode } from './layout'
+import MindNodeView, { CurveEdge, DIMMED_OPACITY } from './MindNodeView'
 import { useT } from '../../../../shared/i18n/react'
 
 export interface MindMapProps {
@@ -43,6 +45,13 @@ export interface MindMapProps {
   actions?: ReactNode
   canMove?: (node: MindNode) => boolean
   canDrop?: (node: MindNode, target: MindNode) => boolean
+  /**
+   * Emphasizes the focus node and the related ones (with their tags), dims the rest and expands
+   * the branches that hide any of them.
+   */
+  highlight?: GraphHighlight
+  /** When set, automatic fits frame these node ids (those currently visible) instead of the whole graph. */
+  focusIds?: string[]
 }
 
 const nodeTypes: NodeTypes = { mind: MindNodeView }
@@ -137,10 +146,12 @@ function MindMapInner({
   canMove,
   canDrop,
   allowCopy = true,
-  actions
+  actions,
+  highlight,
+  focusIds
 }: MindMapProps): React.JSX.Element {
   const t = useT()
-  const { fitView, zoomIn, zoomOut } = useReactFlow()
+  const { fitView, setViewport, zoomIn, zoomOut } = useReactFlow()
   const nodesInitialized = useNodesInitialized()
   // Only the root and its direct children are visible initially (max-depth = 1).
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([root.id]))
@@ -168,6 +179,38 @@ function MindMapInner({
     [root, expanded, selectedId]
   )
 
+  // Highlighted node ids (focus + related); everything else is dimmed.
+  const lit = useMemo(
+    () => (highlight ? new Set([highlight.focus, ...Object.keys(highlight.related)]) : null),
+    [highlight]
+  )
+  const litKey = lit ? [...lit].join('\n') : ''
+  const rootRef = useRef(root)
+  rootRef.current = root
+  // A new highlight opens every collapsed branch that hides one of its nodes.
+  useEffect(() => {
+    if (!litKey) return
+    const wanted = new Set(litKey.split('\n'))
+    const open = new Set<string>()
+    const walk = (n: MindNode, path: string[]): void => {
+      if (wanted.has(n.id)) for (const id of path) open.add(id)
+      for (const child of n.children) walk(child, [...path, n.id])
+    }
+    walk(rootRef.current, [])
+    setExpanded((s) => ([...open].every((id) => s.has(id)) ? s : new Set([...s, ...open])))
+  }, [litKey])
+
+  // An edge stays bright when it leads into a highlighted node.
+  const edges = useMemo(
+    (): Edge[] =>
+      lit
+        ? layout.edges.map((e) =>
+            lit.has(e.target) ? e : { ...e, style: { ...e.style, opacity: DIMMED_OPACITY, transition: 'opacity 0.2s' } }
+          )
+        : layout.edges,
+    [layout.edges, lit]
+  )
+
   // Only a long-pressed node follows the pointer; other drags are ignored.
   const activeDrag = armed && drag?.id === armed ? drag : null
   const activeDropId = activeDrag ? dropId : null
@@ -183,10 +226,13 @@ function MindMapInner({
         draggable: !!onMoveNode && n.data.depth > 0 && (canMove?.(n.data.mind) ?? true),
         data: {
           ...n.data,
-          marked: markQuestions && n.data.depth > 0 && !!n.data.mind.hasQuestions
+          marked: markQuestions && n.data.depth > 0 && !!n.data.mind.hasQuestions,
+          selected: n.data.selected || n.id === highlight?.focus,
+          dimmed: !!lit && !lit.has(n.id),
+          tags: highlight?.related[n.id]
         }
       })),
-    [layout.nodes, onMoveNode, canMove, markQuestions]
+    [layout.nodes, onMoveNode, canMove, markQuestions, highlight, lit]
   )
 
   // During a drag only the dragged node and the drop target get new objects; the rest keep
@@ -207,6 +253,41 @@ function MindMapInner({
     [baseNodes, armed, activeDrag, activeDropId]
   )
 
+  const focusKey = focusIds?.join('\n') ?? ''
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * Frames the visible focus nodes, or the whole graph when there are none.
+   * The focus frame is computed from the layout and the live container size and applied directly:
+   * a queued fitView waits for React Flow to re-measure nodes and can land late or not at all.
+   */
+  const fitTarget = useCallback(
+    (duration: number) => {
+      const focus = new Set(focusKey ? focusKey.split('\n') : [])
+      const shown = layout.nodes.filter((n) => focus.has(n.id))
+      const flow = boxRef.current?.closest('.react-flow')
+      if (!shown.length || !flow?.clientWidth || !flow.clientHeight) {
+        void fitView({ padding: 0.15, duration, maxZoom: 1.2 })
+        return
+      }
+      const x = Math.min(...shown.map((n) => n.position.x))
+      const y = Math.min(...shown.map((n) => n.position.y))
+      const right = Math.max(...shown.map((n) => n.position.x + n.data.width))
+      const bottom = Math.max(...shown.map((n) => n.position.y + n.data.height))
+      const viewport = getViewportForBounds(
+        { x, y, width: right - x, height: bottom - y },
+        flow.clientWidth,
+        flow.clientHeight,
+        0.1,
+        1.2,
+        0.25
+      )
+      void setViewport(viewport, { duration })
+    },
+    [fitView, setViewport, focusKey, layout.nodes]
+  )
+  const fitTargetRef = useRef(fitTarget)
+  fitTargetRef.current = fitTarget
+
   const fittedExpansion = useRef<Set<string> | null>(null)
   // Fit only on first render and when the expansion state changes — not on live data updates.
   useEffect(() => {
@@ -218,10 +299,23 @@ function MindMapInner({
     }
     const timer = setTimeout(() => {
       fittedExpansion.current = expanded
-      void fitView({ padding: 0.15, duration: 400, maxZoom: 1.2 })
+      fitTargetRef.current(400)
     }, 50)
     return () => clearTimeout(timer)
-  }, [expanded, fitView, nodesInitialized, armed])
+  }, [expanded, nodesInitialized, armed])
+
+  // A new focus set reframes after the container settles (the host may shrink or scroll it);
+  // the second pass catches a resize that landed after the first. The focus frame uses layout
+  // sizes, so it needs no node measurement to have finished.
+  useEffect(() => {
+    if (!focusKey) return
+    const first = setTimeout(() => fitTargetRef.current(300), 150)
+    const settled = setTimeout(() => fitTargetRef.current(300), 600)
+    return () => {
+      clearTimeout(first)
+      clearTimeout(settled)
+    }
+  }, [focusKey])
 
   const onNodeClick: NodeMouseHandler<MindFlowNode> = useCallback(
     (_event, node) => {
@@ -295,24 +389,31 @@ function MindMapInner({
   }, [activeDropId, layout.nodes, expanded])
 
   // When the box resizes (e.g. the question panel opens beside it), refit into the new area.
-  const boxRef = useRef<HTMLDivElement | null>(null)
+  // With a focus set, height changes count too, so the focus stays framed in the visible area.
+  const focusedRef = useRef(false)
+  focusedRef.current = !!focusKey
   useEffect(() => {
     const box = boxRef.current?.closest('.mind-map-box')
     if (!box) return
     let timer = 0
-    let last = box.clientWidth
+    let lastWidth = box.clientWidth
+    let lastHeight = box.clientHeight
     const observer = new ResizeObserver(() => {
-      if (Math.abs(box.clientWidth - last) < 8) return
-      last = box.clientWidth
+      const widthMoved = Math.abs(box.clientWidth - lastWidth) >= 8
+      const heightMoved = focusedRef.current && Math.abs(box.clientHeight - lastHeight) >= 2
+      if (!widthMoved && !heightMoved) return
+      lastWidth = box.clientWidth
+      lastHeight = box.clientHeight
       clearTimeout(timer)
-      timer = window.setTimeout(() => void fitView({ padding: 0.15, duration: 300, maxZoom: 1.2 }), 80)
+      // Long enough for React Flow's own observer to store the new size first.
+      timer = window.setTimeout(() => fitTargetRef.current(300), 120)
     })
     observer.observe(box)
     return () => {
       observer.disconnect()
       clearTimeout(timer)
     }
-  }, [fitView])
+  }, [])
 
   const [dockOpen, setDockOpen] = useState(false)
   const [full, setFull] = useState(false)
@@ -352,7 +453,7 @@ function MindMapInner({
       fitView
       fitViewOptions={{ padding: 0.15, maxZoom: 1.2 }}
       nodes={nodes}
-      edges={layout.edges}
+      edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       onNodeClick={onNodeClick}

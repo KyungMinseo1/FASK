@@ -1307,24 +1307,69 @@ button.memo-saved:disabled {
   font-size: 12px;
   margin-top: 8px;
 }
-.concept-checks {
+.concept-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-}
-.concept-checks label {
-  display: flex;
   align-items: center;
   gap: 6px;
+}
+.concept-chip {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--r-pill);
-  padding: 3px 10px;
-  font-size: 12.5px;
   color: var(--tag);
-  font-weight: 600;
 }
-.concept-checks input {
-  accent-color: var(--primary);
+.question-detail .concept-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  border-radius: var(--r-pill);
+}
+.question-detail .concept-chip .concept-chip-name {
+  padding: 3px 4px 3px 10px;
+}
+.question-detail .concept-chip .concept-chip-name:disabled {
+  background: transparent;
+  color: inherit;
+  cursor: default;
+}
+.question-detail .concept-chip .concept-chip-remove {
+  padding: 3px 8px 3px 4px;
+  color: var(--ink-muted);
+}
+.question-detail .concept-chip .concept-chip-remove:hover {
+  color: var(--ink);
+}
+.question-detail .concept-link-add {
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-style: dashed;
+  border-radius: var(--r-pill);
+}
+.concept-picker {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.concept-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.question-detail .concept-picker li button {
+  width: 100%;
+  justify-content: flex-start;
+  border: 0;
+  padding: 6px 10px;
+  font-size: 13px;
 }
 .suggestions {
   display: flex;
@@ -3249,6 +3294,22 @@ button.memo-saved:disabled {
 .mind-chev.collapsed {
   transform: rotate(-90deg);
 }
+/* Relation tag of a highlighted concept, notched onto the pill's top edge (fits the 14px row gap). */
+.mind-tag {
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  z-index: 1;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .mind-map-box.full,
 .mind-map-box:fullscreen {
   position: fixed;
@@ -3437,4 +3498,347 @@ button.memo-saved:disabled {
 .graph-dock-toggle,
 .graph-dock.open .graph-dock-items {
   pointer-events: auto;
+}
+
+/* ---------- concept graph: shared badge, tidy, concept panel, references ---------- */
+.shared-badge {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.graph-stage {
+  position: relative;
+}
+.tidy-bar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.tidy-bar > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--ink);
+}
+.fask-app .tidy-bar button {
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+.fask-app .tidy-bar > span button {
+  padding: 2px;
+  border: 0;
+  background: transparent;
+}
+/* Tidy review: estimate header, scrolling grouped change list, sticky actions. */
+.tidy-dialog {
+  width: 560px;
+  max-width: 100%;
+  max-height: min(720px, calc(88vh / var(--ui-zoom, 1)));
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.tidy-dialog > header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 22px 24px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.tidy-dialog > header h2 {
+  margin: 0;
+}
+.tidy-dialog > header span {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+}
+.tidy-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 24px;
+}
+.tidy-dialog .tidy-body p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.tidy-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+}
+.tidy-spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid var(--hairline-strong);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: tidy-spin 0.8s linear infinite;
+}
+@keyframes tidy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tidy-spinner {
+    animation: none;
+    border-color: var(--primary);
+  }
+}
+.tidy-group + .tidy-group {
+  margin-top: 16px;
+}
+.tidy-group h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.tidy-group h3 span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+.tidy-change {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.tidy-change + .tidy-change {
+  margin-top: 6px;
+}
+/* .create-modal input sizes text fields (100% wide, 40px tall); checkboxes keep their own size. */
+.create-modal .tidy-change input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--primary);
+}
+.tidy-change > :not(input) {
+  flex: 1;
+  min-width: 0;
+}
+.tidy-change.off {
+  color: var(--ink-muted);
+}
+.tidy-change ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+}
+.tidy-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--hairline);
+}
+.tidy-dialog .tidy-select {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+}
+.tidy-dialog .tidy-select button {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+.concept-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+}
+.concept-panel textarea {
+  min-height: 72px;
+}
+.concept-questions,
+.relation-group ul {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fask-app .concept-questions button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  font-weight: 600;
+}
+.concept-questions small,
+.concept-empty,
+.relation-group > small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.relation-group li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.relation-group li > span {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.relation-group li.pending > span {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+.fask-app .relation-group li button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+/* Ego graph of approved relations above the relation list (G1 pills on the graph board).
+   Laid out for the box's inner width, so the SVG draws at 1:1. */
+.ego-graph {
+  margin: 0 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  background: var(--graph-board);
+  overflow: hidden;
+}
+.ego-graph svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ego-graph text {
+  text-anchor: middle;
+  dominant-baseline: central;
+  user-select: none;
+}
+.ego-node rect {
+  fill: var(--graph-node);
+  stroke: var(--graph-node-line);
+  stroke-width: 1.2;
+}
+.ego-node text {
+  fill: var(--ink);
+  font-weight: 650;
+}
+.ego-node rect.ego-centre {
+  fill: var(--primary);
+  stroke: none;
+}
+.ego-node rect.ego-centre + text {
+  fill: var(--on-primary);
+  font-weight: 800;
+}
+.ego-node.link {
+  cursor: pointer;
+  outline: none;
+}
+.ego-node.link:hover rect,
+.ego-node.link:focus-visible rect {
+  stroke: var(--focus-ring);
+  stroke-width: 2;
+}
+.ego-edge line {
+  stroke: var(--graph-edge);
+  stroke-width: 1.6;
+}
+.ego-edge polygon {
+  fill: var(--graph-edge);
+}
+.ego-edge rect {
+  fill: var(--graph-board);
+  stroke: var(--hairline-strong);
+  stroke-width: 1;
+}
+.ego-edge text {
+  fill: var(--ink-muted);
+  font-weight: 700;
+}
+.concept-turn-nav {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  font-size: 12.5px;
+}
+.concept-turn-nav span {
+  flex: 1;
+  color: var(--ink-muted);
+}
+.fask-app .concept-turn-nav button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+/* The scrolled thread's ↑/☆/✕ float (.turn-nav-top) sits over the detail's top-right corner. */
+.question-detail .concept-turn-nav {
+  margin-right: 128px;
+}
+.detail-turn.concept-focus {
+  border-left: 3px solid var(--primary);
+  padding-left: 12px;
+  scroll-margin-top: 72px;
+}
+.reference-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+.reference-chips small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  margin-right: 4px;
+}
+.reference-chips .reference-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 500;
 }

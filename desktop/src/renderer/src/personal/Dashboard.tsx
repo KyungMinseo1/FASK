@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import type { ShortcutInfo } from '../../../preload/personal'
+import type { Reference, ShortcutInfo } from '../../../preload/personal'
 import {
   filterQuestions,
   lastTurn,
@@ -15,11 +15,13 @@ import Composer from './Composer'
 import MarkdownAnswer from './MarkdownAnswer'
 import Pager from './Pager'
 import QuestionDetail from './QuestionDetail'
+import ConceptPanel from './ConceptPanel'
+import TidyBar from './TidyBar'
 import Settings from './Settings'
 import { Icon } from './ToolbarIcons'
 import { Wordmark } from './Wordmark'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
-import { questionTree } from './questionTree'
+import { linkableConcepts, projectConcepts, questionTree, relationHighlight } from './questionTree'
 import { canDropGraphNode, canMoveGraphNode, moveGraphNode } from './graphMove'
 import { useT } from '../../../shared/i18n/react'
 import { i18n } from '../../../shared/i18n'
@@ -67,7 +69,15 @@ export default function Dashboard(): React.JSX.Element {
       return next
     })
   const setWorkspaceId = (id: string): void => setSearch({ workspace: id, scope: 'workspace' })
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedIdState] = useState('')
+  // Concept the open question was reached from (graph leaf or concept panel), and the open concept.
+  const [focusConceptId, setFocusConceptId] = useState<string | null>(null)
+  const [conceptId, setConceptId] = useState('')
+  const setSelectedId = (id: string, fromConcept: string | null = null): void => {
+    setSelectedIdState(id)
+    setFocusConceptId(fromConcept)
+    setConceptId('')
+  }
   const [shortcut, setShortcut] = useState<ShortcutInfo | null>(null)
   useEffect(() => {
     void window.fask.shortcutInfo().then(setShortcut)
@@ -77,7 +87,8 @@ export default function Dashboard(): React.JSX.Element {
     [filter, setFilter] = useState('all')
   const [settingsOpen, setSettingsOpen] = useState(false),
     [compose, setCompose] = useState(false),
-    [notice, setNotice] = useState('')
+    [notice, setNotice] = useState(''),
+    [exportImages, setExportImages] = useState<boolean | null>(null)
   const [create, setCreate] = useState<{
       kind: ItemKind
       parent?: string
@@ -117,7 +128,44 @@ export default function Dashboard(): React.JSX.Element {
     [data, project?.id, filtered]
   )
   const selected = questions.find((q) => q.id === selectedId)
-  const concepts = data?.concepts.filter((c) => c.projectId === project?.id) ?? []
+  const { concepts, shared } = useMemo(
+    () => (data && project ? projectConcepts(data, project.id) : { concepts: [], shared: new Set<string>() }),
+    [data, project?.id]
+  )
+  const linkable = useMemo(
+    () => (data && project ? linkableConcepts(data, project.id) : []),
+    [data, project?.id]
+  )
+  const openConcept = conceptId ? data?.concepts.find((c) => c.id === conceptId) : undefined
+  // Only while a concept's panel is open: it and its related concepts stand out in the graph.
+  const highlight = useMemo(
+    () => (data && openConcept ? relationHighlight(data, openConcept.id) : undefined),
+    [data, openConcept]
+  )
+  // The selected concept and its related concepts; MindMap frames those that are visible.
+  const focusIds = useMemo(
+    () => (highlight ? [highlight.focus, ...Object.keys(highlight.related)] : undefined),
+    [highlight]
+  )
+  useEffect(() => {
+    void window.fask.focusQuestion(selected?.id ?? null).catch(() => {})
+  }, [selected?.id])
+  const openReference = (ref: Reference): void => {
+    if (ref.kind === 'concept') {
+      setSelectedId('')
+      setConceptId(ref.id)
+      return
+    }
+    const target = data?.questions.find((q) => q.id === ref.id)
+    if (!target) return
+    if (target.projectId !== project?.id) {
+      const owner = data?.projects.find((p) => p.id === target.projectId)
+      if (!owner) return
+      setSearch({ scope: 'project', workspace: owner.workspaceId, project: owner.id })
+    }
+    setCompose(false)
+    setSelectedId(target.id)
+  }
   const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
@@ -408,10 +456,7 @@ export default function Dashboard(): React.JSX.Element {
           <div className="button-row">
             {scope === 'project' ? (
               <>
-                <button
-                  disabled={!project}
-                  onClick={() => void run(() => window.fask.exportContext(project!.id))}
-                >
+                <button disabled={!project} onClick={() => setExportImages(false)}>
                   <Icon name="export" />
                   {t('기억 내보내기')}
                 </button>
@@ -587,13 +632,16 @@ export default function Dashboard(): React.JSX.Element {
               <span>{t('{{n}}개 기록', { n: filtered.length })}</span>
             </div>
             )}
-            <div className={`knowledge-area ${selected ? 'has-detail' : ''}`}>
+            <div className={`knowledge-area ${selected || openConcept ? 'has-detail' : ''}`}>
               <section className="records-panel">
                 {view === 'graph' && project && graphRoot ? (
                   <div className="graph-stage">
+                    {workspace && <TidyBar workspaceId={workspace.id} revision={data} disabled={locked} />}
                     <MindMap
                       key={project.id}
                       root={graphRoot}
+                      highlight={highlight}
+                      focusIds={focusIds}
                       height="100%"
                       actions={
                         !locked && (
@@ -621,7 +669,13 @@ export default function Dashboard(): React.JSX.Element {
                           openContext(event, 'project', project.id, project.name)
                       }}
                       onSelect={(node) => {
-                        if (node.id.startsWith('q:')) setSelectedId(node.id.split(':')[1])
+                        if (node.id.startsWith('q:')) {
+                          const [, id, parent] = node.id.split(':')
+                          setSelectedId(id, parent === 'unfiled' ? null : parent)
+                        } else if (node.id.startsWith('c:')) {
+                          setSelectedId('')
+                          setConceptId(node.id.slice(2))
+                        }
                       }}
                     />
                   </div>
@@ -630,9 +684,7 @@ export default function Dashboard(): React.JSX.Element {
                   <div className="records-scroll" ref={scrollRef}>
                   <div className={view === 'list' ? 'question-list compact' : 'question-list'}>
                     {paged.items.map((q, index) => {
-                      const tags = q.conceptIds
-                        .map((id) => concepts.find((c) => c.id === id)?.name)
-                        .filter((name): name is string => !!name)
+                      const tags = q.conceptIds.flatMap((id) => concepts.filter((c) => c.id === id))
                       return (
                         <div key={q.id}>
                           {view === 'timeline' &&
@@ -685,9 +737,12 @@ export default function Dashboard(): React.JSX.Element {
                             <div className="question-footer">
                               <span className="question-tags">
                                 {tags.length
-                                  ? tags.map((name, i) => (
-                                      <span key={i} className="concept-tag">
-                                        {name}
+                                  ? tags.map((c) => (
+                                      <span key={c.id} className="concept-tag">
+                                        {c.name}
+                                        {shared.has(c.id) && (
+                                          <span className="shared-badge">{t('공유')}</span>
+                                        )}
                                       </span>
                                     ))
                                   : t('미분류')}
@@ -738,17 +793,25 @@ export default function Dashboard(): React.JSX.Element {
                   </div>
                 )}
               </section>
-              {selected && project && (
+              {selected && project ? (
                 <QuestionDetail
                   key={selected.id}
                   question={selected}
-                  concepts={concepts}
+                  concepts={linkable}
+                  shared={shared}
+                  focusConceptId={focusConceptId}
+                  onReference={openReference}
                   run={run}
-                  onClose={() => setSelectedId('')}
+                  onClose={() => {
+                    // Reached from a concept: closing the question goes back to that concept.
+                    const back = focusConceptId
+                    setSelectedId('')
+                    if (back) setConceptId(back)
+                  }}
                   onCreateConcept={async (name) => {
                     const id = await window.fask.create('concept', name, project.id)
                     await window.fask.updateQuestion(selected.id, {
-                      conceptIds: [...selected.conceptIds, id],
+                      conceptIds: [...new Set([...selected.conceptIds, id])],
                       suggestions: selected.suggestions.filter((s) => s !== name)
                     })
                   }}
@@ -756,6 +819,20 @@ export default function Dashboard(): React.JSX.Element {
                     void run(() => window.fask.openOverlay(selected.projectId, selected.id))
                   }
                 />
+              ) : (
+                openConcept &&
+                project && (
+                  <ConceptPanel
+                    key={openConcept.id}
+                    data={data}
+                    conceptId={openConcept.id}
+                    projectId={project.id}
+                    run={run}
+                    onOpenQuestion={(id, from) => setSelectedId(id, from)}
+                    onOpenConcept={setConceptId}
+                    onClose={() => setConceptId('')}
+                  />
+                )
               )}
             </div>
           </>
@@ -925,6 +1002,45 @@ export default function Dashboard(): React.JSX.Element {
               </button>
               <button className="primary" disabled={!moveTarget}>
                 {t('이동')}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {exportImages !== null && project && (
+        <div className="modal-backdrop">
+          <form
+            className="create-modal"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const images = exportImages
+              void run(async () => {
+                await window.fask.export(project.id, { images })
+                setExportImages(null)
+              })
+            }}
+          >
+            <h2>{t('기억 내보내기')}</h2>
+            <p>
+              {t(
+                '질문, 개념, 관계를 zip 파일 하나로 내보냅니다. 다른 LLM이 읽을 안내(README)와 SKOS 온톨로지가 함께 들어갑니다.'
+              )}
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={exportImages}
+                onChange={(e) => setExportImages(e.target.checked)}
+              />
+              {t('이미지 포함 (파일이 커질 수 있음)')}
+            </label>
+            {notice && <p className="error">{notice}</p>}
+            <div className="button-row">
+              <button type="button" onClick={() => setExportImages(null)}>
+                {t('취소')}
+              </button>
+              <button className="primary" autoFocus>
+                {t('내보내기')}
               </button>
             </div>
           </form>

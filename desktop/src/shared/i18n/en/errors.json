@@ -84,6 +84,9 @@
   "다른 프로젝트로 이동할 수 없습니다.": "Can't move to another project.",
   "같은 프로젝트의 다른 개념을 선택해 주세요.": "Choose another concept in the same project.",
   "하위 개념으로 병합할 수 없습니다.": "Can't merge into a child concept.",
+  "주제는 상위 개념을 가질 수 없습니다.": "A topic can't have a parent concept.",
+  "상위 개념은 바로 위 단계여야 합니다(주제 > 개념 > 세부).": "The parent must be exactly one level up (topic > concept > detail).",
+  "하위 개념의 단계와 맞지 않습니다. 하위 개념을 먼저 옮겨 주세요.": "That level doesn't fit its child concepts. Move the child concepts first.",
   "모바일에서는 프로필을 변경할 수 없습니다.": "Profiles can't be changed from mobile.",
   "모바일에서는 개념만 만들 수 있습니다.": "Only concepts can be created from mobile.",
   "OS 키 저장소를 사용할 수 없습니다.": "The OS key store is unavailable.",
@@ -124,5 +127,9 @@
   "상대 PC 인증서가 바뀌었습니다.": "The other PC's certificate changed.",
   "Tailscale 주소(100.x 또는 *.ts.net)를 입력해 주세요.": "Enter a Tailscale address (100.x or *.ts.net).",
   "레거시 질문 형식이 잘못되었습니다.": "Invalid legacy question format.",
-  "개발용 브라우저에서는 코드 연결을 사용할 수 없습니다.": "Code pairing isn't available in the development browser."
+  "개발용 브라우저에서는 코드 연결을 사용할 수 없습니다.": "Code pairing isn't available in the development browser.",
+  "모델이 JSON을 반환하지 않았습니다.": "The model did not return JSON.",
+  "내보낼 파일이 너무 많습니다.": "Too many files to export.",
+  "내보낼 파일이 너무 큽니다.": "The export is too large.",
+  "정리 제안이 만료되었습니다. 정리 제안을 다시 확인해 주세요.": "This tidy proposal has expired. Review the tidy suggestions again."
 }

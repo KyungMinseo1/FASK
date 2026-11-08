@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Concept, Question, Turn } from '../../../preload/personal'
+import type { Concept, Question, Reference, Turn } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
 import TurnNav from './TurnNav'
+import ReferenceChips from './ReferenceChips'
 import { Icon } from './ToolbarIcons'
 import { useApi } from './api'
 import { loadAttachment } from './attachment-cache'
@@ -15,19 +16,32 @@ type Run = (fn: () => Promise<unknown>) => Promise<boolean>
 export default function QuestionDetail({
   question: q,
   concepts,
+  shared,
   run,
   onClose,
   onCreateConcept,
   onContinue,
+  focusConceptId,
+  onReference,
   earlierOnly = false
 }: {
   question: Question
+  /**
+   * Concepts the question can link, the project's graph concepts first and then the rest of the
+   * workspace; linked chips and the '+ 개념 연결' search come from this list.
+   */
   concepts: Concept[]
+  /** Concepts another project also links; marked '공유'. */
+  shared?: Set<string>
   run: Run
   /** Omitted where the host already has its own close control (desktop question panel). */
   onClose?: () => void
   onCreateConcept: (name: string) => Promise<void>
   onContinue?: () => void
+  /** Opened from a concept: scrolls to the turns where it appears, with 'n/m턴 · 다음'. */
+  focusConceptId?: string | null
+  /** Opens a "참고한 지식" chip; chips are hidden when omitted. */
+  onReference?: (ref: Reference) => void
   /**
    * Question panel history: shows only the turns before the last one (the Composer shows that)
    * and leaves the jump controls to the panel's own TurnNav.
@@ -41,6 +55,46 @@ export default function QuestionDetail({
   const memoTimer = useRef<number>(undefined)
   useEffect(() => () => clearTimeout(memoTimer.current), [])
   const memoDirty = memo !== q.memo
+  const shownTurns = earlierOnly ? q.turns.slice(0, -1) : q.turns
+  // A linked-concept chip clicked here overrides the host's focusConceptId until that prop changes.
+  const [picked, setPicked] = useState<{ from: string | null | undefined; id: string } | null>(null)
+  const focusId = picked && picked.from === focusConceptId ? picked.id : focusConceptId
+  // Turns where the focused concept appears; a concept without recorded turns points at the first.
+  const focusTurns = !focusId
+    ? []
+    : (() => {
+        const listed = (q.conceptTurns?.[focusId] ?? []).filter((id) => shownTurns.some((x) => x.id === id))
+        return listed.length ? listed : shownTurns.slice(0, 1).map((x) => x.id)
+      })()
+  // Position among focusTurns, remembered per focused concept so a new concept starts at its first
+  // turn; `tick` re-scrolls when the same chip is clicked again.
+  const [focusAt, setFocusAt] = useState({ concept: focusId, index: 0, tick: 0 })
+  const focusIndex = focusAt.concept === focusId ? focusAt.index : 0
+  const focusTurnId = focusTurns[Math.min(focusIndex, focusTurns.length - 1)]
+  const turnsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!focusTurnId) return
+    turnsRef.current
+      ?.querySelector(`[data-turn-id="${CSS.escape(focusTurnId)}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [focusTurnId, focusAt.tick])
+  const focusConcept = concepts.find((c) => c.id === focusId)
+  const linked = q.conceptIds.flatMap((id) => concepts.filter((c) => c.id === id))
+  const [picking, setPicking] = useState(false)
+  const [search, setSearch] = useState('')
+  const needle = search.trim().toLowerCase()
+  const matches = concepts
+    .filter(
+      (c) =>
+        !q.conceptIds.includes(c.id) &&
+        (!needle || [c.name, ...c.aliases].some((s) => s.toLowerCase().includes(needle)))
+    )
+    .slice(0, 8)
+  const link = (id: string): void => {
+    setPicking(false)
+    setSearch('')
+    void run(() => api.updateQuestion(q.id, { conceptIds: [...q.conceptIds, id] }))
+  }
   const saveMemo = async (): Promise<void> => {
     clearTimeout(memoTimer.current)
     setMemoState('saving')
@@ -74,30 +128,115 @@ export default function QuestionDetail({
         <span>{dateLabel(q.createdAt)}</span>
         <span>{t('대화 {{count}}개', { count: q.turns.length })}</span>
       </p>
-      {(earlierOnly ? q.turns.slice(0, -1) : q.turns).map((t, i) => (
-        <TurnView key={t.id} questionId={q.id} turn={t} index={i} run={run} />
-      ))}
-      <h3>{t('연결된 개념')}</h3>
-      <div className="concept-checks">
-        {concepts.map((c) => (
-          <label key={c.id}>
-            <input
-              type="checkbox"
-              checked={q.conceptIds.includes(c.id)}
-              onChange={(e) =>
-                void run(() =>
-                  api.updateQuestion(q.id, {
-                    conceptIds: e.target.checked
-                      ? [...q.conceptIds, c.id]
-                      : q.conceptIds.filter((id) => id !== c.id)
-                  })
-                )
+      {focusTurnId && (
+        <div className="concept-turn-nav" role="status">
+          {focusConcept && <b>{focusConcept.name}</b>}
+          <span>
+            {t('{{n}}/{{m}}턴', {
+              n: focusTurns.indexOf(focusTurnId) + 1,
+              m: focusTurns.length
+            })}
+          </span>
+          {focusTurns.length > 1 && (
+            <button
+              onClick={() =>
+                setFocusAt({ concept: focusId, index: (focusIndex + 1) % focusTurns.length, tick: focusAt.tick })
               }
-            />
-            {c.name}
-          </label>
+            >
+              {t('다음')}
+            </button>
+          )}
+        </div>
+      )}
+      <div ref={turnsRef}>
+        {shownTurns.map((t, i) => (
+          <TurnView
+            key={t.id}
+            questionId={q.id}
+            turn={t}
+            index={i}
+            run={run}
+            focused={t.id === focusTurnId}
+            onReference={onReference}
+          />
         ))}
       </div>
+      <h3>{t('연결된 개념')}</h3>
+      <div className="concept-chips">
+        {linked.map((c) => {
+          // 1-based numbers of the recorded turns; a concept without an entry shows none.
+          const turnIds = q.conceptTurns?.[c.id] ?? []
+          const numbers = turnIds.map((id) => q.turns.findIndex((x) => x.id === id) + 1).filter((n) => n > 0)
+          const target = turnIds.find((id) => shownTurns.some((x) => x.id === id))
+          return (
+            <span key={c.id} className="concept-chip">
+              <button
+                className="concept-chip-name"
+                disabled={!target}
+                title={numbers.length ? t('{{turns}}턴', { turns: numbers.join('·'), n: numbers.length }) : undefined}
+                onClick={() => {
+                  setPicked({ from: focusConceptId, id: c.id })
+                  setFocusAt({ concept: c.id, index: 0, tick: focusAt.tick + 1 })
+                }}
+              >
+                {c.name}
+                {shared?.has(c.id) && <span className="shared-badge">{t('공유')}</span>}
+              </button>
+              <button
+                className="concept-chip-remove"
+                aria-label={t('{{name}} 연결 해제', { name: c.name })}
+                onClick={() =>
+                  void run(() =>
+                    api.updateQuestion(q.id, { conceptIds: q.conceptIds.filter((id) => id !== c.id) })
+                  )
+                }
+              >
+                <Icon name="close" size={12} />
+              </button>
+            </span>
+          )
+        })}
+        {!linked.length && <span className="concept-empty">{t('연결된 개념이 없습니다.')}</span>}
+        <button
+          className="concept-link-add"
+          aria-expanded={picking}
+          onClick={() => {
+            setPicking((p) => !p)
+            setSearch('')
+          }}
+        >
+          <Icon name="plus" size={14} />
+          {t('개념 연결')}
+        </button>
+      </div>
+      {picking && (
+        <div className="concept-picker">
+          <input
+            autoFocus
+            value={search}
+            placeholder={t('개념 이름이나 동의어로 찾기')}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setPicking(false)
+              else if (e.key === 'Enter' && matches[0]) link(matches[0].id)
+            }}
+          />
+          {matches.length ? (
+            <ul>
+              {matches.map((c) => (
+                <li key={c.id}>
+                  <button onClick={() => link(c.id)}>
+                    {c.name}
+                    {shared?.has(c.id) && <span className="shared-badge">{t('공유')}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="concept-empty">{t('맞는 개념이 없습니다.')}</p>
+          )}
+        </div>
+      )}
       {q.suggestions.length > 0 && (
         <div className="suggestions">
           <small>{t('새 개념 제안, 누르면 연결됩니다')}</small>
@@ -158,12 +297,16 @@ function TurnView({
   questionId,
   turn: t,
   index,
-  run
+  run,
+  focused,
+  onReference
 }: {
   questionId: string
   turn: Turn
   index: number
   run: Run
+  focused: boolean
+  onReference?: (ref: Reference) => void
 }): React.JSX.Element {
   const tr = useT()
   const api = useApi()
@@ -210,7 +353,7 @@ function TurnView({
     return () => observer.disconnect()
   }, [t.sent, expanded])
   return (
-    <section className="detail-turn">
+    <section className={`detail-turn${focused ? ' concept-focus' : ''}`} data-turn-id={t.id}>
       <small className="turn-label">{tr('질문 {{n}}', { n: index + 1 })}</small>
       <p
         ref={questionRef}
@@ -276,6 +419,7 @@ function TurnView({
         )}
         <MarkdownAnswer>{t.answer || tr('아직 답변이 없습니다.')}</MarkdownAnswer>
       </div>
+      {onReference && <ReferenceChips references={t.references} onReference={onReference} />}
       {t.error && <p className="notice error">{t.error}</p>}
       {t.status === 'running' && (
         <button onClick={() => void run(() => api.cancel(t.id))}>{tr('답변 생성 중지')}</button>
