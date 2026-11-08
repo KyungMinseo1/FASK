@@ -141,6 +141,7 @@ export class PersonalStore {
     this.migrateTurns()
     this.migrateKnowledge()
     this.migrateLevels()
+    this.migrateHierarchyRelations()
     if (!this.list<Profile>('profile', '*').length) {
       const id = this.put('profile', '*', { id: randomUUID(), name: '기본 프로필' })
       this.pref('active', id)
@@ -297,6 +298,38 @@ export class PersonalStore {
       for (const { profile, concepts } of repaired)
         for (const c of concepts) this.put('concept', profile, c)
       this.db.exec('INSERT INTO schema_migrations VALUES(4); COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      this.db.close()
+      throw e
+    }
+  }
+  /**
+   * Schema 5: a relation between a concept and its direct parent repeats the hierarchy (broader),
+   * so active ones are invalidated; extraction and tidy no longer add them.
+   */
+  private migrateHierarchyRelations(): void {
+    if (this.db.prepare('SELECT version FROM schema_migrations WHERE version=5').get()) return
+    const profiles = this.db
+      .prepare("SELECT DISTINCT profile FROM records WHERE kind='relation'")
+      .all()
+      .map((r) => String(r.profile))
+    const now = new Date().toISOString()
+    const stale = profiles.map((profile) => {
+      const parent = new Map(this.list<Concept>('concept', profile).map((c) => [c.id, c.parentId]))
+      return {
+        profile,
+        relations: this.list<Relation>('relation', profile).filter(
+          (r) => !r.invalidatedAt && (parent.get(r.from) === r.to || parent.get(r.to) === r.from)
+        )
+      }
+    })
+    if (stale.some((s) => s.relations.length)) this.backupBefore('fask-pre-relations.sqlite')
+    this.db.exec('BEGIN')
+    try {
+      for (const { profile, relations } of stale)
+        for (const r of relations) this.put('relation', profile, { ...r, invalidatedAt: now })
+      this.db.exec('INSERT INTO schema_migrations VALUES(5); COMMIT')
     } catch (e) {
       this.db.exec('ROLLBACK')
       this.db.close()

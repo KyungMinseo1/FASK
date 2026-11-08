@@ -3294,6 +3294,22 @@ button.memo-saved:disabled {
 .mind-chev.collapsed {
   transform: rotate(-90deg);
 }
+/* Relation tag of a highlighted concept, notched onto the pill's top edge (fits the 14px row gap). */
+.mind-tag {
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  z-index: 1;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .mind-map-box.full,
 .mind-map-box:fullscreen {
   position: fixed;
@@ -3712,6 +3728,67 @@ button.memo-saved:disabled {
 .fask-app .relation-group li button {
   padding: 3px 10px;
   font-size: 12px;
+}
+/* Ego graph of approved relations above the relation list (G1 pills on the graph board).
+   Laid out for the box's inner width, so the SVG draws at 1:1. */
+.ego-graph {
+  margin: 0 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  background: var(--graph-board);
+  overflow: hidden;
+}
+.ego-graph svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ego-graph text {
+  text-anchor: middle;
+  dominant-baseline: central;
+  user-select: none;
+}
+.ego-node rect {
+  fill: var(--graph-node);
+  stroke: var(--graph-node-line);
+  stroke-width: 1.2;
+}
+.ego-node text {
+  fill: var(--ink);
+  font-weight: 650;
+}
+.ego-node rect.ego-centre {
+  fill: var(--primary);
+  stroke: none;
+}
+.ego-node rect.ego-centre + text {
+  fill: var(--on-primary);
+  font-weight: 800;
+}
+.ego-node.link {
+  cursor: pointer;
+  outline: none;
+}
+.ego-node.link:hover rect,
+.ego-node.link:focus-visible rect {
+  stroke: var(--focus-ring);
+  stroke-width: 2;
+}
+.ego-edge line {
+  stroke: var(--graph-edge);
+  stroke-width: 1.6;
+}
+.ego-edge polygon {
+  fill: var(--graph-edge);
+}
+.ego-edge rect {
+  fill: var(--graph-board);
+  stroke: var(--hairline-strong);
+  stroke-width: 1;
+}
+.ego-edge text {
+  fill: var(--ink-muted);
+  font-weight: 700;
 }
 .concept-turn-nav {
   position: sticky;

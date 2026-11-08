@@ -29,7 +29,7 @@ import {
   linkableConcepts,
   projectConcepts,
   questionTree,
-  relationOverlay
+  relationHighlight
 } from '@desktop/renderer/src/personal/questionTree'
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
@@ -91,8 +91,11 @@ export default function ProjectScreen(): React.JSX.Element {
   const graph = useMemo(() => questionTree(data, projectId, filtered), [data, projectId, filtered])
   const { concepts, shared } = useMemo(() => projectConcepts(data, projectId), [data, projectId])
   const linkable = useMemo(() => linkableConcepts(data, projectId), [data, projectId])
-  // Only while a concept's sheet is open: its relations over the tree.
-  const relations = useMemo(() => relationOverlay(data, conceptId), [data, conceptId])
+  // Only while a concept's sheet is open: it and its related concepts stand out in the graph.
+  const highlight = useMemo(
+    () => (conceptId && data.concepts.some((c) => c.id === conceptId) ? relationHighlight(data, conceptId) : undefined),
+    [data, conceptId]
+  )
   const workspace = data.workspaces.find((w) => w.id === project?.workspaceId)
   const locked = !!workspace?.remote && workspace.remote.status !== 'online'
   const [page, setPageState] = useState(() => lastPage.get(projectId) ?? 1)
@@ -105,11 +108,10 @@ export default function ProjectScreen(): React.JSX.Element {
   const graphRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
   const graphSheet = !!conceptId && view === 'graph' && (wide || !questionId)
-  // The selected concept and its relation partners; MindMap frames those that are visible.
+  // The selected concept and its related concepts; MindMap frames those that are visible.
   const focusIds = useMemo(
-    () =>
-      conceptId ? [...new Set([`c:${conceptId}`, ...relations.flatMap((r) => [r.source, r.target])])] : undefined,
-    [conceptId, relations]
+    () => (highlight ? [highlight.focus, ...Object.keys(highlight.related)] : undefined),
+    [highlight]
   )
   // Graph height while the half sheet is open: from the top of the graph's scroller (where
   // scrollIntoView puts it) down to the sheet. Measured, since banners above the header move it.
@@ -216,7 +218,7 @@ export default function ProjectScreen(): React.JSX.Element {
             <TidyBar workspaceId={project.workspaceId} revision={data} disabled={locked} sheet />
             <MindMap
               root={graph}
-              relations={relations}
+              highlight={highlight}
               focusIds={graphSheet ? focusIds : undefined}
               height={graphSheet && graphHeight ? graphHeight : '70vh'}
               allowCopy={false}
@@ -347,6 +349,7 @@ export default function ProjectScreen(): React.JSX.Element {
             projectId={projectId}
             run={run}
             onOpenQuestion={openAt}
+            onOpenConcept={setConceptId}
             onClose={() => setConceptId(null)}
           />
         </div>

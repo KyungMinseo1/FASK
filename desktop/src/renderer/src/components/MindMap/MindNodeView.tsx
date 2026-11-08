@@ -1,6 +1,6 @@
-import { BaseEdge, Handle, Position, type Edge, type EdgeProps, type NodeProps } from '@xyflow/react'
+import { BaseEdge, Handle, Position, type EdgeProps, type NodeProps } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
-import { HANDLE, isUnclassified, type MindFlowNode } from './layout'
+import { HANDLE, isUnclassified, type MindFlowNode, type NodeTag } from './layout'
 import { useT } from '../../../../shared/i18n/react'
 import { Chevron } from '../../personal/ToolbarIcons'
 
@@ -17,12 +17,14 @@ const handleStyle = (left: string): React.CSSProperties => ({
   opacity: 0
 })
 
-/** Invisible 1px handles: tree edges attach to the pill sides, relation overlays to the centre. */
+/** Invisible 1px handles on the pill sides, where tree edges attach. */
 const HANDLES = [
-  { id: HANDLE.left, style: handleStyle('0%'), target: Position.Left, source: Position.Left },
-  { id: HANDLE.right, style: handleStyle('100%'), target: Position.Right, source: Position.Right },
-  { id: HANDLE.center, style: handleStyle('50%'), target: Position.Top, source: Position.Bottom }
+  { id: HANDLE.left, style: handleStyle('0%'), position: Position.Left },
+  { id: HANDLE.right, style: handleStyle('100%'), position: Position.Right }
 ]
+
+/** Opacity of nodes and edges outside the current highlight. */
+export const DIMMED_OPACITY = 0.35
 
 /** G1 pills: root in the primary color, unclassified as an empty dashed outline. */
 function pillStyle(mind: MindNode, depth: number): React.CSSProperties {
@@ -53,77 +55,16 @@ export function CurveEdge({ id, sourceX, sourceY, targetX, targetY, style }: Edg
   )
 }
 
-export type RelationFlowEdge = Edge<
-  {
-    label: string
-    pending: boolean
-    /** Pill sizes of both ends, so the line stops at their borders instead of their centres. */
-    sourceSize: [number, number]
-    targetSize: [number, number]
-  },
-  'relation'
->
-
-/**
- * A selected concept's relation: dashed curve between the two pill borders with an arrowhead at
- * the target and the relation type as label. Pending (unapproved) relations are drawn fainter.
- */
-export function RelationEdgeView({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  data
-}: EdgeProps<RelationFlowEdge>): React.JSX.Element | null {
-  const t = useT()
-  if (!data) return null
-  const dx = targetX - sourceX,
-    dy = targetY - sourceY
-  const len = Math.hypot(dx, dy) || 1
-  const ux = dx / len,
-    uy = dy / len
-  // Distance from a pill centre to its border along the line, plus a small gap.
-  const clip = ([w, h]: [number, number]): number =>
-    Math.min(ux ? w / 2 / Math.abs(ux) : Infinity, uy ? h / 2 / Math.abs(uy) : Infinity) + 6
-  const sx = sourceX + ux * clip(data.sourceSize),
-    sy = sourceY + uy * clip(data.sourceSize)
-  const ex = targetX - ux * clip(data.targetSize),
-    ey = targetY - uy * clip(data.targetSize)
-  // Bowed more than tree edges so a relation along a tree edge stays distinguishable.
-  const bow = Math.min(60, len * 0.2)
-  const cx = (sourceX + targetX) / 2 + uy * bow,
-    cy = (sourceY + targetY) / 2 - ux * bow
-  // Arrowhead along the curve's end tangent.
-  const tl = Math.hypot(ex - cx, ey - cy) || 1
-  const ax = (ex - cx) / tl,
-    ay = (ey - cy) / tl
-  const arrow = `M${ex} ${ey} L${ex - ax * 9 - ay * 4.5} ${ey - ay * 9 + ax * 4.5} L${ex - ax * 9 + ay * 4.5} ${ey - ay * 9 - ax * 4.5} Z`
-  const color = data.pending ? 'var(--ink-muted)' : 'var(--primary)'
-  const opacity = data.pending ? 0.6 : 1
-  return (
-    <>
-      <BaseEdge
-        id={id}
-        path={`M${sx} ${sy} Q${cx} ${cy} ${ex} ${ey}`}
-        style={{ stroke: color, strokeWidth: data.pending ? 1.4 : 2, strokeDasharray: '6 4', opacity }}
-        label={t(data.label)}
-        labelX={(sx + 2 * cx + ex) / 4}
-        labelY={(sy + 2 * cy + ey) / 4}
-        labelStyle={{ fill: color, fontSize: 11.5, fontWeight: 700, opacity }}
-        labelShowBg
-        labelBgStyle={{ fill: 'var(--surface-1)', stroke: color, strokeWidth: 1, opacity }}
-        labelBgPadding={[6, 3]}
-        labelBgBorderRadius={8}
-      />
-      <path d={arrow} fill={color} opacity={opacity} />
-    </>
-  )
+/** `선행 →` (this node → the focus node), `← 선행` (the focus node → this node), or the bare label. */
+function tagText(tag: NodeTag, t: (key: string) => string): string {
+  const label = t(tag.label)
+  return tag.arrow === 'out' ? `${label} →` : tag.arrow === 'in' ? `← ${label}` : label
 }
 
 export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.JSX.Element {
   const t = useT()
-  const { mind, depth, width, height, fontSize, expanded, selected, dragging, dropTarget, marked } = data
+  const { mind, depth, width, height, fontSize, expanded, selected, dragging, dropTarget, marked, dimmed, tags } =
+    data
   const expandable = depth > 0 && mind.children.length > 0
   const count = depth > 0 && mind.count != null && mind.count > 0 ? mind.count : 0
   const hot = count >= 2
@@ -131,14 +72,19 @@ export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.J
   return (
     <div
       className={`relative ${dragging ? 'cursor-grabbing opacity-80' : 'cursor-pointer'}`}
-      style={{ width, height }}
+      style={{
+        width,
+        height,
+        opacity: dimmed && !dragging ? DIMMED_OPACITY : undefined,
+        transition: 'opacity 0.2s'
+      }}
     >
       {HANDLES.map((h) => (
         <Handle
           key={`in-${h.id}`}
           id={h.id}
           type="target"
-          position={h.target}
+          position={h.position}
           style={h.style}
           isConnectable={false}
         />
@@ -209,12 +155,16 @@ export default function MindNodeView({ data }: NodeProps<MindFlowNode>): React.J
           {mind.badge}
         </span>
       )}
+      {tags && tags.length > 0 && (
+        // Relation type to the focus node, notched onto the pill's top edge.
+        <span className="mind-tag">{tags.map((tag) => tagText(tag, t)).join(' · ')}</span>
+      )}
       {HANDLES.map((h) => (
         <Handle
           key={`out-${h.id}`}
           id={h.id}
           type="source"
-          position={h.source}
+          position={h.position}
           style={h.style}
           isConnectable={false}
         />

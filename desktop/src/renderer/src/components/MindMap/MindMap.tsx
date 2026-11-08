@@ -25,20 +25,9 @@ import {
   type XYPosition
 } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
-import { HANDLE, layoutMindMap, type MindFlowNode } from './layout'
-import MindNodeView, { CurveEdge, RelationEdgeView, type RelationFlowEdge } from './MindNodeView'
+import { layoutMindMap, type GraphHighlight, type MindFlowNode } from './layout'
+import MindNodeView, { CurveEdge, DIMMED_OPACITY } from './MindNodeView'
 import { useT } from '../../../../shared/i18n/react'
-
-/** A non-tree edge drawn over the graph between two node ids (e.g. a selected concept's relation). */
-export interface RelationEdge {
-  id: string
-  source: string
-  target: string
-  /** Korean source text, shown through `t()`. */
-  label: string
-  /** Not yet approved: drawn fainter. */
-  pending?: boolean
-}
 
 export interface MindMapProps {
   root: MindNode
@@ -56,14 +45,17 @@ export interface MindMapProps {
   actions?: ReactNode
   canMove?: (node: MindNode) => boolean
   canDrop?: (node: MindNode, target: MindNode) => boolean
-  /** Overlay edges; only those whose both ends are currently visible are drawn. */
-  relations?: RelationEdge[]
+  /**
+   * Emphasizes the focus node and the related ones (with their tags), dims the rest and expands
+   * the branches that hide any of them.
+   */
+  highlight?: GraphHighlight
   /** When set, automatic fits frame these node ids (those currently visible) instead of the whole graph. */
   focusIds?: string[]
 }
 
 const nodeTypes: NodeTypes = { mind: MindNodeView }
-const edgeTypes: EdgeTypes = { curve: CurveEdge, relation: RelationEdgeView }
+const edgeTypes: EdgeTypes = { curve: CurveEdge }
 
 function toggled(set: Set<string>, id: string): Set<string> {
   const next = new Set(set)
@@ -155,7 +147,7 @@ function MindMapInner({
   canDrop,
   allowCopy = true,
   actions,
-  relations,
+  highlight,
   focusIds
 }: MindMapProps): React.JSX.Element {
   const t = useT()
@@ -187,35 +179,37 @@ function MindMapInner({
     [root, expanded, selectedId]
   )
 
-  const edges = useMemo((): Edge[] => {
-    if (!relations?.length) return layout.edges
-    const shown = new Map(layout.nodes.map((n) => [n.id, n.data]))
-    return [
-      ...layout.edges,
-      ...relations.flatMap((r): RelationFlowEdge[] => {
-        const from = shown.get(r.source)
-        const to = shown.get(r.target)
-        if (!from || !to || r.source === r.target) return []
-        return [
-          {
-            id: `rel:${r.id}`,
-            source: r.source,
-            target: r.target,
-            sourceHandle: HANDLE.center,
-            targetHandle: HANDLE.center,
-            type: 'relation',
-            zIndex: 5,
-            data: {
-              label: r.label,
-              pending: !!r.pending,
-              sourceSize: [from.width, from.height],
-              targetSize: [to.width, to.height]
-            }
-          }
-        ]
-      })
-    ]
-  }, [layout, relations])
+  // Highlighted node ids (focus + related); everything else is dimmed.
+  const lit = useMemo(
+    () => (highlight ? new Set([highlight.focus, ...Object.keys(highlight.related)]) : null),
+    [highlight]
+  )
+  const litKey = lit ? [...lit].join('\n') : ''
+  const rootRef = useRef(root)
+  rootRef.current = root
+  // A new highlight opens every collapsed branch that hides one of its nodes.
+  useEffect(() => {
+    if (!litKey) return
+    const wanted = new Set(litKey.split('\n'))
+    const open = new Set<string>()
+    const walk = (n: MindNode, path: string[]): void => {
+      if (wanted.has(n.id)) for (const id of path) open.add(id)
+      for (const child of n.children) walk(child, [...path, n.id])
+    }
+    walk(rootRef.current, [])
+    setExpanded((s) => ([...open].every((id) => s.has(id)) ? s : new Set([...s, ...open])))
+  }, [litKey])
+
+  // An edge stays bright when it leads into a highlighted node.
+  const edges = useMemo(
+    (): Edge[] =>
+      lit
+        ? layout.edges.map((e) =>
+            lit.has(e.target) ? e : { ...e, style: { ...e.style, opacity: DIMMED_OPACITY, transition: 'opacity 0.2s' } }
+          )
+        : layout.edges,
+    [layout.edges, lit]
+  )
 
   // Only a long-pressed node follows the pointer; other drags are ignored.
   const activeDrag = armed && drag?.id === armed ? drag : null
@@ -232,10 +226,13 @@ function MindMapInner({
         draggable: !!onMoveNode && n.data.depth > 0 && (canMove?.(n.data.mind) ?? true),
         data: {
           ...n.data,
-          marked: markQuestions && n.data.depth > 0 && !!n.data.mind.hasQuestions
+          marked: markQuestions && n.data.depth > 0 && !!n.data.mind.hasQuestions,
+          selected: n.data.selected || n.id === highlight?.focus,
+          dimmed: !!lit && !lit.has(n.id),
+          tags: highlight?.related[n.id]
         }
       })),
-    [layout.nodes, onMoveNode, canMove, markQuestions]
+    [layout.nodes, onMoveNode, canMove, markQuestions, highlight, lit]
   )
 
   // During a drag only the dragged node and the drop target get new objects; the rest keep

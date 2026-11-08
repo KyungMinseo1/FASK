@@ -5,13 +5,15 @@ import { Icon } from './ToolbarIcons'
 import { useApi } from './api'
 import { dateLabel } from './common'
 import { LEVEL_LABELS, RELATION_LABELS } from './questionTree'
+import ConceptEgoGraph from './ConceptEgoGraph'
 import { useT } from '../../../shared/i18n/react'
 
 type Run = (fn: () => Promise<unknown>) => Promise<boolean>
 
 /**
  * A concept opened from the graph: the project's questions linking it, its aliases, definition and
- * level, and its relations grouped by type (low-confidence ones wait for approval).
+ * level, and its relations: approved ones as an ego graph, then all grouped by type (low-confidence
+ * ones wait for approval).
  * Mount with `key={conceptId}` so the edit draft resets per concept.
  */
 export default function ConceptPanel({
@@ -20,6 +22,7 @@ export default function ConceptPanel({
   projectId,
   run,
   onOpenQuestion,
+  onOpenConcept,
   onClose
 }: {
   data: Snapshot
@@ -27,6 +30,7 @@ export default function ConceptPanel({
   projectId: string
   run: Run
   onOpenQuestion: (questionId: string, conceptId: string) => void
+  onOpenConcept: (conceptId: string) => void
   onClose: () => void
 }): React.JSX.Element | null {
   const t = useT()
@@ -185,6 +189,12 @@ export default function ConceptPanel({
         )}
       </button>
       <h3>{t('관계')}</h3>
+      <ConceptEgoGraph
+        concept={concept}
+        relations={relations.filter((r) => r.approved)}
+        concepts={data.concepts}
+        onOpen={onOpenConcept}
+      />
       {relations.length ? (
         (Object.keys(RELATION_LABELS) as RelationType[]).map((type) => {
           const group = relations.filter((r) => r.type === type)

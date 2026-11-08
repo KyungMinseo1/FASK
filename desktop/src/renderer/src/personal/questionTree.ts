@@ -7,7 +7,7 @@ import type {
 } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import type { MindNode } from '../lib/trees'
-import type { RelationEdge } from '../components/MindMap/MindMap'
+import type { GraphHighlight, NodeTag } from '../components/MindMap/layout'
 import { t } from '../../../shared/i18n'
 
 /** Korean source labels of concept levels and relation types; display through `t()`. */
@@ -73,20 +73,29 @@ export function linkableConcepts(data: Snapshot, projectId: string): Concept[] {
 }
 
 /**
- * The selected concept's active relations as graph overlay edges between concept nodes
- * (`c:<id>`), labelled with the relation type's Korean source label; unapproved ones are `pending`.
+ * Graph highlight for the selected concept (`c:<id>`): every concept sharing an approved, active
+ * relation with it, tagged with the relation type's Korean source label and its direction (`out`:
+ * that concept → the selected one; `in`: the reverse; contrast has none). One tag per type and
+ * direction.
  */
-export function relationOverlay(data: Snapshot, conceptId: string | null | undefined): RelationEdge[] {
-  if (!conceptId) return []
-  return data.relations
-    .filter((r) => !r.invalidatedAt && (r.from === conceptId || r.to === conceptId))
-    .map((r) => ({
-      id: r.id,
-      source: `c:${r.from}`,
-      target: `c:${r.to}`,
-      label: RELATION_LABELS[r.type],
-      pending: !r.approved
-    }))
+export function relationHighlight(
+  data: Snapshot,
+  conceptId: string | null | undefined
+): GraphHighlight | undefined {
+  if (!conceptId) return undefined
+  const related: Record<string, NodeTag[]> = {}
+  for (const r of data.relations) {
+    if (!r.approved || r.invalidatedAt || r.from === r.to) continue
+    if (r.from !== conceptId && r.to !== conceptId) continue
+    const id = `c:${r.from === conceptId ? r.to : r.from}`
+    const tags = related[id] ?? (related[id] = [])
+    const tag: NodeTag =
+      r.type === 'contrast'
+        ? { label: RELATION_LABELS[r.type] }
+        : { label: RELATION_LABELS[r.type], arrow: r.from === conceptId ? 'in' : 'out' }
+    if (!tags.some((x) => x.label === tag.label && x.arrow === tag.arrow)) tags.push(tag)
+  }
+  return { focus: `c:${conceptId}`, related }
 }
 
 /** Concept tree of a project with question leaves; leaf ids are `q:<questionId>:<parent>`. */

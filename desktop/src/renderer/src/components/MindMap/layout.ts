@@ -23,9 +23,24 @@ const BADGE_H = 24
 
 /**
  * Handle ids on every pill. Tree edges leave the parent's side facing the child and enter the
- * child's near side; relation overlays run between the centres.
+ * child's near side.
  */
-export const HANDLE = { left: 'left', right: 'right', center: 'center' } as const
+export const HANDLE = { left: 'left', right: 'right' } as const
+
+/** A short tag on an emphasized node: Korean source label (shown through `t()`) and an optional arrow. */
+export interface NodeTag {
+  label: string
+  /** `out`: this node → the focus node (`label →`); `in`: the focus node → this node (`← label`). */
+  arrow?: 'out' | 'in'
+}
+
+/** Emphasis over the graph (e.g. a selected concept and the concepts related to it). */
+export interface GraphHighlight {
+  /** The emphasized node. */
+  focus: string
+  /** Other emphasized node ids and their tags; every node not listed (nor `focus`) is dimmed. */
+  related: Record<string, NodeTag[]>
+}
 
 export interface MindNodeData extends Record<string, unknown> {
   mind: MindNode
@@ -40,6 +55,10 @@ export interface MindNodeData extends Record<string, unknown> {
   dropTarget?: boolean
   /** Show the "holds questions" marker on this node. */
   marked?: boolean
+  /** Outside the current highlight: drawn faded. */
+  dimmed?: boolean
+  /** Tags from the current highlight. */
+  tags?: NodeTag[]
 }
 
 export type MindFlowNode = Node<MindNodeData, 'mind'>
@@ -56,7 +75,7 @@ interface VisibleNode {
 export const isUnclassified = (mind: MindNode): boolean => mind.id === 'unfiled' || mind.id === 'group-unclassified'
 
 /** Estimated rendered width of a label: Hangul/CJK glyphs are about 1em, Latin about 0.58em. */
-function textWidth(label: string, fontSize: number): number {
+export function textWidth(label: string, fontSize: number): number {
   let em = 0
   for (const ch of label) em += /[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 1 : ch === ' ' ? 0.3 : 0.58
   return em * fontSize

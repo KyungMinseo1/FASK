@@ -24,7 +24,13 @@ import { OpaqueClient } from '@cloudflare/opaque-ts'
 import { validateBackup } from '../src/main/personal-backup'
 import { readAttachment } from '../src/renderer/src/personal/attachments'
 import { previewSource } from '../src/renderer/src/personal/preview-source'
-import { linkableConcepts, projectConcepts, relationOverlay } from '../src/renderer/src/personal/questionTree'
+import {
+  RELATION_LABELS,
+  linkableConcepts,
+  projectConcepts,
+  relationHighlight
+} from '../src/renderer/src/personal/questionTree'
+import { egoLayout, pillBorder } from '../src/renderer/src/personal/egoGraph'
 import './knowledge.test'
 import './knowledge-store.test'
 import './mindmap-layout.test'
@@ -1790,20 +1796,137 @@ test('project graph: linked concepts plus ancestors, shared and fresh manual one
   )
 })
 
-test('relation overlay: only the selected concept’s active relations, pending marked', () => {
-  const relation = (id: string, from: string, to: string, approved: boolean, invalidatedAt: number | null) =>
-    ({ id, from, to, type: 'uses', approved, invalidatedAt }) as Snapshot['relations'][number]
+test('relation highlight: the selected concept and its approved, active relations, direction-tagged', () => {
+  const relation = (
+    id: string,
+    from: string,
+    to: string,
+    type: string,
+    approved = true,
+    invalidatedAt: number | null = null
+  ) => ({ id, from, to, type, approved, invalidatedAt }) as Snapshot['relations'][number]
   const data = {
     relations: [
-      relation('r1', 'a', 'b', true, null),
-      relation('r2', 'c', 'a', false, null),
-      relation('r3', 'a', 'd', true, 1),
-      relation('r4', 'b', 'c', true, null)
+      relation('r1', 'a', 'b', 'uses'),
+      relation('r2', 'c', 'a', 'prerequisite'),
+      relation('r3', 'a', 'd', 'uses', true, 1),
+      relation('r4', 'e', 'a', 'uses', false),
+      relation('r5', 'b', 'c', 'uses'),
+      relation('r6', 'a', 'c', 'contrast'),
+      relation('r7', 'b', 'a', 'part')
     ]
   } as unknown as Snapshot
-  assert.deepEqual(relationOverlay(data, null), [])
-  assert.deepEqual(relationOverlay(data, 'a'), [
-    { id: 'r1', source: 'c:a', target: 'c:b', label: '사용', pending: false },
-    { id: 'r2', source: 'c:c', target: 'c:a', label: '사용', pending: true }
-  ])
+  assert.equal(relationHighlight(data, null), undefined)
+  assert.deepEqual(relationHighlight(data, 'a'), {
+    focus: 'c:a',
+    related: {
+      'c:b': [
+        { label: '사용', arrow: 'in' },
+        { label: '부분', arrow: 'out' }
+      ],
+      'c:c': [{ label: '선행', arrow: 'out' }, { label: '대조' }]
+    }
+  })
+  assert.deepEqual(relationHighlight(data, 'z'), { focus: 'c:z', related: {} })
+})
+
+test('ego graph: prerequisites left, part/uses right, contrast/example below; edges end on borders', () => {
+  const names: Record<string, string> = { b: '행렬', c: '벡터 공간', d: '고유값 분해의 아주 긴 이름을 가진 개념', e: '예시' }
+  const relation = (id: string, from: string, to: string, type: string) =>
+    ({ id, from, to, type }) as Snapshot['relations'][number]
+  const layout = egoLayout(
+    { id: 'a', name: '고유값' },
+    [
+      relation('r1', 'b', 'a', 'prerequisite'),
+      relation('r2', 'a', 'c', 'uses'),
+      relation('r3', 'a', 'c', 'part'),
+      relation('r4', 'd', 'a', 'contrast'),
+      relation('r5', 'e', 'a', 'example'),
+      relation('r6', 'a', 'gone', 'uses')
+    ],
+    (id) => names[id],
+    (type) => RELATION_LABELS[type]
+  )
+  const { center } = layout
+  const node = (id: string) => layout.nodes.find((n) => n.id === id)!
+  assert.equal(layout.width, 320, 'never narrower than the minimum')
+  assert.deepEqual(layout.nodes.map((n) => n.id).sort(), ['b', 'c', 'd', 'e'])
+  assert.ok(node('b').x < center.x && Math.abs(node('b').y - center.y) < 1, 'prerequisite on the left')
+  assert.ok(node('c').x > center.x, 'uses/part on the right')
+  assert.ok(node('d').y > center.y && node('e').y > center.y, 'contrast/example below')
+  assert.ok(node('d').label.endsWith('…') && node('d').name === names.d, 'long names are truncated')
+  const edge = (id: string) => layout.edges.find((e) => e.id === id)!
+  assert.deepEqual(edge('c').chip.lines, ['부분', '사용'])
+  assert.equal(edge('b').arrows.length, 1)
+  assert.equal(edge('d').arrows.length, 2, 'contrast points both ways')
+  // Edge ends lie on the pill borders: the stadium's distance from its centre segment equals the radius.
+  const onBorder = ([x, y]: [number, number], n: typeof center): boolean => {
+    const a = n.width / 2 - n.height / 2
+    const px = Math.max(-a, Math.min(a, x - n.x))
+    return Math.abs(Math.hypot(x - n.x - px, y - n.y) - n.height / 2) < 1e-6
+  }
+  for (const e of layout.edges) {
+    assert.ok(onBorder(e.start, center), `${e.id} starts on the centre border`)
+    assert.ok(onBorder(e.end, node(e.id)), `${e.id} ends on its node border`)
+    // Every arrowhead's tip is one of the border points.
+    const tips = [e.start, e.end].map(([x, y]) => `${Math.round(x * 100) / 100},${Math.round(y * 100) / 100}`)
+    for (const points of e.arrows) assert.ok(tips.includes(points.split(' ')[0]), `${e.id} arrow tip on a border`)
+  }
+  assert.equal(pillBorder(100, 20, 1, 0), 50)
+  assert.equal(pillBorder(100, 20, 0, 1), 10)
+})
+
+test('ego graph: label chips never overlap pills or each other, at any panel width', () => {
+  const names: Record<string, string> = {
+    cap: 'Channel Capacity',
+    ent: '엔트로피',
+    mi: '상호 정보량',
+    code: '채널 부호화',
+    rate: '전송률',
+    shan: '섀넌 한계',
+    fano: '파노 부등식',
+    ex: '이진 대칭 채널',
+    ex2: '가우시안 채널'
+  }
+  const relation = (id: string, from: string, to: string, type: string) =>
+    ({ id, from, to, type }) as Snapshot['relations'][number]
+  const relations = [
+    relation('r1', 'cap', 'a', 'prerequisite'),
+    relation('r2', 'a', 'cap', 'part'),
+    relation('r3', 'a', 'cap', 'uses'),
+    relation('r4', 'ent', 'a', 'prerequisite'),
+    relation('r5', 'mi', 'a', 'prerequisite'),
+    relation('r6', 'a', 'code', 'uses'),
+    relation('r7', 'a', 'rate', 'part'),
+    relation('r8', 'shan', 'a', 'contrast'),
+    relation('r9', 'shan', 'a', 'example'),
+    relation('r10', 'fano', 'a', 'contrast'),
+    relation('r11', 'ex', 'a', 'example'),
+    relation('r12', 'ex2', 'a', 'example')
+  ]
+  type Box = { x: number; y: number; width: number; height: number }
+  const overlap = (p: Box, q: Box): boolean =>
+    Math.abs(p.x - q.x) < (p.width + q.width) / 2 && Math.abs(p.y - q.y) < (p.height + q.height) / 2
+  for (const width of [200, 320, 380, 540, 800]) {
+    const layout = egoLayout(
+      { id: 'a', name: '채널 용량 정리의 달성 가능성' },
+      relations,
+      (id) => names[id],
+      (type) => RELATION_LABELS[type],
+      width
+    )
+    assert.equal(layout.width, Math.max(320, width))
+    const pills = [layout.center, ...layout.nodes]
+    const chips = layout.edges.map((e) => ({ id: e.id, ...e.chip }))
+    assert.deepEqual(chips.find((c) => c.id === 'cap')?.lines, ['선행', '부분', '사용'], `${width}: stacked types`)
+    for (const c of chips) {
+      for (const p of pills) assert.ok(!overlap(c, p), `${width}: chip ${c.id} covers pill ${p.id}`)
+      for (const d of chips) if (d !== c) assert.ok(!overlap(c, d), `${width}: chips ${c.id} and ${d.id} overlap`)
+      assert.ok(c.y - c.height / 2 >= 0 && c.y + c.height / 2 <= layout.height, `${width}: chip ${c.id} inside`)
+    }
+    for (const p of pills) {
+      for (const q of pills) if (q !== p) assert.ok(!overlap(p, q), `${width}: pills ${p.id} and ${q.id} overlap`)
+      if (width >= 380) assert.ok(p.x - p.width / 2 >= 0 && p.x + p.width / 2 <= layout.width, `${width}: ${p.id} inside`)
+    }
+  }
 })

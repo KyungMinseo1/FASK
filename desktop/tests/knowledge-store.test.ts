@@ -538,6 +538,37 @@ test('schema 4 migration maps domain to topic and repairs a topic→detail-shape
   }
 })
 
+test('schema 5 migration invalidates relations between a concept and its direct parent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fask-migrate-relations-'))
+  let store = new PersonalStore(dir)
+  try {
+    const profile = store.active
+    const ws = store.list<Project>('project')[0].workspaceId
+    const topic = store.createConcept(profile, ws, { name: '정보이론', level: 'topic', parentId: null })
+    const capacity = store.createConcept(profile, ws, { name: 'Channel Capacity', level: 'concept', parentId: topic })
+    const achievability = store.createConcept(profile, ws, {
+      name: '채널 용량 정리의 달성 가능성',
+      level: 'detail',
+      parentId: capacity
+    })
+    const entropy = store.createConcept(profile, ws, { name: '엔트로피', level: 'concept', parentId: topic })
+    const base = { questionId: null, turnIds: [], confidence: 0.9, approved: true }
+    const up = store.addRelation(profile, { ...base, from: achievability, to: capacity, type: 'prerequisite' })
+    const down = store.addRelation(profile, { ...base, from: capacity, to: achievability, type: 'part' })
+    const siblings = store.addRelation(profile, { ...base, from: capacity, to: entropy, type: 'uses' })
+    const grand = store.addRelation(profile, { ...base, from: achievability, to: topic, type: 'part' })
+    store.db.prepare('DELETE FROM schema_migrations WHERE version=5').run()
+    store.close()
+    store = new PersonalStore(dir)
+    const invalidated = (id: string): boolean => !!store.record<Relation>('relation', id, profile).invalidatedAt
+    assert.deepEqual([up, down, siblings, grand].map(invalidated), [true, true, false, false])
+    assert.ok(existsSync(join(dir, 'fask-pre-relations.sqlite')))
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('store rejects a parent or level that breaks topic > concept > detail', () => {
   withStore('levels', (store) => {
     const profile = store.active

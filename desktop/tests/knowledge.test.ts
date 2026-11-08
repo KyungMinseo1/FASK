@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { crc32, inflateRawSync } from 'node:zlib'
 import { PersonalStore } from '../src/main/personal-store'
 import { KnowledgeExtractor, type Chat } from '../src/main/knowledge-extract'
@@ -281,6 +282,221 @@ test('extraction: parents are exactly one level up; a wrong-level parent leaves 
   }
 })
 
+test('extraction: invalid items are dropped; a null parent is an accepted abstention', async () => {
+  const { dir, store, put } = setup()
+  try {
+    put('q', [kTurn('t0', '고유값이 뭐야?', LONG)])
+    const concept = (name: unknown, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+      name,
+      existingId: null,
+      aliases: [],
+      definition: '',
+      level: 'concept',
+      parent: null,
+      grandparent: null,
+      turns: [0],
+      confidence: 0.9,
+      ...extra
+    })
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () =>
+        JSON.stringify({
+          concepts: [
+            concept('고유값', { aliases: ['eigenvalue', '고유값은 어떻게 구해?'] }),
+            concept('유령 개념', { existingId: randomUUID() }), // an id that was never sent
+            concept('특성방정식', { level: 'chapter' }),
+            concept('고유값은 어떻게 구해?'),
+            concept('행렬 풀이 3번?'),
+            concept('123.'),
+            concept('가'.repeat(61)),
+            concept('벡터', { confidence: 1.5 }),
+            concept('배율', { parent: randomUUID() })
+          ],
+          relations: [
+            { from: '고유값', to: randomUUID(), type: 'uses', confidence: 0.9 },
+            { from: '고유값', to: '고유값', type: 'causes', confidence: 0.9 }
+          ]
+        }),
+      () => {}
+    )
+    await extractor.run(store.active, 'q')
+    const concepts = store.list<Concept>('concept')
+    assert.deepEqual(concepts.map((c) => c.name), ['고유값'])
+    assert.deepEqual(concepts[0].aliases, ['eigenvalue'], 'a question-like alias is dropped')
+    assert.equal(concepts[0].parentId, null)
+    assert.deepEqual(store.record<Question>('question', 'q').conceptIds, [concepts[0].id])
+    assert.equal(store.list<Relation>('relation').length, 0)
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('extraction: unparseable output is an empty result; a failed call keeps the watermark', async () => {
+  const { dir, store, put } = setup()
+  try {
+    put('bad', [kTurn('t0', '고유값이 뭐야?', LONG)])
+    put('down', [kTurn('t1', '고유벡터는?', LONG)])
+    const extractor = new KnowledgeExtractor(
+      store,
+      async (_p, _m, _i, input) => {
+        if (JSON.parse(input).turns[0].question === '고유값이 뭐야?') return 'not json {'
+        throw new Error('proxy down')
+      },
+      () => {}
+    )
+    await extractor.run(store.active, 'bad')
+    await extractor.run(store.active, 'down')
+    assert.equal(store.record<Question>('question', 'bad').extractedTurns, 1)
+    assert.equal(store.record<Question>('question', 'down').extractedTurns, 0)
+    assert.equal(store.list<Concept>('concept').length, 0)
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('extraction: a relation is approved only when both concepts appear in its cited turns', async () => {
+  const { dir, store, put } = setup()
+  try {
+    put('q', [kTurn('t0', '고유값이 뭐야?', LONG)])
+    const concept = (name: string): Record<string, unknown> => ({
+      name,
+      level: 'concept',
+      parent: null,
+      turns: [0],
+      confidence: 0.9
+    })
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () =>
+        JSON.stringify({
+          // LONG writes "선형 변환" with a space: "선형변환" has no textual evidence.
+          concepts: [
+            concept('고유값'),
+            concept('특성방정식'),
+            concept('선형변환'),
+            { ...concept('고유값의 배율'), level: 'detail', parent: '고유값' }
+          ],
+          relations: [
+            { from: '고유값', to: '특성방정식', type: 'uses', confidence: 0.9 },
+            { from: '선형변환', to: '고유값', type: 'uses', confidence: 0.95 },
+            // Its own parent: the hierarchy already says it.
+            { from: '고유값의 배율', to: '고유값', type: 'part', confidence: 0.9 },
+            { from: '고유값', to: '고유값의 배율', type: 'uses', confidence: 0.9 }
+          ]
+        }),
+      () => {}
+    )
+    await extractor.run(store.active, 'q')
+    const id = (name: string): string | undefined => store.list<Concept>('concept').find((c) => c.name === name)?.id
+    const relation = (from: string, to: string): Relation | undefined =>
+      store.list<Relation>('relation').find((r) => r.from === id(from) && r.to === id(to))
+    assert.equal(relation('고유값', '특성방정식')?.approved, true, 'both written in the cited turn')
+    assert.deepEqual(relation('고유값', '특성방정식')?.turnIds, ['t0'])
+    const unsupported = relation('선형변환', '고유값')
+    assert.ok(unsupported, 'kept as a suggestion')
+    assert.equal(unsupported.approved, false, 'no textual evidence: pending despite high confidence')
+    assert.equal(store.list<Concept>('concept').find((c) => c.name === '고유값의 배율')?.parentId, id('고유값'))
+    assert.equal(store.list<Relation>('relation').length, 2, 'no relation between a concept and its parent')
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tidy: unknown ids, invalid enums and question-like names are dropped; a null parent is accepted', async () => {
+  const { dir, store, project } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const c1 = store.createConcept(profile, ws, { name: '중심극한정리', level: 'concept', parentId: null })
+    const d1 = store.createConcept(profile, ws, { name: '표준화', level: 'detail', parentId: null })
+    const ghost = randomUUID()
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () =>
+        JSON.stringify({
+          merges: [{ source: c1, target: ghost }],
+          levels: [{ id: d1, level: 'subtopic' }],
+          parents: [
+            { name: '이건 어떻게 풀어?', level: 'topic', parent: null, children: [c1] },
+            { name: '통계학', level: 'topic', parent: null, children: [c1, ghost] }
+          ],
+          assign: [{ id: d1, parentId: ghost }],
+          relations: [
+            { from: c1, to: d1, type: 'uses', confidence: 2 },
+            { from: c1, to: d1, type: 'causes', confidence: 0.8 }
+          ]
+        }),
+      () => {}
+    )
+    const proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(proposal.changes, [
+      {
+        kind: 'newParent',
+        name: '통계학',
+        level: 'topic',
+        parent: null,
+        children: [{ concept: { id: c1, name: '중심극한정리' }, from: null, levelFrom: 'concept', levelTo: 'concept' }]
+      }
+    ])
+    const broken = new KnowledgeExtractor(store, async () => 'no json here', () => {})
+    // An empty proposal would record every candidate as reviewed, so unreadable output stays an error.
+    await assert.rejects(broken.tidyPreview(profile, ws), /JSON/)
+    broken.close()
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tidy: no relation is proposed or applied between a concept and its direct parent', async () => {
+  const { dir, store, project } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const c1 = store.createConcept(profile, ws, { name: '채널 용량', level: 'concept', parentId: null })
+    const d1 = store.createConcept(profile, ws, { name: '달성 가능성', level: 'detail', parentId: null })
+    const d2 = store.createConcept(profile, ws, { name: '역정리', level: 'detail', parentId: null })
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () =>
+        JSON.stringify({
+          merges: [],
+          levels: [],
+          parents: [],
+          assign: [{ id: d1, parentId: c1 }],
+          relations: [
+            { from: d1, to: c1, type: 'prerequisite', confidence: 0.9 }, // becomes its parent in this proposal
+            { from: c1, to: d1, type: 'part', confidence: 0.9 },
+            { from: d2, to: c1, type: 'uses', confidence: 0.9 }
+          ]
+        }),
+      () => {}
+    )
+    const proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(
+      proposal.changes.map((c) => (c.kind === 'relation' ? `${c.from.name}>${c.to.name}` : c.kind)),
+      ['move', '역정리>채널 용량']
+    )
+    // Meanwhile the user puts 역정리 under 채널 용량 too: its relation no longer applies.
+    store.editConcept(d2, '역정리', c1)
+    const result = extractor.tidyApply(profile, ws, proposal.id, [0, 1])
+    assert.deepEqual([result.moved, result.relations, result.skipped], [1, 0, [1]])
+    assert.equal(store.list<Relation>('relation').length, 0)
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('tidy: orphans and misplaced concepts are candidates; applying never breaks the 3-level tree', async () => {
   const { dir, store, project } = setup()
   try {
@@ -313,8 +529,9 @@ test('tidy: orphans and misplaced concepts are candidates; applying never breaks
           ],
           assign: [
             { id: d2, parentId: topic }, // wrong level: skipped
-            { id: d2, parentId: kept },
-            { id: keptDetail, parentId: kept } // already validly placed: untouched
+            { id: d2, parentId: kept }, // `kept` was not sent: an unknown id, dropped
+            { id: d2, parentId: c1 },
+            { id: keptDetail, parentId: kept } // not sent either: untouched
           ],
           relations: []
         }),
@@ -334,7 +551,7 @@ test('tidy: orphans and misplaced concepts are candidates; applying never breaks
     assert.equal(byName('표준화')?.parentId, normal.id)
     assert.equal(byName('정규화 상수')?.parentId, normal.id, 'the misplaced detail gets an intermediate concept')
     assert.equal(byName('베르누이 시행')?.parentId, kept, 'a valid parent stays')
-    assert.equal(byName('시행 횟수')?.parentId, kept)
+    assert.equal(byName('시행 횟수')?.parentId, c1)
     assert.deepEqual([stats.level, byName('중심극한정리')?.parentId], ['topic', stats.id])
     assert.equal(byName('확률')?.level, 'topic')
     assert.ok(!byName('엉뚱한 주제'), 'a parent without valid children is not created')
@@ -468,6 +685,8 @@ test('tidy: the preview writes nothing; apply applies only accepted changes that
     const continuous = make('연속확률분포', 'concept', topic)
     const pdf = make('확률밀도함수 그래프', 'concept', topic)
     const clt = make('중심극한정리', 'concept')
+    // Crowded, so its subtree (with the concepts the response names) is sent.
+    for (const name of ['베이즈 정리', '조건부확률', '표본분산']) make(name, 'concept', topic)
     const extractor = new KnowledgeExtractor(
       store,
       async () =>

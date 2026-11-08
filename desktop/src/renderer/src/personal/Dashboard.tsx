@@ -21,7 +21,7 @@ import Settings from './Settings'
 import { Icon } from './ToolbarIcons'
 import { Wordmark } from './Wordmark'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
-import { linkableConcepts, projectConcepts, questionTree, relationOverlay } from './questionTree'
+import { linkableConcepts, projectConcepts, questionTree, relationHighlight } from './questionTree'
 import { canDropGraphNode, canMoveGraphNode, moveGraphNode } from './graphMove'
 import { useT } from '../../../shared/i18n/react'
 import { i18n } from '../../../shared/i18n'
@@ -136,9 +136,17 @@ export default function Dashboard(): React.JSX.Element {
     () => (data && project ? linkableConcepts(data, project.id) : []),
     [data, project?.id]
   )
-  // Only while a concept's panel is open: its relations over the tree.
-  const relations = useMemo(() => (data ? relationOverlay(data, conceptId) : []), [data, conceptId])
   const openConcept = conceptId ? data?.concepts.find((c) => c.id === conceptId) : undefined
+  // Only while a concept's panel is open: it and its related concepts stand out in the graph.
+  const highlight = useMemo(
+    () => (data && openConcept ? relationHighlight(data, openConcept.id) : undefined),
+    [data, openConcept]
+  )
+  // The selected concept and its related concepts; MindMap frames those that are visible.
+  const focusIds = useMemo(
+    () => (highlight ? [highlight.focus, ...Object.keys(highlight.related)] : undefined),
+    [highlight]
+  )
   useEffect(() => {
     void window.fask.focusQuestion(selected?.id ?? null).catch(() => {})
   }, [selected?.id])
@@ -632,7 +640,8 @@ export default function Dashboard(): React.JSX.Element {
                     <MindMap
                       key={project.id}
                       root={graphRoot}
-                      relations={relations}
+                      highlight={highlight}
+                      focusIds={focusIds}
                       height="100%"
                       actions={
                         !locked && (
@@ -820,6 +829,7 @@ export default function Dashboard(): React.JSX.Element {
                     projectId={project.id}
                     run={run}
                     onOpenQuestion={(id, from) => setSelectedId(id, from)}
+                    onOpenConcept={setConceptId}
                     onClose={() => setConceptId('')}
                   />
                 )

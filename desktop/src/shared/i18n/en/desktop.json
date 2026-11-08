@@ -245,6 +245,7 @@
   "정의": "Definition",
   "수준": "Level",
   "관계": "Relations",
+  "관계 그래프": "Relation graph",
   "아직 관계가 없습니다.": "No relations yet.",
   "개념 정리 검토": "Review concept tidy-up",
   "정리 후보 {{n}}건 · 예상 약 {{k}} 토큰": "{{n}} candidates · about {{k}} tokens",
