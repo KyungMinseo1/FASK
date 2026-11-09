@@ -4,6 +4,7 @@ import type {
   DisplayInfo,
   HubStatus,
   LocalSettings,
+  ManagerState,
   PeerCode,
   PeerGrantInfo,
   PeerLinkInfo,
@@ -538,6 +539,13 @@ function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
   )
 }
 
+/** Status text of a linked PC's knowledge-manager state; `none` shows nothing. */
+const MANAGER_LABELS: Record<Exclude<ManagerState, 'none'>, string> = {
+  pending: '관리자 요청 대기',
+  granted: '지식 관리자',
+  rejected: '요청 거절됨'
+}
+
 function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
   const [grants, setGrants] = useState<PeerGrantInfo[]>([]),
     [links, setLinks] = useState<PeerLinkInfo[]>([]),
@@ -589,8 +597,41 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
               </span>
               <span className="peer-info">
                 <strong>{g.name}</strong>
-                <small>{new Date(g.createdAt).toLocaleString()}</small>
+                <small>
+                  {new Date(g.createdAt).toLocaleString()}
+                  {g.manager !== 'none' && ` · ${t(MANAGER_LABELS[g.manager])}`}
+                </small>
               </span>
+              {g.manager === 'pending' ? (
+                <>
+                  <button
+                    disabled={busy}
+                    onClick={() => void act(() => window.fask.peerGrantManager(g.id, 'grant'))}
+                  >
+                    {t('수락')}
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={() => void act(() => window.fask.peerGrantManager(g.id, 'reject'))}
+                  >
+                    {t('거절')}
+                  </button>
+                </>
+              ) : g.manager === 'granted' ? (
+                <button
+                  disabled={busy}
+                  onClick={() => void act(() => window.fask.peerGrantManager(g.id, 'revoke'))}
+                >
+                  {t('관리자 해제')}
+                </button>
+              ) : (
+                <button
+                  disabled={busy}
+                  onClick={() => void act(() => window.fask.peerGrantManager(g.id, 'grant'))}
+                >
+                  {t('관리자로 지정')}
+                </button>
+              )}
               <button
                 className="danger"
                 disabled={busy}

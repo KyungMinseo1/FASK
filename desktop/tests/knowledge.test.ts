@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { crc32, inflateRawSync } from 'node:zlib'
 import { PersonalStore } from '../src/main/personal-store'
-import { KnowledgeExtractor, type Chat } from '../src/main/knowledge-extract'
+import { KnowledgeExtractor, skippedSubjects, type Chat } from '../src/main/knowledge-extract'
 import { buildExport, zip } from '../src/main/knowledge-export'
 import { PARENT_LEVEL } from '../src/main/personal-backup'
-import type { Concept, Project, Question, Relation, TidyResult, Turn, Workspace } from '../src/preload/personal'
+import type { Concept, Project, Question, Relation, TidyChange, TidyResult, Turn, Workspace } from '../src/preload/personal'
 
 /** Every parent sits exactly one level above its child; topics have no parent. */
 function assertHierarchy(concepts: Concept[]): void {
@@ -21,7 +21,7 @@ function assertHierarchy(concepts: Concept[]): void {
 /** Previews a tidy and applies every proposed change. */
 async function tidyAll(extractor: KnowledgeExtractor, profile: string, ws: string): Promise<TidyResult> {
   const proposal = await extractor.tidyPreview(profile, ws)
-  return extractor.tidyApply(profile, ws, proposal.id, proposal.changes.map((_, i) => i))
+  return extractor.tidyApply(profile, ws, proposal.id, proposal.changes.map((_, i) => i), [])
 }
 
 function kTurn(id: string, raw: string, answer: string, status: Turn['status'] = 'completed'): Turn {
@@ -110,11 +110,13 @@ test('extraction: a turn completed during a running extraction is extracted by a
       return JSON.stringify({
         concepts: first
           ? [
-              { name: '고유값', aliases: ['eigenvalue'], definition: '배율', level: 'concept', parent: '선형대수', turns: [0], confidence: 0.9 },
-              { name: '스펙트럼 정리', level: 'concept', parent: null, turns: [0], confidence: 0.4 }
+              { name: '고유값', aliases: ['eigenvalue'], definition: '배율', level: 'concept', role: 'focus', parent: '선형대수', turns: [0], confidence: 0.9 },
+              { name: '스펙트럼 정리', level: 'concept', role: 'focus', parent: null, turns: [0], confidence: 0.4 }
             ]
-          : [{ name: '고유벡터', level: 'concept', parent: '선형대수', turns: [1], confidence: 0.8 }],
-        relations: first ? [] : [{ from: '고유벡터', to: '고유값', type: 'uses', confidence: 0.5 }]
+          : [{ name: '고유벡터', level: 'concept', role: 'focus', parent: '선형대수', turns: [1], confidence: 0.8 }],
+        relations: first
+          ? []
+          : [{ from: '고유벡터', to: '고유값', type: 'uses', evidence: '방향이 바뀌지 않는  벡터의 배율이다.', confidence: 0.5 }]
       })
     }
     const extractor = new KnowledgeExtractor(store, chat, () => {})
@@ -148,9 +150,12 @@ test('extraction: a turn completed during a running extraction is extracted by a
     assert.deepEqual(done.conceptTurns[eigenvalue.id], ['t0'])
     assert.deepEqual(done.conceptTurns[vector.id], ['t1'])
     assert.ok(done.conceptIds.includes(eigenvalue.id) && done.conceptIds.includes(vector.id))
+    assert.deepEqual(done.conceptRoles, { [eigenvalue.id]: 'focus', [vector.id]: 'focus' })
+    assert.deepEqual(done.conceptSources, { [eigenvalue.id]: 'model', [vector.id]: 'model' })
     const relations = store.list<Relation>('relation')
     assert.equal(relations.length, 1)
     assert.equal(relations[0].approved, false, 'low-confidence relation waits for approval')
+    assert.equal(relations[0].evidence, '방향이 바뀌지 않는  벡터의 배율이다.', 'found despite the doubled space')
     extractor.close()
   } finally {
     store.close()
@@ -254,11 +259,10 @@ test('extraction: parents are exactly one level up; a wrong-level parent leaves 
       async () =>
         JSON.stringify({
           concepts: [
-            { name: '표준화', level: 'detail', parent: '정규분포', grandparent: '확률', turns: [0], confidence: 0.9 },
-            { name: 'z-점수', level: 'detail', parent: '확률', turns: [0], confidence: 0.9 },
-            { name: '확률론', level: 'topic', parent: '수학', turns: [0], confidence: 0.9 }
-          ],
-          relations: []
+            { name: '표준화', level: 'detail', role: 'focus', parent: '정규분포', grandparent: '확률', turns: [0], confidence: 0.9 },
+            { name: 'z-점수', level: 'detail', role: 'focus', parent: '확률', turns: [0], confidence: 0.9 },
+            { name: '확률론', level: 'topic', role: 'focus', parent: '수학', turns: [0], confidence: 0.9 }
+          ]
         }),
       () => {}
     )
@@ -292,6 +296,7 @@ test('extraction: invalid items are dropped; a null parent is an accepted absten
       aliases: [],
       definition: '',
       level: 'concept',
+      role: 'focus',
       parent: null,
       grandparent: null,
       turns: [0],
@@ -311,11 +316,14 @@ test('extraction: invalid items are dropped; a null parent is an accepted absten
             concept('123.'),
             concept('가'.repeat(61)),
             concept('벡터', { confidence: 1.5 }),
-            concept('배율', { parent: randomUUID() })
+            concept('배율', { parent: randomUUID() }),
+            concept('행렬', { role: 'main' }),
+            concept('선형 변환', { role: undefined })
           ],
           relations: [
-            { from: '고유값', to: randomUUID(), type: 'uses', confidence: 0.9 },
-            { from: '고유값', to: '고유값', type: 'causes', confidence: 0.9 }
+            { from: '고유값', to: randomUUID(), type: 'uses', evidence: LONG, confidence: 0.9 },
+            { from: '고유값', to: '고유값', type: 'causes', evidence: LONG, confidence: 0.9 },
+            { from: '고유값', to: '배율', type: 'uses', confidence: 0.9 }
           ]
         }),
       () => {}
@@ -359,49 +367,145 @@ test('extraction: unparseable output is an empty result; a failed call keeps the
   }
 })
 
-test('extraction: a relation is approved only when both concepts appear in its cited turns', async () => {
+test('extraction: a relation needs a focus end and an answer sentence as evidence; a related pair gets no second one', async () => {
   const { dir, store, put } = setup()
   try {
     put('q', [kTurn('t0', '고유값이 뭐야?', LONG)])
-    const concept = (name: string): Record<string, unknown> => ({
+    const concept = (name: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
       name,
       level: 'concept',
+      role: 'focus',
       parent: null,
       turns: [0],
-      confidence: 0.9
+      confidence: 0.9,
+      ...extra
     })
     const extractor = new KnowledgeExtractor(
       store,
       async () =>
         JSON.stringify({
-          // LONG writes "선형 변환" with a space: "선형변환" has no textual evidence.
           concepts: [
             concept('고유값'),
             concept('특성방정식'),
-            concept('선형변환'),
             { ...concept('고유값의 배율'), level: 'detail', parent: '고유값' }
           ],
           relations: [
-            { from: '고유값', to: '특성방정식', type: 'uses', confidence: 0.9 },
-            { from: '선형변환', to: '고유값', type: 'uses', confidence: 0.95 },
+            { from: '고유값', to: '특성방정식', type: 'uses', evidence: '특성방정식으로 구한다.', confidence: 0.9 },
+            // The pair is already related above: no second relation of another type or direction.
+            { from: '특성방정식', to: '고유값', type: 'prerequisite', evidence: '특성방정식으로 구한다.', confidence: 0.9 },
             // Its own parent: the hierarchy already says it.
-            { from: '고유값의 배율', to: '고유값', type: 'part', confidence: 0.9 },
-            { from: '고유값', to: '고유값의 배율', type: 'uses', confidence: 0.9 }
+            { from: '고유값의 배율', to: '고유값', type: 'part', evidence: '벡터의 배율이다.', confidence: 0.9 },
+            // Not a sentence of the answer.
+            { from: '특성방정식', to: '고유값의 배율', type: 'uses', evidence: '특성방정식은 배율을 쓴다.', confidence: 0.9 }
           ]
         }),
       () => {}
     )
     await extractor.run(store.active, 'q')
     const id = (name: string): string | undefined => store.list<Concept>('concept').find((c) => c.name === name)?.id
-    const relation = (from: string, to: string): Relation | undefined =>
-      store.list<Relation>('relation').find((r) => r.from === id(from) && r.to === id(to))
-    assert.equal(relation('고유값', '특성방정식')?.approved, true, 'both written in the cited turn')
-    assert.deepEqual(relation('고유값', '특성방정식')?.turnIds, ['t0'])
-    const unsupported = relation('선형변환', '고유값')
-    assert.ok(unsupported, 'kept as a suggestion')
-    assert.equal(unsupported.approved, false, 'no textual evidence: pending despite high confidence')
+    const relations = store.list<Relation>('relation')
+    assert.equal(relations.length, 1)
+    assert.deepEqual(
+      [relations[0].from, relations[0].to, relations[0].approved, relations[0].evidence, relations[0].turnIds],
+      [id('고유값'), id('특성방정식'), true, '특성방정식으로 구한다.', ['t0']]
+    )
     assert.equal(store.list<Concept>('concept').find((c) => c.name === '고유값의 배율')?.parentId, id('고유값'))
-    assert.equal(store.list<Relation>('relation').length, 2, 'no relation between a concept and its parent')
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('extraction: a support concept without a node is a candidate until another question has it', async () => {
+  const { dir, store, put } = setup()
+  try {
+    put('a', [kTurn('ta', '고유값이 뭐야?', LONG)])
+    put('b', [kTurn('tb', '대각화는 어떻게 해?', `${LONG} 대각화도 특성방정식을 쓴다.`)])
+    const extractor = new KnowledgeExtractor(
+      store,
+      async (_p, _m, _i, input) => {
+        const first = JSON.parse(input).turns[0].question === '고유값이 뭐야?'
+        return JSON.stringify({
+          concepts: [
+            { name: first ? '고유값' : '대각화', level: 'concept', role: 'focus', parent: '선형대수', turns: [0], confidence: 0.9 },
+            { name: '특성방정식', aliases: ['characteristic equation'], definition: '고유값을 구하는 식', level: 'concept', role: 'support', parent: '선형대수', turns: [0], confidence: 0.9 }
+          ],
+          relations: [
+            { from: first ? '고유값' : '대각화', to: '특성방정식', type: 'uses', evidence: '특성방정식으로 구한다.', confidence: 0.9 }
+          ]
+        })
+      },
+      () => {}
+    )
+    await extractor.run(store.active, 'a')
+    const named = (name: string): Concept | undefined => store.list<Concept>('concept').find((c) => c.name === name)
+    assert.ok(!named('특성방정식'), 'a support concept without a node is not created')
+    const a = store.record<Question>('question', 'a')
+    assert.deepEqual(a.suggestions, ['특성방정식'])
+    assert.equal(a.conceptIds.length, 1)
+    assert.equal(store.list<Relation>('relation').length, 0, 'a candidate has no relations')
+
+    await extractor.run(store.active, 'b')
+    const equation = named('특성방정식')
+    assert.ok(equation, 'the candidate recurring in another question becomes a node')
+    assert.equal(equation.parentId, named('선형대수')?.id, 'it joins the existing parent')
+    const b = store.record<Question>('question', 'b')
+    assert.equal(b.conceptRoles?.[equation.id], 'support')
+    assert.equal(b.conceptSources?.[equation.id], 'model')
+    const promoted = store.record<Question>('question', 'a')
+    assert.ok(promoted.conceptIds.includes(equation.id), 'the earlier question links it too')
+    assert.deepEqual([promoted.conceptRoles?.[equation.id], promoted.conceptSources?.[equation.id]], ['support', 'model'])
+    assert.deepEqual(promoted.suggestions, [])
+    assert.equal(promoted.conceptTurns[equation.id], undefined)
+    assert.equal(store.list<Relation>('relation').length, 1, 'focus–support relation from the answer')
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('extraction: a linked model focus returned as support becomes support; a user link stays focus', async () => {
+  const { dir, store, project, put } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const eigen = store.createConcept(profile, ws, { name: '고유값', level: 'concept' })
+    const matrix = store.createConcept(profile, ws, { name: '행렬', level: 'concept' })
+    const vector = store.createConcept(profile, ws, { name: '벡터', level: 'concept' })
+    const q = put('q', [kTurn('t0', '고유값이 뭐야?', LONG), kTurn('t1', '대각화는?', `${LONG} 대각화는 고유값 분해다.`)])
+    store.put('question', profile, {
+      ...q,
+      conceptIds: [eigen, matrix, vector],
+      conceptRoles: { [eigen]: 'focus', [matrix]: 'focus' },
+      conceptSources: { [eigen]: 'model', [matrix]: 'user' },
+      extractedTurns: 1
+    })
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () =>
+        JSON.stringify({
+          concepts: [
+            { name: '고유값', existingId: eigen, level: 'concept', role: 'support', parent: null, turns: [1], confidence: 0.9 },
+            { name: '행렬', existingId: matrix, level: 'concept', role: 'support', parent: null, turns: [1], confidence: 0.9 },
+            { name: '벡터', existingId: vector, level: 'concept', role: 'support', parent: null, turns: [1], confidence: 0.9 },
+            { name: '대각화', level: 'concept', role: 'focus', parent: null, turns: [1], confidence: 0.9 }
+          ]
+        }),
+      () => {}
+    )
+    await extractor.run(profile, 'q')
+    const done = store.record<Question>('question', 'q')
+    const diagonal = store.findConceptByName(profile, ws, '대각화')?.id
+    assert.ok(diagonal)
+    assert.deepEqual(done.conceptRoles, {
+      [eigen]: 'support',
+      [matrix]: 'focus',
+      [vector]: 'support',
+      [diagonal]: 'focus'
+    })
+    assert.deepEqual(done.conceptSources, { [eigen]: 'model', [matrix]: 'user', [diagonal]: 'model' })
     extractor.close()
   } finally {
     store.close()
@@ -428,10 +532,13 @@ test('tidy: unknown ids, invalid enums and question-like names are dropped; a nu
             { name: '통계학', level: 'topic', parent: null, children: [c1, ghost] }
           ],
           assign: [{ id: d1, parentId: ghost }],
-          relations: [
-            { from: c1, to: d1, type: 'uses', confidence: 2 },
-            { from: c1, to: d1, type: 'causes', confidence: 0.8 }
-          ]
+          folds: [{ source: d1, target: ghost }],
+          demotes: [ghost],
+          renames: [{ id: c1, name: '이건 어떻게 풀어?' }],
+          promotes: [{ name: '표본', level: 'chapter', parent: null }],
+          unrelate: [randomUUID()],
+          // Tidy no longer creates relations; the key is ignored.
+          relations: [{ from: c1, to: d1, type: 'uses', confidence: 0.9 }]
         }),
       () => {}
     )
@@ -456,40 +563,212 @@ test('tidy: unknown ids, invalid enums and question-like names are dropped; a nu
   }
 })
 
-test('tidy: no relation is proposed or applied between a concept and its direct parent', async () => {
+test('tidy: a conflicting relation pair is offered; unrelate removes one, a kept pair waits for a new relation', async () => {
   const { dir, store, project } = setup()
   try {
     const profile = store.active
     const ws = project.workspaceId
-    const c1 = store.createConcept(profile, ws, { name: '채널 용량', level: 'concept', parentId: null })
-    const d1 = store.createConcept(profile, ws, { name: '달성 가능성', level: 'detail', parentId: null })
-    const d2 = store.createConcept(profile, ws, { name: '역정리', level: 'detail', parentId: null })
+    const make = (name: string): string => store.createConcept(profile, ws, { name, level: 'topic', manual: true })
+    const signal = make('신호처리'),
+      stats = make('통계학')
+    const base = { questionId: null, turnIds: [], confidence: 0.9, approved: true }
+    const uses = store.addRelation(profile, { ...base, from: signal, to: stats, type: 'uses' })
+    const prerequisite = store.addRelation(profile, { ...base, from: stats, to: signal, type: 'prerequisite' })
+    let unrelate = [prerequisite]
     const extractor = new KnowledgeExtractor(
       store,
       async () =>
         JSON.stringify({
-          merges: [],
-          levels: [],
-          parents: [],
-          assign: [{ id: d1, parentId: c1 }],
-          relations: [
-            { from: d1, to: c1, type: 'prerequisite', confidence: 0.9 }, // becomes its parent in this proposal
-            { from: c1, to: d1, type: 'part', confidence: 0.9 },
-            { from: d2, to: c1, type: 'uses', confidence: 0.9 }
-          ]
+          unrelate,
+          relations: [{ from: signal, to: stats, type: 'contrast', confidence: 0.9 }]
         }),
       () => {}
     )
-    const proposal = await extractor.tidyPreview(profile, ws)
-    assert.deepEqual(
-      proposal.changes.map((c) => (c.kind === 'relation' ? `${c.from.name}>${c.to.name}` : c.kind)),
-      ['move', '역정리>채널 용량']
+    const plan = extractor.plan(profile, ws)
+    assert.equal(plan.candidates, 1)
+    assert.deepEqual(JSON.parse(plan.input).conflicts.map((r: { id: string }) => r.id).sort(), [uses, prerequisite].sort())
+    let proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(proposal.changes, [
+      {
+        kind: 'unrelate',
+        relation: prerequisite,
+        from: { id: stats, name: '통계학' },
+        to: { id: signal, name: '신호처리' },
+        type: 'prerequisite'
+      }
+    ])
+    // Dismissed: both are kept and not offered again.
+    extractor.tidyApply(profile, ws, proposal.id, [], [0])
+    assert.equal(extractor.plan(profile, ws).candidates, 0)
+    assert.equal(store.list<Relation>('relation').length, 2, 'tidy creates no relation')
+
+    const contrast = store.addRelation(profile, { ...base, from: signal, to: stats, type: 'contrast' })
+    assert.equal(extractor.plan(profile, ws).candidates, 1, 'a new relation reopens the pair')
+    unrelate = [contrast]
+    proposal = await extractor.tidyPreview(profile, ws)
+    const result = extractor.tidyApply(profile, ws, proposal.id, [0], [])
+    assert.deepEqual([result.unrelated, result.skipped], [1, []])
+    assert.ok(store.record<Relation>('relation', contrast).invalidatedAt)
+    assert.equal(store.record<Relation>('relation', uses).invalidatedAt, null)
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tidy: a weak concept folds into its question’s focus concept; one left alone is not offered again', async () => {
+  const { dir, store, project, put } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const topic = store.createConcept(profile, ws, { name: '정보이론', level: 'topic', manual: true })
+    const coding = store.createConcept(profile, ws, { name: '채널 부호화', level: 'concept', parentId: topic, definition: '잡음에 강하게 부호를 고르는 방법' })
+    const size = store.createConcept(profile, ws, { name: '코드북 크기', level: 'detail', parentId: coding, definition: '코드워드의 개수.' })
+    const euler = store.createConcept(profile, ws, { name: '오일러 공식', level: 'detail', parentId: coding })
+    const q = put('q', [kTurn('t0', '채널 부호화가 뭐야?', `${LONG} 코드북 크기와 오일러 공식도 나온다.`)])
+    store.put('question', profile, {
+      ...q,
+      conceptIds: [coding, size, euler],
+      conceptRoles: { [coding]: 'focus', [size]: 'support', [euler]: 'support' },
+      conceptSources: { [coding]: 'model', [size]: 'model', [euler]: 'model' },
+      extractedTurns: 1
+    })
+    let calls = 0
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () => {
+        calls++
+        return JSON.stringify({
+          folds: [
+            { source: size, target: coding },
+            { source: euler, target: topic } // neither its parent, a sibling nor its question's focus
+          ],
+          demotes: [coding] // not weak
+        })
+      },
+      () => {}
     )
-    // Meanwhile the user puts 역정리 under 채널 용량 too: its relation no longer applies.
-    store.editConcept(d2, '역정리', c1)
-    const result = extractor.tidyApply(profile, ws, proposal.id, [0, 1])
-    assert.deepEqual([result.moved, result.relations, result.skipped], [1, 0, [1]])
-    assert.equal(store.list<Relation>('relation').length, 0)
+    const plan = extractor.plan(profile, ws)
+    const input = JSON.parse(plan.input)
+    assert.deepEqual(input.weak.map((w: { id: string }) => w.id).sort(), [size, euler].sort())
+    const weakSize = input.weak.find((w: { id: string }) => w.id === size)
+    assert.deepEqual(weakSize.parent, { id: coding, name: '채널 부호화' })
+    assert.deepEqual(weakSize.siblings, [{ id: euler, name: '오일러 공식' }])
+    assert.deepEqual(weakSize.focus, [{ id: coding, name: '채널 부호화' }])
+    const proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(proposal.changes, [
+      { kind: 'fold', source: { id: size, name: '코드북 크기' }, target: { id: coding, name: '채널 부호화' } }
+    ])
+    const result = extractor.tidyApply(profile, ws, proposal.id, [0], [])
+    assert.deepEqual([result.folded, result.skipped], [1, []])
+    const folded = store.record<Concept>('concept', coding)
+    assert.deepEqual(folded.aliases, ['코드북 크기'])
+    assert.equal(folded.definition, '잡음에 강하게 부호를 고르는 방법. 코드워드의 개수.')
+    assert.equal(folded.manual, false)
+    const done = store.record<Question>('question', 'q')
+    assert.deepEqual(done.conceptIds, [coding, euler])
+    assert.deepEqual(done.conceptRoles, { [coding]: 'focus', [euler]: 'support' }, 'the focus keeps its role')
+    // Left alone: recorded with its usage and not offered again until that changes.
+    assert.ok(store.record<Concept>('concept', euler).tidyKept)
+    assert.equal(extractor.plan(profile, ws).candidates, 0)
+    // Its usage changes (the link's source is no longer recorded): offered again.
+    store.put('question', profile, { ...done, conceptSources: { [coding]: 'model' } })
+    assert.equal(extractor.plan(profile, ws).candidates, 1)
+    assert.equal(calls, 1)
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tidy: re-judged tags set roles, replace with a candidate name and ask to confirm unknown-source removals', async () => {
+  const { dir, store, project, put } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const topic = store.createConcept(profile, ws, { name: '정보이론', level: 'topic', manual: true })
+    const capacity = store.createConcept(profile, ws, { name: '채널 용량', level: 'concept', parentId: topic })
+    const info = store.createConcept(profile, ws, { name: '상호정보량', level: 'concept', parentId: topic })
+    const converse = store.createConcept(profile, ws, { name: '상한 증명', level: 'detail', parentId: capacity, manual: true })
+    const mine = store.createConcept(profile, ws, { name: '엔트로피', level: 'concept', parentId: topic, manual: true })
+    const answer = '채널 용량은 상호정보량의 최댓값이다. 엔트로피와 함께 정의된다. 전송률이 그보다 작으면 오류 없이 보낼 수 있다.'
+    const q = put('q', [kTurn('t0', '채널 용량이 뭐야?', answer)])
+    store.put('question', profile, {
+      ...q,
+      conceptIds: [capacity, info, converse, mine],
+      conceptSources: { [info]: 'model', [mine]: 'user' },
+      conceptRoles: { [mine]: 'focus' },
+      extractedTurns: 1
+    })
+    // One unjudged link the conversation names: judged locally as focus.
+    const one = put('one', [kTurn('o0', '상호정보량은?', answer)])
+    store.put('question', profile, { ...one, conceptIds: [info], extractedTurns: 1 })
+    const inputs: Record<string, unknown>[] = []
+    const extractor = new KnowledgeExtractor(
+      store,
+      async (_p, _m, _i, input) => {
+        const parsed = JSON.parse(input)
+        inputs.push(parsed)
+        return JSON.stringify({
+          items: parsed.judge
+            ? [{ id: capacity, verdict: 'focus' }]
+            : [
+                { id: capacity, verdict: 'unsure' },
+                { id: info, verdict: 'replace', target: '전송률' },
+                { id: converse, verdict: 'remove' },
+                { id: mine, verdict: 'remove' } // a user link: never judged
+              ]
+        })
+      },
+      () => {}
+    )
+    const plan = extractor.plan(profile, ws)
+    assert.deepEqual([plan.candidates, plan.retag], [1, 1])
+    const proposal = await extractor.tidyPreview(profile, ws)
+    assert.equal(inputs.length, 0, 'no structural candidates: no tidy call')
+    assert.equal(proposal.retag, 1)
+    assert.deepEqual(proposal.changes, [
+      {
+        kind: 'retag',
+        question: { id: 'one', title: '상호정보량은?' },
+        items: [{ concept: { id: info, name: '상호정보량' }, from: null, verdict: 'focus', target: null, suspect: false }],
+        confirm: false
+      }
+    ])
+    const retag = await extractor.tidyRetag(profile, ws, proposal.id)
+    assert.equal(inputs.length, 2, 'the unsure link gets one more call with the full turns')
+    assert.deepEqual(inputs[1].judge, [capacity])
+    const linked = (inputs[0].linked as { id: string; user: boolean; suspect: boolean }[]).map((l) => [l.id, l.user, l.suspect])
+    assert.deepEqual(linked, [
+      [capacity, false, false],
+      [info, false, false],
+      [converse, false, true],
+      [mine, true, false]
+    ])
+    assert.equal(retag.remaining, 0)
+    assert.deepEqual(retag.changes, [
+      {
+        kind: 'retag',
+        question: { id: 'q', title: '채널 용량이 뭐야?' },
+        items: [
+          { concept: { id: info, name: '상호정보량' }, from: null, verdict: 'replace', target: { id: null, name: '전송률' }, suspect: false },
+          { concept: { id: converse, name: '상한 증명' }, from: null, verdict: 'remove', target: null, suspect: true },
+          { concept: { id: capacity, name: '채널 용량' }, from: null, verdict: 'focus', target: null, suspect: false }
+        ],
+        confirm: true
+      }
+    ])
+    const result = extractor.tidyApply(profile, ws, proposal.id, [0, 1], [])
+    assert.deepEqual([result.retagged, result.skipped], [2, []])
+    const done = store.record<Question>('question', 'q')
+    assert.deepEqual(done.conceptIds, [capacity, mine])
+    assert.deepEqual(done.conceptRoles, { [mine]: 'focus', [capacity]: 'focus' })
+    assert.deepEqual(done.suggestions, ['전송률'])
+    assert.equal(store.record<Question>('question', 'one').conceptRoles?.[info], 'focus')
+    assert.equal(extractor.plan(profile, ws).retag, 0)
+    await assert.rejects(extractor.tidyRetag(profile, ws, proposal.id), /만료/)
     extractor.close()
   } finally {
     store.close()
@@ -502,8 +781,9 @@ test('tidy: orphans and misplaced concepts are candidates; applying never breaks
   try {
     const profile = store.active
     const ws = project.workspaceId
+    // Manual: placement tests, not usage (weak concepts, thin topics).
     const make = (name: string, level: Concept['level'], parentId: string | null = null): string =>
-      store.createConcept(profile, ws, { name, level, parentId })
+      store.createConcept(profile, ws, { name, level, parentId, manual: true })
     const topic = make('확률', 'topic')
     const kept = make('이항분포', 'concept', topic)
     const keptDetail = make('베르누이 시행', 'detail', kept)
@@ -532,8 +812,7 @@ test('tidy: orphans and misplaced concepts are candidates; applying never breaks
             { id: d2, parentId: kept }, // `kept` was not sent: an unknown id, dropped
             { id: d2, parentId: c1 },
             { id: keptDetail, parentId: kept } // not sent either: untouched
-          ],
-          relations: []
+          ]
         }),
       () => {}
     )
@@ -569,8 +848,9 @@ test('tidy: a crowded topic is offered; levels + assign regroup a concept as a s
   try {
     const profile = store.active
     const ws = project.workspaceId
+    // Manual: placement tests, not usage (weak concepts, thin topics).
     const make = (name: string, level: Concept['level'], parentId: string | null = null): string =>
-      store.createConcept(profile, ws, { name, level, parentId })
+      store.createConcept(profile, ws, { name, level, parentId, manual: true })
     // The migrated real-data shape: detail-ish items sit as concepts directly under the topic.
     const topic = make('확률과 통계', 'topic')
     const continuous = make('연속확률분포', 'concept', topic)
@@ -598,8 +878,7 @@ test('tidy: a crowded topic is offered; levels + assign regroup a concept as a s
             { id: exp, parentId: continuous },
             { id: discrete, parentId: continuous }, // has a detail child: stays
             { id: matrix, parentId: continuous } // another topic's concept: not a sibling, stays
-          ],
-          relations: []
+          ]
         }),
       () => {}
     )
@@ -630,8 +909,9 @@ test('tidy: a topic is crowded after 5 new direct concepts; only candidate subtr
   try {
     const profile = store.active
     const ws = project.workspaceId
+    // Manual: placement tests, not usage (weak concepts, thin topics).
     const make = (name: string, level: Concept['level'], parentId: string | null = null): string =>
-      store.createConcept(profile, ws, { name, level, parentId })
+      store.createConcept(profile, ws, { name, level, parentId, manual: true })
     const topic = make('선형대수', 'topic')
     const under = ['벡터', '내적', '외적', '노름'].map((name) => make(name, 'concept', topic))
     const detail = make('크기와 방향', 'detail', under[0])
@@ -642,7 +922,7 @@ test('tidy: a topic is crowded after 5 new direct concepts; only candidate subtr
       store,
       async (_profile, _model, _instruction, input) => {
         inputs.push(input)
-        return JSON.stringify({ merges: [], levels: [], parents: [], assign: [], relations: [] })
+        return JSON.stringify({ merges: [], levels: [], parents: [], assign: [] })
       },
       () => {}
     )
@@ -679,8 +959,9 @@ test('tidy: the preview writes nothing; apply applies only accepted changes that
   try {
     const profile = store.active
     const ws = project.workspaceId
+    // Manual: placement tests, not usage (weak concepts, thin topics).
     const make = (name: string, level: Concept['level'], parentId: string | null = null): string =>
-      store.createConcept(profile, ws, { name, level, parentId })
+      store.createConcept(profile, ws, { name, level, parentId, manual: true })
     const topic = make('확률과 통계', 'topic')
     const continuous = make('연속확률분포', 'concept', topic)
     const pdf = make('확률밀도함수 그래프', 'concept', topic)
@@ -694,8 +975,7 @@ test('tidy: the preview writes nothing; apply applies only accepted changes that
           merges: [],
           levels: [{ id: pdf, level: 'detail' }],
           parents: [{ name: '통계학', level: 'topic', children: [clt] }],
-          assign: [{ id: pdf, parentId: continuous }],
-          relations: [{ from: clt, to: continuous, type: 'uses', confidence: 0.8 }]
+          assign: [{ id: pdf, parentId: continuous }]
         }),
       () => {}
     )
@@ -718,25 +998,29 @@ test('tidy: the preview writes nothing; apply applies only accepted changes that
         to: { id: continuous, name: '연속확률분포' },
         levelFrom: 'concept',
         levelTo: 'detail'
-      },
-      {
-        kind: 'relation',
-        from: { id: clt, name: '중심극한정리' },
-        to: { id: continuous, name: '연속확률분포' },
-        type: 'uses',
-        confidence: 0.8
       }
     ])
     // Meanwhile the user places the concept the new parent was for: that change no longer fits.
     store.editConcept(clt, '중심극한정리', topic)
-    const result = extractor.tidyApply(profile, ws, proposal.id, [0, 1])
-    assert.deepEqual(result, { merged: 0, parents: 0, moved: 1, relations: 0, skipped: [0] })
+    const result = extractor.tidyApply(profile, ws, proposal.id, [0, 1], [])
+    assert.deepEqual(result, {
+      merged: 0,
+      folded: 0,
+      demoted: 0,
+      renamed: 0,
+      promoted: 0,
+      parents: 0,
+      moved: 1,
+      unrelated: 0,
+      retagged: 0,
+      movedQuestions: 0,
+      skipped: [0]
+    })
     const get = (id: string): Concept => store.record<Concept>('concept', id)
     assert.deepEqual([get(pdf).level, get(pdf).parentId], ['detail', continuous])
     assert.equal(get(clt).parentId, topic)
     assert.ok(!store.findConceptByName(profile, ws, '통계학'), 'a skipped new parent is not created')
-    assert.equal(store.list<Relation>('relation').length, 0, 'the unaccepted relation is not added')
-    assert.throws(() => extractor.tidyApply(profile, ws, proposal.id, [2]), /만료/, 'a proposal applies once')
+    assert.throws(() => extractor.tidyApply(profile, ws, proposal.id, [1], []), /만료/, 'a proposal applies once')
     extractor.close()
   } finally {
     store.close()
@@ -744,13 +1028,14 @@ test('tidy: the preview writes nothing; apply applies only accepted changes that
   }
 })
 
-test('tidy: rejected and untouched candidates are not offered again until they change', async () => {
+test('tidy: skipped candidates are offered again; dismissed and untouched ones are not until they change', async () => {
   const { dir, store, project } = setup()
   try {
     const profile = store.active
     const ws = project.workspaceId
+    // Manual: placement tests, not usage (weak concepts, thin topics).
     const make = (name: string, level: Concept['level'], parentId: string | null = null): string =>
-      store.createConcept(profile, ws, { name, level, parentId })
+      store.createConcept(profile, ws, { name, level, parentId, manual: true })
     const topic = make('확률', 'topic')
     const normal = make('정규분포', 'concept', topic)
     const standard = make('표준 정규분포', 'concept', topic)
@@ -765,8 +1050,7 @@ test('tidy: rejected and untouched candidates are not offered again until they c
           merges: [{ source: standard, target: normal }],
           levels: [],
           parents: [{ name: '통계학', level: 'topic', children: [rejected] }],
-          assign: [],
-          relations: []
+          assign: []
         })
       },
       () => {}
@@ -774,13 +1058,29 @@ test('tidy: rejected and untouched candidates are not offered again until they c
     const plan = extractor.plan(profile, ws)
     assert.equal(plan.candidates, 3)
     assert.deepEqual(plan.pairs.map((p) => [...p].sort()), [[normal, standard].sort()])
-    const proposal = await extractor.tidyPreview(profile, ws)
+    let proposal = await extractor.tidyPreview(profile, ws)
     assert.deepEqual(
       proposal.changes.map((c) => c.kind),
       ['merge', 'newParent']
     )
-    extractor.tidyApply(profile, ws, proposal.id, [])
-    assert.equal(extractor.plan(profile, ws).candidates, 0, 'rejected and untouched candidates are reviewed')
+    // Skipped (neither accepted nor dismissed): the pair and the new parent's child come back.
+    extractor.tidyApply(profile, ws, proposal.id, [], [])
+    let again = extractor.plan(profile, ws)
+    assert.equal(again.candidates, 2, 'only the skipped changes’ subjects are offered again')
+    assert.deepEqual(again.pairs.map((p) => [...p].sort()), [[normal, standard].sort()])
+    assert.deepEqual(JSON.parse(again.input).orphans, [rejected])
+    assert.equal(store.record<Concept>('concept', normal).tidyPairs, undefined)
+    assert.ok(store.record<Concept>('concept', untouched).tidyReviewed, 'the untouched candidate is recorded')
+
+    // Dismissed: reviewed and not offered again.
+    proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(
+      proposal.changes.map((c) => c.kind),
+      ['merge', 'newParent']
+    )
+    extractor.tidyApply(profile, ws, proposal.id, [], [0, 1])
+    again = extractor.plan(profile, ws)
+    assert.equal(again.candidates, 0, 'dismissed and untouched candidates are reviewed')
     assert.deepEqual(store.record<Concept>('concept', normal).tidyPairs, [standard])
     assert.deepEqual(store.record<Concept>('concept', standard).tidyPairs, [normal])
 
@@ -788,12 +1088,12 @@ test('tidy: rejected and untouched candidates are not offered again until they c
     const other = make('베이즈 정리', 'concept')
     const empty = new KnowledgeExtractor(
       store,
-      async () => JSON.stringify({ merges: [], levels: [], parents: [], assign: [], relations: [] }),
+      async () => JSON.stringify({ merges: [], levels: [], parents: [], assign: [] }),
       () => {}
     )
     const none = await empty.tidyPreview(profile, ws)
     assert.deepEqual(none.changes, [])
-    empty.tidyApply(profile, ws, none.id, [])
+    empty.tidyApply(profile, ws, none.id, [], [])
     assert.equal(empty.plan(profile, ws).candidates, 0)
     empty.close()
 
@@ -804,7 +1104,7 @@ test('tidy: rejected and untouched candidates are not offered again until they c
     assert.deepEqual(JSON.parse(extractor.plan(profile, ws).input).orphans, [rejected])
     store.editConceptInfo(other, { level: 'detail' })
     assert.deepEqual(JSON.parse(extractor.plan(profile, ws).input).orphans.sort(), [rejected, other].sort())
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
 
     // A reviewed pair is forgotten with its partner.
     store.remove('concept', standard)
@@ -814,6 +1114,249 @@ test('tidy: rejected and untouched candidates are not offered again until they c
     store.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+/** Lets pending promise callbacks (a resolved chat stub, the job runner after it) run. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+}
+
+test('tidy: a background job runs per workspace, is read by status and cleared or applied', async () => {
+  const { dir, store, project } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const orphan = store.createConcept(profile, ws, { name: '중심극한정리', level: 'concept', manual: true })
+    const ws2 = store.create('workspace', '신호처리')
+    store.createConcept(profile, ws2, { name: '푸리에 변환', level: 'concept', manual: true })
+    const calls: { resolve: (s: string) => void }[] = []
+    const chat: Chat = () => new Promise<string>((resolve) => calls.push({ resolve }))
+    let notified = 0
+    const extractor = new KnowledgeExtractor(store, chat, () => notified++)
+
+    const job = extractor.tidyStart(profile, ws)
+    assert.equal(job.state, 'running')
+    assert.equal(extractor.tidyStatus(profile, ws)?.state, 'running')
+    assert.equal(extractor.tidyStart(profile, ws).id, job.id, 'a running job is returned as it is')
+    const job2 = extractor.tidyStart(profile, ws2)
+    assert.notEqual(job2.id, job.id)
+    await settle()
+    assert.equal(calls.length, 2, 'one tidy call per workspace')
+    const before = notified
+    calls[0].resolve(JSON.stringify({ merges: [], levels: [], parents: [{ name: '통계학', level: 'topic', children: [orphan] }], assign: [] }))
+    calls[1].resolve(JSON.stringify({ merges: [], levels: [], parents: [], assign: [] }))
+    await settle()
+    assert.ok(notified > before, 'the end is announced')
+    const ready = extractor.tidyStatus(profile, ws)
+    assert.equal(ready?.state, 'ready')
+    assert.equal(ready?.finishedAt !== null, true)
+    assert.deepEqual(ready?.proposal?.changes.map((c) => c.kind), ['newParent'])
+    const ready2 = extractor.tidyStatus(profile, ws2)
+    assert.equal(ready2?.state, 'ready')
+    assert.deepEqual(ready2?.proposal?.changes, [])
+    extractor.tidyClear(profile, ws2, job2.id)
+    assert.equal(extractor.tidyStatus(profile, ws2)?.state, 'ready', 'only a failed job is cleared')
+
+    extractor.tidyApply(profile, ws, ready!.proposal!.id, [0], [])
+    assert.equal(extractor.tidyStatus(profile, ws), null)
+    assert.equal(extractor.tidyLastApplied(profile, ws), job.id)
+    assert.ok(store.findConceptByName(profile, ws, '통계학'))
+    // The other workspace's proposal did not expire.
+    assert.equal(extractor.tidyStatus(profile, ws2)?.state, 'ready')
+    extractor.tidyApply(profile, ws2, ready2!.proposal!.id, [], [])
+    assert.equal(extractor.tidyLastApplied(profile, ws2), job2.id)
+
+    // A failed call fails the job; clearing it removes it.
+    store.createConcept(profile, ws, { name: '베이즈 정리', level: 'concept', manual: true })
+    const failing = new KnowledgeExtractor(
+      store,
+      async () => {
+        throw new Error('모델 오류')
+      },
+      () => {}
+    )
+    const failed = failing.tidyStart(profile, ws)
+    await settle()
+    const status = failing.tidyStatus(profile, ws)
+    assert.equal(status?.state, 'failed')
+    assert.equal(status?.proposal, null)
+    assert.match(status?.error ?? '', /모델 오류/)
+    failing.tidyClear(profile, ws, 'other')
+    assert.equal(failing.tidyStatus(profile, ws)?.id, failed.id, 'another id clears nothing')
+    failing.tidyClear(profile, ws, failed.id)
+    assert.equal(failing.tidyStatus(profile, ws), null)
+    failing.close()
+
+    // A restart loses jobs and the applied record.
+    const restarted = new KnowledgeExtractor(store, chat, () => {})
+    assert.equal(restarted.tidyStatus(profile, ws), null)
+    assert.equal(restarted.tidyLastApplied(profile, ws), null)
+    restarted.close()
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tidy: background re-tagging appends once and a later failure preserves a reviewable partial proposal', async () => {
+  for (const fail of [false, true]) {
+    const { dir, store, project, put } = setup()
+    let extractor: KnowledgeExtractor | undefined
+    try {
+      const profile = store.active
+      const ws = project.workspaceId
+      const topic = store.createConcept(profile, ws, { name: '정보이론', level: 'topic', manual: true })
+      const a = store.createConcept(profile, ws, { name: '엔트로피', level: 'concept', parentId: topic, manual: true })
+      const b = store.createConcept(profile, ws, { name: '상호정보량', level: 'concept', parentId: topic, manual: true })
+      for (const id of ['first', 'second']) {
+        const q = put(id, [kTurn(`${id}-turn`, '엔트로피와 상호정보량의 관계?', '두 정보량의 관계를 설명합니다.')])
+        store.put('question', profile, { ...q, conceptIds: [a, b], extractedTurns: 1 })
+      }
+      let calls = 0
+      extractor = new KnowledgeExtractor(store, async () => {
+        if (++calls === 2 && fail) throw new Error('second re-tag failed')
+        return JSON.stringify({ items: [{ id: a, verdict: 'focus' }, { id: b, verdict: 'support' }] })
+      }, () => {})
+      const plan = extractor.plan(profile, ws)
+      assert.equal(plan.retag, 2)
+      assert.deepEqual(plan.items.filter((c) => c.kind === 'question').map((c) => c.question.id), ['first', 'second'])
+      const initial = extractor.tidyStart(profile, ws)
+      initial.progress.done = 99
+      await settle()
+      const ready = extractor.tidyStatus(profile, ws)!
+      assert.equal(ready.state, 'ready')
+      assert.deepEqual(ready.progress, { done: fail ? 1 : 2, total: 2 })
+      assert.equal(ready.error, fail ? 'second re-tag failed' : '')
+      assert.deepEqual(ready.proposal!.changes.map((c) => c.kind === 'retag' ? c.question.id : c.kind),
+        fail ? ['first'] : ['first', 'second'])
+      const accepted = ready.proposal!.changes.map((_, i) => i)
+      ready.proposal!.changes.length = 0
+      assert.equal(extractor.tidyStatus(profile, ws)!.proposal!.changes.length, accepted.length, 'status is a detached view')
+      const result = extractor.tidyApply(profile, ws, ready.proposal!.id, accepted, [])
+      assert.equal(result.retagged, fail ? 1 : 2)
+      assert.deepEqual(store.record<Question>('question', 'first').conceptRoles, { [a]: 'focus', [b]: 'support' })
+      assert.equal(extractor.plan(profile, ws).retag, fail ? 1 : 0)
+    } finally {
+      extractor?.close()
+      store.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
+
+test('tidy: a skipped change keeps only its subjects open, not its context', async () => {
+  const { dir, store, project } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    // Manual: placement tests, not usage (weak concepts, thin topics).
+    const make = (name: string, level: Concept['level'], parentId: string | null = null): string =>
+      store.createConcept(profile, ws, { name, level, parentId, manual: true })
+    const topic = make('확률', 'topic')
+    const a = make('표준 정규분포', 'concept', topic)
+    const b = make('정규분포', 'concept', topic)
+    const x = make('표준화', 'detail')
+    const p = make('중심극한정리', 'concept')
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () =>
+        JSON.stringify({ merges: [{ source: a, target: b }], levels: [], parents: [], assign: [{ id: x, parentId: p }] }),
+      () => {}
+    )
+    assert.equal(extractor.plan(profile, ws).candidates, 3)
+    let proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(proposal.changes.map((c) => c.kind).sort(), ['merge', 'move'])
+    extractor.tidyApply(profile, ws, proposal.id, [], [])
+    const get = (id: string): Concept => store.record<Concept>('concept', id)
+    assert.equal(get(x).tidyReviewed, undefined, 'the moved concept is a subject')
+    assert.ok(get(p).tidyReviewed, 'the destination parent is context: recorded')
+    assert.equal(get(a).tidyPairs, undefined)
+    assert.equal(get(b).tidyPairs, undefined)
+    const plan = extractor.plan(profile, ws)
+    assert.deepEqual(JSON.parse(plan.input).orphans, [x])
+    assert.deepEqual(plan.pairs.map((pair) => [...pair].sort()), [[a, b].sort()])
+
+    proposal = await extractor.tidyPreview(profile, ws)
+    extractor.tidyApply(profile, ws, proposal.id, [], proposal.changes.map((_, i) => i))
+    assert.ok(get(x).tidyReviewed)
+    assert.deepEqual(get(a).tidyPairs, [b])
+    assert.equal(extractor.plan(profile, ws).candidates, 0, 'dismissed: none offered again')
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('tidy: a skipped fold inside a thin topic leaves the topic unreviewed', async () => {
+  const { dir, store, project } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    const topic = store.createConcept(profile, ws, { name: '신호처리', level: 'topic' })
+    const kept = store.createConcept(profile, ws, { name: '푸리에 변환', level: 'concept', parentId: topic })
+    const weak = store.createConcept(profile, ws, { name: '라플라스 변환', level: 'concept', parentId: topic })
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () => JSON.stringify({ folds: [{ source: weak, target: kept }] }),
+      () => {}
+    )
+    assert.deepEqual(JSON.parse(extractor.plan(profile, ws).input).thin, [topic])
+    let proposal = await extractor.tidyPreview(profile, ws)
+    assert.deepEqual(proposal.changes, [
+      { kind: 'fold', source: { id: weak, name: '라플라스 변환' }, target: { id: kept, name: '푸리에 변환' } }
+    ])
+    extractor.tidyApply(profile, ws, proposal.id, [], [])
+    assert.equal(store.record<Concept>('concept', topic).tidyKept, undefined)
+    assert.equal(store.record<Concept>('concept', weak).tidyKept, undefined)
+    assert.deepEqual(JSON.parse(extractor.plan(profile, ws).input).thin, [topic])
+
+    proposal = await extractor.tidyPreview(profile, ws)
+    extractor.tidyApply(profile, ws, proposal.id, [], [0])
+    assert.ok(store.record<Concept>('concept', topic).tidyKept, 'dismissed: the topic is reviewed')
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('skippedSubjects: subjects per change kind; context refs and retags add nothing', () => {
+  const concepts = new Map<string, Concept>(
+    [
+      ['t', null, 'topic'],
+      ['c', 't', 'concept'],
+      ['d', 'c', 'detail'],
+      ['old', null, 'concept'],
+      ['dest', null, 'concept']
+    ].map(([id, parentId, level]) => [id!, { id: id!, parentId, level, name: id } as unknown as Concept])
+  )
+  const graph = {
+    get: (id: unknown): Concept | undefined => (typeof id === 'string' ? concepts.get(id) : undefined),
+    follow: (id: unknown): unknown => (id === 'merged' ? 'c' : id),
+    resolve: (ref: unknown): Concept | undefined => (ref === 'old' ? concepts.get('old') : undefined)
+  }
+  const ref = (id: string | null): { id: string | null; name: string } => ({ id, name: id ?? 'new' })
+  const question = { id: 'q', title: 'Q' }
+  const changes: TidyChange[] = [
+    { kind: 'move', concept: ref('d'), from: ref('c'), to: ref('dest'), levelFrom: 'detail', levelTo: 'detail' },
+    { kind: 'merge', source: ref('merged'), target: ref(null) },
+    { kind: 'newParent', name: 'old', level: 'concept', parent: ref('t'), children: [] },
+    { kind: 'promote', name: ' Bayes ', level: 'concept', parent: ref('dest'), questions: [question] },
+    { kind: 'unrelate', relation: 'r', from: ref('old'), to: ref('dest'), type: 'uses' },
+    { kind: 'moveQuestion', question, to: { projectId: 'p', projectName: 'P', workspaceName: 'W' } },
+    { kind: 'retag', question: { id: 'q2', title: 'Q2' }, items: [], confirm: false }
+  ]
+  const all = skippedSubjects(graph, changes, changes.map((_, i) => i))
+  assert.deepEqual([...all.concepts].sort(), ['c', 'd', 'merged', 'old'].sort())
+  assert.ok(!all.concepts.has('dest') && !all.concepts.has('t'), 'destinations and parents are context')
+  assert.deepEqual([...all.ancestors].sort(), ['c', 't'])
+  assert.deepEqual([...all.pairs], ['dest|old'])
+  assert.equal(all.promotions.size, 1)
+  assert.deepEqual([...all.questions], ['q'], 'a retag records nothing, so it adds nothing')
+  const none = skippedSubjects(graph, changes, [])
+  assert.deepEqual([none.concepts.size, none.pairs.size, none.questions.size], [0, 0, 0])
 })
 
 test('zip writer output has valid headers, CRCs, and UTF-8 names', () => {

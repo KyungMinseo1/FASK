@@ -28,8 +28,10 @@ import TidyBar from '@desktop/renderer/src/personal/TidyBar'
 import {
   linkableConcepts,
   projectConcepts,
+  questionTags,
   questionTree,
-  relationHighlight
+  relationHighlight,
+  TAG_CHIPS
 } from '@desktop/renderer/src/personal/questionTree'
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
@@ -215,7 +217,13 @@ export default function ProjectScreen(): React.JSX.Element {
             </p>
           )}
           <div className="mobile-graph" ref={graphRef}>
-            <TidyBar workspaceId={project.workspaceId} revision={data} disabled={locked} sheet />
+            <TidyBar
+              workspaceId={project.workspaceId}
+              workspaceName={workspace?.name ?? ''}
+              revision={data}
+              disabled={locked}
+              sheet
+            />
             <MindMap
               root={graph}
               highlight={highlight}
@@ -696,16 +704,24 @@ function QuestionCard({
       <div className="question-footer">
         <span className="question-tags">
           {(() => {
-            const linked = q.conceptIds
-              .map((id) => concepts.find((c) => c.id === id))
-              .filter((c): c is { id: string; name: string } => !!c)
+            const linked = questionTags(q, concepts).focus
             if (!linked.length) return <span className="tag">{t('미분류')}</span>
-            return linked.map((c) => (
-              <span key={c.id} className="tag">
-                {c.name}
-                {shared.has(c.id) && <small className="shared-badge">{t('공유')}</small>}
-              </span>
-            ))
+            const hidden = linked.slice(TAG_CHIPS)
+            return (
+              <>
+                {linked.slice(0, TAG_CHIPS).map((c) => (
+                  <span key={c.id} className="tag">
+                    {c.name}
+                    {shared.has(c.id) && <small className="shared-badge">{t('공유')}</small>}
+                  </span>
+                ))}
+                {hidden.length > 0 && (
+                  <span className="tag more" title={hidden.map((c) => c.name).join(', ')}>
+                    +{hidden.length}
+                  </span>
+                )}
+              </>
+            )
           })()}
         </span>
         {q.turns.length > 1 && <span>{t('대화 {{n}}개', { n: q.turns.length })}</span>}

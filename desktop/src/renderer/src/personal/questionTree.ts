@@ -72,6 +72,33 @@ export function linkableConcepts(data: Snapshot, projectId: string): Concept[] {
   return [...concepts, ...rest]
 }
 
+/** Tag chips a question card shows before the rest collapses into '+N'. */
+export const TAG_CHIPS = 3
+
+/**
+ * A question's linked concepts split by role: `focus` (what it asks, shown as tags; a link
+ * without a role entry predates roles and counts as focus) and `support` (what the answer drew
+ * on, listed only in the question detail as '관련 개념'). User-linked focus comes first, then
+ * `conceptIds` order. Ids missing from `concepts` are skipped.
+ */
+export function questionTags<C extends { id: string }>(
+  q: Pick<Question, 'conceptIds' | 'conceptRoles' | 'conceptSources'>,
+  concepts: C[]
+): { focus: C[]; support: C[] } {
+  const byId = new Map(concepts.map((c) => [c.id, c]))
+  const user: C[] = []
+  const focus: C[] = []
+  const support: C[] = []
+  for (const id of q.conceptIds) {
+    const c = byId.get(id)
+    if (!c) continue
+    if (q.conceptRoles?.[id] === 'support') support.push(c)
+    else if (q.conceptSources?.[id] === 'user') user.push(c)
+    else focus.push(c)
+  }
+  return { focus: [...user, ...focus], support }
+}
+
 /**
  * Graph highlight for the selected concept (`c:<id>`): every concept sharing an approved, active
  * relation with it, tagged with the relation type's Korean source label and its direction (`out`:

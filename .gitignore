@@ -25,3 +25,6 @@ keystore.properties
 docs/
 # hallmark
 .hallmark/
+
+# Archify
+.archify/

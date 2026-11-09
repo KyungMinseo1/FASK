@@ -66,7 +66,7 @@ export default function ConceptPanel({
     setSaved(ok)
   }
   const relationRow = (r: Relation): React.JSX.Element => (
-    <li key={r.id} className={r.approved ? undefined : 'pending'}>
+    <li key={r.id} className={r.approved ? undefined : 'pending'} title={r.evidence || undefined}>
       <span>
         {r.from === concept.id ? (
           <>
@@ -115,7 +115,14 @@ export default function ConceptPanel({
           {own.map((q) => (
             <li key={q.id}>
               <button onClick={() => onOpenQuestion(q.id, concept.id)}>
-                <span>{questionHeading(q)}</span>
+                <span>
+                  {questionHeading(q)}
+                  {q.conceptRoles?.[concept.id] === 'support' && (
+                    <span className="support-badge" title={t('이 질문의 답변이 설명에 참고한 개념')}>
+                      {t('관련')}
+                    </span>
+                  )}
+                </span>
                 <small>
                   {dateLabel(q.createdAt)}
                   {(q.conceptTurns?.[concept.id]?.length ?? 0) > 1 &&

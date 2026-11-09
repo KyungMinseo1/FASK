@@ -1,83 +1,154 @@
 import { useEffect, useState } from 'react'
 import { useApi } from './api'
+import { errorText } from './common'
+import { useNotifications } from './notifications'
 import { Icon } from './ToolbarIcons'
 import TidyDialog from './TidyDialog'
 import { useT } from '../../../shared/i18n/react'
-import type { TidyResult } from '../../../preload/personal'
+import type { TidyEstimate, TidyResult, TidyStatus } from '../../../preload/personal'
+
+/** Result counters in display order with their Korean source labels. */
+const RESULT_PARTS: [keyof Omit<TidyResult, 'skipped'>, string][] = [
+  ['merged', '병합 {{n}}'],
+  ['folded', '흡수 {{n}}'],
+  ['demoted', '후보로 되돌림 {{n}}'],
+  ['renamed', '이름 정리 {{n}}'],
+  ['promoted', '후보 승격 {{n}}'],
+  ['parents', '상위 개념 {{n}}'],
+  ['moved', '이동 {{n}}'],
+  ['unrelated', '관계 정리 {{n}}'],
+  ['retagged', '태그 재판정 {{n}}'],
+  ['movedQuestions', '질문 이동 {{n}}']
+]
 
 /**
- * '정리 제안 n건 · 예상 약 k 토큰': a local estimate of the workspace tidy; the button opens the
- * review dialog, where the one LLM call runs only when the user asks for the proposal.
+ * The workspace tidy at a glance: with no job, '정리 제안 n건 · 태그 재판정 질문 r개 · 입력 약 k
+ * 토큰' (a local estimate); while the background job runs, its progress; when its proposal is
+ * ready, a highlighted '정리안 확인 필요'; when it failed, the reason with retry and dismiss. Each
+ * button opens the review dialog. Hidden when there is no candidate, job or apply result.
  * `revision` should change whenever the knowledge data changes; `sheet` shows the dialog as a
  * bottom sheet (phone).
  */
 export default function TidyBar({
   workspaceId,
+  workspaceName,
   revision,
   disabled = false,
   sheet = false
 }: {
   workspaceId: string
+  workspaceName: string
   revision: unknown
   disabled?: boolean
   sheet?: boolean
 }): React.JSX.Element | null {
   const t = useT()
   const api = useApi()
-  const [plan, setPlan] = useState<{ candidates: number; estimatedTokens: number } | null>(null)
-  // The estimate the dialog was opened with; null while closed.
-  const [open, setOpen] = useState<{ candidates: number; estimatedTokens: number } | null>(null)
+  const { watchTidy } = useNotifications()
+  const [plan, setPlan] = useState<TidyEstimate | null>(null)
+  const [status, setStatus] = useState<TidyStatus | null>(null)
+  const [open, setOpen] = useState(false)
   const [result, setResult] = useState<TidyResult | null>(null)
+  const [error, setError] = useState('')
   useEffect(() => {
     let live = true
     api.tidyPlan(workspaceId).then(
       (p) => live && setPlan(p),
       () => live && setPlan(null)
     )
+    api.tidyStatus(workspaceId).then(
+      (s) => live && setStatus(s),
+      () => live && setStatus(null)
+    )
     return () => {
       live = false
     }
   }, [api, workspaceId, revision])
   useEffect(() => {
-    setOpen(null)
+    setOpen(false)
     setResult(null)
+    setError('')
   }, [workspaceId])
-  if (!result && !open && !plan?.candidates) return null
-  const applied = result && result.merged + result.parents + result.moved + result.relations > 0
+  const job = status?.job ?? null
+  const retry = async (): Promise<void> => {
+    setError('')
+    try {
+      const next = await api.tidyStart(workspaceId)
+      watchTidy(workspaceId, next.id, workspaceName)
+    } catch (e) {
+      setError(errorText(e))
+    }
+  }
+  const pending = !!plan && plan.candidates + plan.retag > 0
+  if (!result && !open && !pending && !job) return null
+  const applied = result ? RESULT_PARTS.filter(([key]) => result[key] > 0) : []
+  const show = (): void => {
+    setResult(null)
+    setOpen(true)
+  }
   return (
     <div className="tidy-bar" role="status">
-      {plan && plan.candidates > 0 && (
-        <button
-          disabled={disabled || !!open}
-          onClick={() => {
-            setResult(null)
-            setOpen(plan)
-          }}
-        >
-          {t('정리 제안 {{n}}건 · 예상 약 {{k}} 토큰', {
-            n: plan.candidates,
-            k: plan.estimatedTokens.toLocaleString()
-          })}
+      {!job && plan && pending && (
+        <button disabled={disabled || open} onClick={show}>
+          {[
+            ...(plan.candidates > 0 ? [t('정리 제안 {{n}}건', { n: plan.candidates })] : []),
+            ...(plan.retag > 0 ? [t('태그 재판정 질문 {{n}}개', { n: plan.retag })] : []),
+            t('입력 약 {{k}} 토큰', { k: plan.estimatedTokens.toLocaleString() })
+          ].join(' · ')}
         </button>
       )}
-      {result && (applied || result.skipped.length > 0) && (
+      {job?.state === 'running' && (
+        <button disabled={disabled || open} onClick={show}>
+          {t('정리안 만드는 중…')}
+          {job.progress.total > 0 && ` ${job.progress.done}/${job.progress.total}`}
+        </button>
+      )}
+      {job?.state === 'ready' && (
+        <button className="attention" disabled={disabled || open} onClick={show}>
+          {t('정리안 확인 필요')}
+        </button>
+      )}
+      {job?.state === 'failed' && (
         <span>
-          {t('정리 완료: 병합 {{merged}} · 상위 개념 {{parents}} · 이동 {{moved}} · 관계 {{relations}}', {
-            ...result
-          })}
-          {result.skipped.length > 0 &&
-            ` · ${t('{{n}}건은 그래프가 바뀌어 건너뜀', { n: result.skipped.length })}`}
+          {t('정리안을 만들지 못했습니다: {{error}}', { error: error || t(job.error) })}
+          <button className="tidy-retry" disabled={disabled} onClick={() => void retry()}>
+            {t('다시 시도')}
+          </button>
+          <button
+            aria-label={t('닫기')}
+            onClick={() => void api.tidyClear(workspaceId, job.id).catch((e) => setError(errorText(e)))}
+          >
+            <Icon name="close" size={12} />
+          </button>
+        </span>
+      )}
+      {result && (applied.length > 0 || result.skipped.length > 0) && (
+        <span>
+          {[
+            ...(applied.length
+              ? [
+                  t('정리 완료: {{parts}}', {
+                    parts: applied.map(([key, label]) => t(label, { n: result[key] })).join(' · ')
+                  })
+                ]
+              : []),
+            ...(result.skipped.length
+              ? [t('{{n}}건은 그래프가 바뀌어 건너뜀', { n: result.skipped.length })]
+              : [])
+          ].join(' · ')}
           <button aria-label={t('닫기')} onClick={() => setResult(null)}>
             <Icon name="close" size={12} />
           </button>
         </span>
       )}
-      {open && (
+      {open && plan && status && (
         <TidyDialog
           workspaceId={workspaceId}
-          estimate={open}
+          workspaceName={workspaceName}
+          estimate={plan}
+          status={status}
           sheet={sheet}
-          onClose={() => setOpen(null)}
+          onClose={() => setOpen(false)}
           onApplied={setResult}
         />
       )}

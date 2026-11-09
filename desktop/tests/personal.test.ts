@@ -18,7 +18,7 @@ import { normalizeEndpoint, localModels, streamChat } from '../src/main/local-ap
 import type { PeerStatus, Project, Question, Snapshot, Turn, TurnState } from '../src/preload/personal'
 import { PairingHost } from '../src/main/peer-pairing'
 import { dial, pairWithHost, PeerConnection, type PeerLink } from '../src/main/personal-peers'
-import { checkPeerCall, RemoteRouter } from '../src/main/personal-routing'
+import { checkPeerCall, checkPeerManager, RemoteRouter } from '../src/main/personal-routing'
 import { pairConfig, pairRelayKey, runPairClient, type PairPayload, type PairPost } from '../src/shared/pair-code'
 import { OpaqueClient } from '@cloudflare/opaque-ts'
 import { validateBackup } from '../src/main/personal-backup'
@@ -38,6 +38,7 @@ import {
   answerJustCompleted,
   applyDelta,
   cleanTitle,
+  mergeLegacyQuestions,
   mergeLive,
   normalizeLegacyQuestion,
   pageSlice,
@@ -338,6 +339,86 @@ test('backup validation rejects cyclic concepts and cross-workspace references b
     store.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+test('backup validation accepts tag roles, sources and tidy marks and rejects malformed ones', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fask-backup-roles-')),
+    store = new PersonalStore(dir)
+  try {
+    const project = store.list<Project>('project')[0]
+    const a = store.create('concept', '엔트로피', project.id),
+      b = store.create('concept', '로그', project.id)
+    const snapshot = store.snapshot()
+    const q: Question = {
+      ...question('q-roles', project.id, [turn({ id: 't-roles' })]),
+      conceptIds: [a, b],
+      conceptRoles: { [a]: 'focus', [b]: 'support' },
+      conceptSources: { [a]: 'user' },
+      tidyStay: project.workspaceId
+    }
+    snapshot.questions.push(q)
+    snapshot.relations.push({
+      id: 'r-roles',
+      workspaceId: project.workspaceId,
+      from: a,
+      to: b,
+      type: 'uses',
+      questionId: q.id,
+      turnIds: ['t-roles'],
+      confidence: 0.9,
+      approved: true,
+      createdAt: new Date().toISOString(),
+      invalidatedAt: null,
+      evidence: '엔트로피는 로그로 정의된다.',
+      tidyKept: true
+    })
+    Object.assign(snapshot.concepts.find((c) => c.id === a)!, { tidyKept: 'key', tidyNamed: '엔트로피' })
+    snapshot.workspaces.find((w) => w.id === project.workspaceId)!.tidyCandidates = ['정보량']
+    // validateBackup repairs its input in place, so every call gets its own copy.
+    const check = (s: Snapshot): Snapshot => validateBackup({ version: 3, snapshot: s, images: {} }).snapshot
+    const restored = check(structuredClone(snapshot))
+    assert.deepEqual(restored.questions.find((x) => x.id === q.id)?.conceptRoles, { [a]: 'focus', [b]: 'support' })
+    assert.equal(restored.relations.find((r) => r.id === 'r-roles')?.evidence, '엔트로피는 로그로 정의된다.')
+    const cases: [string, (s: Snapshot, sq: Question) => void][] = [
+      ['role key not linked', (_, sq) => (sq.conceptRoles = { missing: 'focus' })],
+      ['unknown role', (_, sq) => (sq.conceptRoles = { [a]: 'main' as never })],
+      ['unknown source', (_, sq) => (sq.conceptSources = { [a]: 'ai' as never })],
+      ['array map', (_, sq) => (sq.conceptSources = [] as never)],
+      ['tidyStay not a string', (_, sq) => (sq.tidyStay = 1 as never)],
+      ['evidence not a string', (s) => (s.relations.find((r) => r.id === 'r-roles')!.evidence = 1 as never)],
+      ['relation tidyKept', (s) => (s.relations.find((r) => r.id === 'r-roles')!.tidyKept = 'yes' as never)],
+      ['concept tidyKept', (s) => (s.concepts.find((c) => c.id === a)!.tidyKept = 1 as never)],
+      ['tidyCandidates', (s) => (s.workspaces.find((w) => w.id === project.workspaceId)!.tidyCandidates = [1] as never)]
+    ]
+    for (const [why, mutate] of cases) {
+      const s = structuredClone(snapshot)
+      mutate(s, s.questions.find((x) => x.id === q.id)!)
+      assert.throws(() => check(s), /백업/, why)
+    }
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+test('legacy rows keep valid tag roles/sources and merge them focus-first, user-first', () => {
+  const row = (id: string, extra: object): unknown => ({
+    id,
+    projectId: 'p',
+    conversationId: 'c',
+    createdAt: id === 'a' ? '2024-01-01T00:00:00.000Z' : '2024-01-02T00:00:00.000Z',
+    conceptIds: ['x', 'y'],
+    ...extra
+  })
+  const first = normalizeLegacyQuestion(
+    row('a', { conceptRoles: { x: 'support', y: 'support', z: 'focus' }, conceptSources: { x: 'model', y: 'bad' } })
+  )
+  assert.deepEqual(first.conceptRoles, { x: 'support', y: 'support' })
+  assert.deepEqual(first.conceptSources, { x: 'model' })
+  const [merged] = mergeLegacyQuestions([
+    first,
+    normalizeLegacyQuestion(row('b', { conceptRoles: { x: 'focus' }, conceptSources: { x: 'user', y: 'model' } }))
+  ])
+  assert.deepEqual(merged.conceptRoles, { x: 'focus', y: 'support' })
+  assert.deepEqual(merged.conceptSources, { x: 'user', y: 'model' })
 })
 
 // Builds a 1.0.9 database by hand: schema 1 only, runs without turn_id, legacy question rows.
@@ -1603,17 +1684,30 @@ test('peer rules: only records of the active profile; no workspace creation or d
     checkPeerCall(own, 'focus-question', ['mine'])
     checkPeerCall(own, 'focus-question', [null])
     checkPeerCall(own, 'tidy-plan', [project.workspaceId])
-    checkPeerCall(own, 'tidy-preview', [project.workspaceId])
-    checkPeerCall(own, 'tidy-apply', [project.workspaceId, 'proposal', [0]])
+    checkPeerCall(own, 'tidy-status', [project.workspaceId])
+    checkPeerCall(own, 'tidy-start', [project.workspaceId])
+    checkPeerCall(own, 'tidy-clear', [project.workspaceId, 'job'])
+    checkPeerCall(own, 'tidy-manager-request', [project.workspaceId])
+    checkPeerCall(own, 'tidy-apply', [project.workspaceId, 'proposal', [0], []])
     checkPeerCall(own, 'export', [project.id, { images: false }])
     assert.throws(() => checkPeerCall(own, 'set-relation', ['missing', 'remove']), /권한이 없는 요청입니다/)
     assert.throws(() => checkPeerCall(own, 'focus-question', ['theirs']), /권한이 없는 요청입니다/)
-    assert.throws(() => checkPeerCall(own, 'tidy-preview', [project.id]), /권한이 없는 요청입니다/)
-    assert.throws(() => checkPeerCall(own, 'tidy-apply', [project.id, 'proposal', []]), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-start', [project.id]), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-status', [project.id]), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-clear', [project.id, 'job']), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-manager-request', [project.id]), /권한이 없는 요청입니다/)
+    assert.throws(() => checkPeerCall(own, 'tidy-apply', [project.id, 'proposal', [], []]), /권한이 없는 요청입니다/)
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('peer rules: running or applying tidy needs the knowledge-manager grant', () => {
+  assert.throws(() => checkPeerManager(undefined, 'tidy-start'), /지식 관리자로 승인된 PC만/)
+  assert.throws(() => checkPeerManager('pending', 'tidy-apply'), /지식 관리자로 승인된 PC만/)
+  checkPeerManager('granted', 'tidy-start')
+  checkPeerManager(undefined, 'tidy-status')
 })
 
 test('linked PC: offline keeps the last snapshot, refuses edits, and reconnects', async () => {

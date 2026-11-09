@@ -181,7 +181,12 @@ export function upgradeConcepts(
             .filter((id): id is string => !!id && byId.get(id)?.workspaceId === workspaceId)
         )
       ]
-      return { ...q, conceptIds, conceptTurns: {}, extractedTurns: q.turns.length }
+      // Legacy links are re-keyed above: their roles/sources (and a tidy stay mark) are not kept.
+      const next: Question = { ...q, conceptIds, conceptTurns: {}, extractedTurns: q.turns.length }
+      delete next.conceptRoles
+      delete next.conceptSources
+      delete next.tidyStay
+      return next
     })
   }
 }
@@ -223,6 +228,13 @@ export function validateBackup(input: unknown): Backup {
     (typeof attachment !== 'string' ||
       typeof value.images[attachment] !== 'string' ||
       !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value.images[attachment]))
+  // conceptRoles/conceptSources: optional plain object keyed by linked concept ids.
+  const badLinkMap = (map: unknown, conceptIds: string[], values: readonly string[]): boolean =>
+    map !== undefined &&
+    (!map ||
+      typeof map !== 'object' ||
+      Array.isArray(map) ||
+      Object.entries(map).some(([id, v]) => !conceptIds.includes(id) || !values.includes(v as string)))
   if (value.version === 1) {
     if (!Array.isArray(s.questions)) fail()
     const legacy = s.questions as unknown as LegacyQuestion[]
@@ -265,7 +277,8 @@ export function validateBackup(input: unknown): Backup {
     if (!item || typeof item.id !== 'string' || !item.id || ids.has(item.id)) fail()
     ids.add(item.id)
   }
-  for (const w of s.workspaces) if (typeof w.name !== 'string') fail()
+  for (const w of s.workspaces)
+    if (typeof w.name !== 'string' || (w.tidyCandidates !== undefined && !strings(w.tidyCandidates))) fail()
   for (const p of s.projects)
     if (typeof p.name !== 'string' || !s.workspaces.some((w) => w.id === p.workspaceId)) fail()
   const projectWorkspace = new Map(s.projects.map((p) => [p.id, p.workspaceId]))
@@ -311,7 +324,9 @@ export function validateBackup(input: unknown): Backup {
       (!CONCEPT_LEVELS.includes(c.level) && (c.level as string) !== 'domain') ||
       (c.tidiedCount !== undefined && (!Number.isInteger(c.tidiedCount) || c.tidiedCount < 0)) ||
       (c.tidyReviewed !== undefined && typeof c.tidyReviewed !== 'string') ||
-      (c.tidyPairs !== undefined && !strings(c.tidyPairs))
+      (c.tidyPairs !== undefined && !strings(c.tidyPairs)) ||
+      (c.tidyKept !== undefined && typeof c.tidyKept !== 'string') ||
+      (c.tidyNamed !== undefined && typeof c.tidyNamed !== 'string')
     )
       fail()
     const seen = new Set([c.id])
@@ -345,7 +360,10 @@ export function validateBackup(input: unknown): Backup {
       q.extractedTurns > q.turns.length ||
       !q.conceptTurns ||
       typeof q.conceptTurns !== 'object' ||
-      Array.isArray(q.conceptTurns)
+      Array.isArray(q.conceptTurns) ||
+      badLinkMap(q.conceptRoles, q.conceptIds, ['focus', 'support']) ||
+      badLinkMap(q.conceptSources, q.conceptIds, ['user', 'model']) ||
+      (q.tidyStay !== undefined && typeof q.tidyStay !== 'string')
     )
       fail()
     const workspaceId = projectWorkspace.get(q.projectId)
@@ -415,7 +433,9 @@ export function validateBackup(input: unknown): Backup {
       typeof r.createdAt !== 'string' ||
       !Number.isFinite(Date.parse(r.createdAt)) ||
       (r.invalidatedAt !== null &&
-        (typeof r.invalidatedAt !== 'string' || !Number.isFinite(Date.parse(r.invalidatedAt))))
+        (typeof r.invalidatedAt !== 'string' || !Number.isFinite(Date.parse(r.invalidatedAt)))) ||
+      (r.evidence !== undefined && typeof r.evidence !== 'string') ||
+      (r.tidyKept !== undefined && typeof r.tidyKept !== 'boolean')
     )
       fail()
   }

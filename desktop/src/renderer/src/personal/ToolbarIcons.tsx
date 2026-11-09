@@ -47,6 +47,7 @@ const PATHS = {
     </>
   ),
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  bell: <path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4" />,
   copy: (
     <>
       <rect x="8" y="8" width="12" height="12" rx="2" />

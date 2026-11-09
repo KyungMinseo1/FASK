@@ -1,8 +1,8 @@
-import type { ConceptLevel, RelationType } from '../preload/personal'
+import type { ConceptLevel, ConceptRole, RelationType, RetagVerdict } from '../preload/personal'
 import { CONCEPT_LEVELS, RELATION_TYPES } from './personal-backup'
 
 /**
- * Strict validation of the extraction and tidy model responses. Every field is checked; an item
+ * Strict validation of the extraction, tidy and re-tag model responses. Every field is checked; an item
  * with an invalid field is dropped whole (never repaired or guessed), so a doubtful answer costs
  * only that item. Concept references are an id the model was sent (`known`), or a concept name;
  * an id-shaped string that was not sent is an unknown id. Unparseable extraction output is an
@@ -19,6 +19,8 @@ export interface ExtractedConcept {
   aliases: string[]
   definition: string
   level: ConceptLevel
+  /** What the question is about (focus) or what the answer drew on (support). */
+  role: ConceptRole
   /** null: the model abstained (or the concept is a topic). */
   parent: Ref | null
   grandparent: Ref | null
@@ -30,6 +32,8 @@ export interface ExtractedRelation {
   from: Ref
   to: Ref
   type: RelationType
+  /** Answer sentence quoted for it; the caller checks it against the answers. */
+  evidence: string
   confidence: number
 }
 export interface Extraction {
@@ -42,8 +46,23 @@ export interface TidyResponse {
   levels: { id: string; level: ConceptLevel }[]
   parents: { name: string; level: ConceptLevel; parent: Ref | null; children: string[] }[]
   assign: { id: string; parentId: string }[]
-  relations: { from: string; to: string; type: RelationType; confidence: number }[]
+  folds: { source: string; target: string }[]
+  demotes: string[]
+  renames: { id: string; name: string }[]
+  /** `parent`: an existing id, a new topic name, or null. */
+  promotes: { name: string; level: ConceptLevel; parent: Ref | null }[]
+  /** Relation ids to remove. */
+  unrelate: string[]
 }
+
+/** One re-judged link; `unsure` asks for the full turns. */
+export interface RetagJudgment {
+  id: string
+  verdict: RetagVerdict | 'unsure'
+  /** fold: a sent id; replace: a sent id or a new concept name; otherwise null. */
+  target: Ref | null
+}
+const VERDICTS: readonly string[] = ['focus', 'support', 'fold', 'replace', 'remove', 'unsure']
 
 /** Store concept ids are UUIDs; such a string that was not sent is never taken as a name. */
 const ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -68,6 +87,7 @@ export function conceptName(v: unknown): string | undefined {
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const isLevel = (v: unknown): v is ConceptLevel => CONCEPT_LEVELS.includes(v as ConceptLevel)
 const isType = (v: unknown): v is RelationType => RELATION_TYPES.includes(v as RelationType)
+const isRole = (v: unknown): v is ConceptRole => v === 'focus' || v === 'support'
 const isConfidence = (v: unknown): v is number => typeof v === 'number' && v >= 0 && v <= 1
 const absent = (v: unknown): boolean => v === null || v === undefined
 const knownId = (v: unknown, known: ReadonlySet<string>): v is string => typeof v === 'string' && known.has(v)
@@ -93,6 +113,14 @@ function parseObject(text: string): Record<string, unknown> | undefined {
   } catch {
     return undefined
   }
+}
+
+/** Keeps the elements of `v` passing `check` (absent or not an array: none); counts the dropped ones. */
+function strings(v: unknown, check: (raw: unknown) => raw is string, dropped: Record<string, number>, key: string): string[] {
+  if (!Array.isArray(v)) return []
+  const out = v.filter(check)
+  if (out.length < v.length) dropped[key] = (dropped[key] ?? 0) + v.length - out.length
+  return [...new Set(out)]
 }
 
 /** Validates each element of `v` (absent or not an array: none); counts the dropped ones. */
@@ -134,6 +162,7 @@ export function parseExtraction(text: string, known: ReadonlySet<string>): Extra
         !name ||
         existingId === BAD ||
         !isLevel(raw.level) ||
+        !isRole(raw.role) ||
         parent === BAD ||
         grandparent === BAD ||
         aliases === BAD ||
@@ -148,6 +177,7 @@ export function parseExtraction(text: string, known: ReadonlySet<string>): Extra
         aliases: aliases.flatMap((a) => conceptName(a) ?? []),
         definition: definition.trim().slice(0, 1000),
         level: raw.level,
+        role: raw.role,
         parent,
         grandparent,
         turns: turns.filter((i): i is number => Number.isInteger(i)),
@@ -162,8 +192,9 @@ export function parseExtraction(text: string, known: ReadonlySet<string>): Extra
     (raw): Checked<ExtractedRelation> => {
       const from = ref(raw.from, known),
         to = ref(raw.to, known)
-      if (from === BAD || to === BAD || !isType(raw.type) || !isConfidence(raw.confidence)) return BAD
-      return { from, to, type: raw.type, confidence: raw.confidence }
+      const evidence = typeof raw.evidence === 'string' ? raw.evidence.trim() : ''
+      if (from === BAD || to === BAD || !isType(raw.type) || !evidence || !isConfidence(raw.confidence)) return BAD
+      return { from, to, type: raw.type, evidence: evidence.slice(0, 2000), confidence: raw.confidence }
     },
     dropped,
     'relations'
@@ -172,8 +203,11 @@ export function parseExtraction(text: string, known: ReadonlySet<string>): Extra
   return { concepts, relations }
 }
 
-/** Tidy response; `known` holds the concept and topic ids the plan sent. */
-export function parseTidy(text: string, known: ReadonlySet<string>): TidyResponse {
+/**
+ * Tidy response; `known` holds the concept and topic ids the plan sent, `relations` the relation
+ * ids it offered as conflicting.
+ */
+export function parseTidy(text: string, known: ReadonlySet<string>, relations: ReadonlySet<string>): TidyResponse {
   const parsed = parseObject(text)
   if (!parsed) throw new Error('모델이 JSON을 반환하지 않았습니다.')
   const dropped: Record<string, number> = {}
@@ -210,15 +244,65 @@ export function parseTidy(text: string, known: ReadonlySet<string>): TidyRespons
     dropped,
     'assign'
   )
-  const relations = items(
-    parsed.relations,
-    (raw): Checked<TidyResponse['relations'][number]> =>
-      id(raw.from) && id(raw.to) && isType(raw.type) && isConfidence(raw.confidence)
-        ? { from: raw.from, to: raw.to, type: raw.type, confidence: raw.confidence }
-        : BAD,
+  const folds = items(
+    parsed.folds,
+    (raw) => (id(raw.source) && id(raw.target) ? { source: raw.source, target: raw.target } : BAD),
     dropped,
-    'relations'
+    'folds'
   )
+  const demotes = strings(parsed.demotes, id, dropped, 'demotes')
+  const renames = items(
+    parsed.renames,
+    (raw): Checked<TidyResponse['renames'][number]> => {
+      const name = conceptName(raw.name)
+      return id(raw.id) && name ? { id: raw.id, name } : BAD
+    },
+    dropped,
+    'renames'
+  )
+  const promotes = items(
+    parsed.promotes,
+    (raw): Checked<TidyResponse['promotes'][number]> => {
+      const name = conceptName(raw.name)
+      const parent = optionalRef(raw.parent, known)
+      return name && isLevel(raw.level) && parent !== BAD ? { name, level: raw.level, parent } : BAD
+    },
+    dropped,
+    'promotes'
+  )
+  const unrelate = strings(parsed.unrelate, (v): v is string => knownId(v, relations), dropped, 'unrelate')
   report('tidy', dropped)
-  return { merges, levels, parents, assign, relations }
+  return { merges, levels, parents, assign, folds, demotes, renames, promotes, unrelate }
+}
+
+/**
+ * Re-tag response; `linked` holds the judged link ids, `known` every id sent (links and
+ * candidates). Unparseable output judges nothing.
+ */
+export function parseRetag(text: string, linked: ReadonlySet<string>, known: ReadonlySet<string>): RetagJudgment[] {
+  const parsed = parseObject(text)
+  if (!parsed) {
+    console.debug('[knowledge] retag: unparseable response, treated as empty')
+    return []
+  }
+  const dropped: Record<string, number> = {}
+  const seen = new Set<string>()
+  const judged = items(
+    parsed.items,
+    (raw): Checked<RetagJudgment> => {
+      if (!knownId(raw.id, linked) || seen.has(raw.id) || typeof raw.verdict !== 'string') return BAD
+      if (!VERDICTS.includes(raw.verdict)) return BAD
+      const verdict = raw.verdict as RetagJudgment['verdict']
+      let target: Checked<Ref | null> = null
+      if (verdict === 'fold') target = knownId(raw.target, known) && raw.target !== raw.id ? raw.target : BAD
+      else if (verdict === 'replace') target = raw.target === raw.id ? BAD : ref(raw.target, known)
+      if (target === BAD) return BAD
+      seen.add(raw.id)
+      return { id: raw.id, verdict, target }
+    },
+    dropped,
+    'items'
+  )
+  report('retag', dropped)
+  return judged
 }

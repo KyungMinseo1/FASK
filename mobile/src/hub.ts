@@ -6,7 +6,9 @@ import type {
   KnowledgeApi,
   Snapshot,
   StreamEvent,
-  TidyProposal,
+  TidyEstimate,
+  TidyJob,
+  TidyStatus,
   TidyResult,
   TurnState
 } from '@desktop/preload/personal'
@@ -137,7 +139,8 @@ const FAILOVER_SAFE: ReadonlySet<string> = new Set([
   'edit-concept-info',
   'set-relation',
   'focus-question',
-  'tidy-plan'
+  'tidy-plan',
+  'tidy-status'
 ])
 const RETRY_MS = [1000, 2000, 5000, 10000]
 
@@ -424,11 +427,13 @@ export function createHubClient<P extends HubIdentity>(
     editConceptInfo: async (id, patch) => void (await rpc('edit-concept-info', [id, patch])),
     setRelation: async (id, action) => void (await rpc('set-relation', [id, action])),
     focusQuestion: async (questionId) => void (await rpc('focus-question', [questionId])),
-    tidyPlan: (workspaceId) =>
-      rpc('tidy-plan', [workspaceId]) as Promise<{ candidates: number; estimatedTokens: number }>,
-    tidyPreview: (workspaceId) => rpc('tidy-preview', [workspaceId]) as Promise<TidyProposal>,
-    tidyApply: (workspaceId, proposalId, accepted) =>
-      rpc('tidy-apply', [workspaceId, proposalId, accepted]) as Promise<TidyResult>,
+    tidyPlan: (workspaceId) => rpc('tidy-plan', [workspaceId]) as Promise<TidyEstimate>,
+    tidyStart: (workspaceId) => rpc('tidy-start', [workspaceId]) as Promise<TidyJob>,
+    tidyStatus: (workspaceId) => rpc('tidy-status', [workspaceId]) as Promise<TidyStatus>,
+    tidyClear: async (workspaceId, jobId) => void (await rpc('tidy-clear', [workspaceId, jobId])),
+    tidyManagerRequest: async (workspaceId) => void (await rpc('tidy-manager-request', [workspaceId])),
+    tidyApply: (workspaceId, proposalId, accepted, dismissed) =>
+      rpc('tidy-apply', [workspaceId, proposalId, accepted, dismissed]) as Promise<TidyResult>,
     ask: (input) => rpc('ask', [input]) as Promise<AskResult>,
     cancel: async (id) => void (await rpc('cancel', [id])),
     turnState: (questionId, turnId) =>
