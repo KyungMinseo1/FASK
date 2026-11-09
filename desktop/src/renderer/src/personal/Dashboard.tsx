@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import type { Reference, ShortcutInfo } from '../../../preload/personal'
+import type { CaptureSetupReason, Reference, ShortcutInfo } from '../../../preload/personal'
+import { captureSetupMessage } from '../../../shared/capture'
 import {
   filterQuestions,
   lastTurn,
@@ -93,8 +94,18 @@ export default function Dashboard(): React.JSX.Element {
   const [view, setView] = useState<'timeline' | 'graph' | 'list'>('timeline'),
     [query, setQuery] = useState(''),
     [filter, setFilter] = useState('all')
-  const [settingsOpen, setSettingsOpen] = useState(false),
-    [compose, setCompose] = useState(false),
+  const [settingsSection, setSettingsSection] = useState<'general' | 'capture' | null>(null)
+  const [captureIssue, setCaptureIssue] = useState<CaptureSetupReason>()
+  const [captureNotice, setCaptureNotice] = useState<CaptureSetupReason>()
+  useEffect(() => window.fask.onCaptureSetupRequired((issue) => {
+    setCaptureIssue(issue.reason)
+    setSettingsSection('capture')
+  }), [])
+  useEffect(() => window.fask.onCaptureRegionSaved(() => {
+    setCaptureIssue(undefined)
+    setCaptureNotice(undefined)
+  }), [])
+  const [compose, setCompose] = useState(false),
     [notice, setNotice] = useState(''),
     [exportImages, setExportImages] = useState<boolean | null>(null)
   const [create, setCreate] = useState<{
@@ -177,6 +188,7 @@ export default function Dashboard(): React.JSX.Element {
   const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
+      setCaptureNotice(undefined)
       await fn()
       await refresh()
       return true
@@ -184,6 +196,27 @@ export default function Dashboard(): React.JSX.Element {
       setNotice(errorText(e))
       return false
     }
+  }
+  const openScreenQuestion = async (projectId: string, questionId?: string): Promise<void> => {
+    setNotice('')
+    setCaptureNotice(undefined)
+    try {
+      const result = await window.fask.openOverlay(projectId, questionId)
+      if (!result.ok) {
+        setCaptureIssue(result.reason)
+        setCaptureNotice(result.reason)
+      }
+    } catch (e) {
+      setNotice(errorText(e))
+    }
+  }
+  const openCaptureSettings = (): void => {
+    setCaptureIssue(captureNotice)
+    setSettingsSection('capture')
+  }
+  const dismissNotice = (): void => {
+    setNotice('')
+    setCaptureNotice(undefined)
   }
   const beginCreate = (
     kind: 'profile' | 'workspace' | 'project' | 'concept',
@@ -359,7 +392,10 @@ export default function Dashboard(): React.JSX.Element {
             <small>{t('이미지 {{size}} MB', { size: (data.storageBytes / 1024 / 1024).toFixed(1) })}</small>
           </div>
           <NotificationBell />
-          <button onClick={() => setSettingsOpen(true)}>
+          <button onClick={() => {
+            setCaptureIssue(undefined)
+            setSettingsSection('general')
+          }}>
             <Icon name="gear" />
             {t('설정과 AI 연결')}
           </button>
@@ -472,7 +508,7 @@ export default function Dashboard(): React.JSX.Element {
                 <button
                   className={compose ? undefined : 'primary'}
                   disabled={!project}
-                  onClick={() => void run(() => window.fask.openOverlay(project!.id))}
+                  onClick={() => void openScreenQuestion(project!.id)}
                 >
                   <Icon name="capture" />
                   {t('화면에서 질문')}
@@ -557,10 +593,13 @@ export default function Dashboard(): React.JSX.Element {
               </div>
             </div>
             )}
-            {(notice || error) && (
+            {(captureNotice || notice || error) && (
               <div className="notice error" role="alert">
-                {notice || error}
-                <button aria-label={t('닫기')} onClick={() => setNotice('')}>
+                {captureNotice ? t(captureSetupMessage(captureNotice)) : notice || error}
+                {captureNotice && (
+                  <button onClick={openCaptureSettings}>{t('캡처 영역 다시 설정')}</button>
+                )}
+                <button aria-label={t('닫기')} onClick={dismissNotice}>
                   <Icon name="close" size={14} />
                 </button>
               </div>
@@ -845,7 +884,7 @@ export default function Dashboard(): React.JSX.Element {
                     })
                   }}
                   onContinue={() =>
-                    void run(() => window.fask.openOverlay(selected.projectId, selected.id))
+                    void openScreenQuestion(selected.projectId, selected.id)
                   }
                 />
               ) : (
@@ -867,10 +906,13 @@ export default function Dashboard(): React.JSX.Element {
           </>
         )}
       </main>
-      {notice && scope !== 'project' && (
+      {(captureNotice || notice) && scope !== 'project' && (
         <div className="global-notice notice error" role="alert">
-          {notice}
-          <button aria-label={t('닫기')} onClick={() => setNotice('')}>
+          {captureNotice ? t(captureSetupMessage(captureNotice)) : notice}
+          {captureNotice && (
+            <button onClick={openCaptureSettings}>{t('캡처 영역 다시 설정')}</button>
+          )}
+          <button aria-label={t('닫기')} onClick={dismissNotice}>
             <Icon name="close" size={14} />
           </button>
         </div>
@@ -930,7 +972,14 @@ export default function Dashboard(): React.JSX.Element {
           </button>
         </div>
       )}
-      {settingsOpen && <Settings settings={data.settings} onClose={() => setSettingsOpen(false)} />}
+      {settingsSection && (
+        <Settings
+          settings={data.settings}
+          initialSection={settingsSection}
+          captureIssue={captureIssue}
+          onClose={() => setSettingsSection(null)}
+        />
+      )}
       {create && (
         <div className="modal-backdrop">
           <form

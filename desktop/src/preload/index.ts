@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { PersonalApi, StreamEvent } from './personal'
+import type { CaptureRegionSaved, CaptureSetupRequired, PersonalApi, StreamEvent } from './personal'
+
+let pendingCaptureSetup: CaptureSetupRequired | null = null
+const captureSetupSubscribers = new Set<(issue: CaptureSetupRequired) => void>()
+const deliverCaptureSetup = (): void => {
+  if (!pendingCaptureSetup || captureSetupSubscribers.size === 0) return
+  const issue = pendingCaptureSetup
+  pendingCaptureSetup = null
+  for (const subscriber of captureSetupSubscribers) subscriber(issue)
+}
 
 const fask: PersonalApi = {
   activateProject: (id) => ipcRenderer.invoke('personal:active-project', id),
@@ -58,6 +67,35 @@ const fask: PersonalApi = {
   capturePreview: () => ipcRenderer.invoke('personal:preview'),
   saveRegion: (region) => ipcRenderer.invoke('personal:save-region', region),
   closeCaptureEditor: () => ipcRenderer.invoke('personal:close-editor'),
+  onCaptureRegionSaved: (cb) => {
+    const listener = (_: Electron.IpcRendererEvent, event: CaptureRegionSaved): void => cb(event)
+    ipcRenderer.on('personal:capture-region-saved', listener)
+    return () => {
+      ipcRenderer.removeListener('personal:capture-region-saved', listener)
+    }
+  },
+  onCaptureSetupRequired: (cb) => {
+    let active = true
+    const pull = (): void => {
+      void ipcRenderer.invoke('personal:take-capture-setup').then((issue: CaptureSetupRequired | null) => {
+        if (issue) {
+          pendingCaptureSetup = issue
+          deliverCaptureSetup()
+        }
+      }).catch((error) => {
+        if (active) console.error(error)
+      })
+    }
+    ipcRenderer.on('personal:capture-setup-required', pull)
+    captureSetupSubscribers.add(cb)
+    deliverCaptureSetup()
+    pull()
+    return () => {
+      active = false
+      captureSetupSubscribers.delete(cb)
+      ipcRenderer.removeListener('personal:capture-setup-required', pull)
+    }
+  },
   openOverlay: (id, questionId) => ipcRenderer.invoke('personal:open-overlay', id, questionId),
   showDashboard: () => ipcRenderer.invoke('personal:dashboard'),
   captureQuestion: (strokes) => ipcRenderer.invoke('personal:capture', strokes),

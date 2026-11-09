@@ -77,6 +77,8 @@ Choose a monitor and rectangle in **Capture area**. Move the box or resize it fr
 
 The editor and pen overlay use the same full-monitor coordinate space, including the taskbar area. The dotted pen-mode boundary represents the configured capture region.
 
+The monitor and area are saved only when you press **Apply** in the editor. If the saved monitor disappears or its size changes, screen questions, follow-ups and the shortcut lead to **Set capture area again** instead of silently capturing the whole screen; your draft and attachments are kept. Applying a different monitor or size clears only the old pen marks.
+
 ### 3. Ask from your screen
 
 Open a project, select **Ask from screen**, and mark anything relevant. Choose **Include screen capture**, then press **Ask**.

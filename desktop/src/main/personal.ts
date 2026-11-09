@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type WebContents } from 'electron'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname, networkInterfaces } from 'node:os'
@@ -35,6 +35,7 @@ import { i18n, t } from '../shared/i18n'
 import type {
   AskInput,
   AskResult,
+  CaptureSetupRequired,
   Concept,
   HubAddress,
   HubStatus,
@@ -248,29 +249,53 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     peers.set(link.id, conn)
   }
   const capture = new PersonalCapture(store, main, () => changed())
+  const captureIssues = new WeakMap<WebContents, CaptureSetupRequired>()
+  const requestCaptureSetup = (issue: CaptureSetupRequired): void => {
+    const overlay = capture.overlay
+    if (overlay && !overlay.isDestroyed()) capture.presentRecovery()
+    const target = overlay && !overlay.isDestroyed() ? overlay : main()
+    if (!target || target.isDestroyed()) return
+    captureIssues.set(target.webContents, issue)
+    target.webContents.send('personal:capture-setup-required')
+    if (!capture.editor) {
+      target.show()
+      target.focus()
+    }
+  }
   let lastProjectId = ''
   const quickQuestion = (): void => {
-    if (capture.editor) {
-      capture.editor.show()
-      capture.editor.focus()
-      return
-    }
-    if (capture.overlay) {
-      capture.toggleQuestionPanel()
-      return
-    }
-    const projects = store.list<Project>('project')
-    const project = router.remoteProject(lastProjectId) ?? projects.find((p) => p.id === lastProjectId) ?? projects[0]
-    if (project) {
-      try {
-        capture.open(project.id, true)
-      } catch {
+    try {
+      if (capture.editor) {
+        const issue = capture.editorSetupRequired()
+        if (issue) {
+          capture.editor.close()
+          requestCaptureSetup(issue)
+        } else {
+          capture.editor.show()
+          capture.editor.focus()
+        }
+        return
+      }
+      if (capture.overlay) {
+        const issue = capture.captureSetupRequired()
+        if (issue) requestCaptureSetup(issue)
+        else capture.toggleQuestionPanel()
+        return
+      }
+      const projects = store.list<Project>('project')
+      const project =
+        router.remoteProject(lastProjectId) ??
+        projects.find((p) => p.id === lastProjectId) ??
+        projects[0]
+      if (project) {
+        const result = capture.open(project.id, true)
+        if (!result.ok) requestCaptureSetup(result)
+      } else {
         main()?.show()
         main()?.focus()
       }
-    } else {
-      main()?.show()
-      main()?.focus()
+    } catch (error) {
+      dialog.showErrorBox(t('화면 질문 오류'), error instanceof Error ? error.message : String(error))
     }
   }
   const key = (profile = store.active): string => {
@@ -279,16 +304,26 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     if (!safeStorage.isEncryptionAvailable()) throw new Error('OS 키 저장소를 사용할 수 없습니다.')
     return safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
   }
+  const requireLocalWindow = (event: Electron.IpcMainInvokeEvent): BrowserWindow => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (
+      !win ||
+      event.senderFrame !== event.sender.mainFrame ||
+      ![main(), capture.overlay, capture.editor].includes(win)
+    )
+      throw new Error('허용되지 않은 요청입니다.')
+    return win
+  }
+  ipcMain.handle('personal:take-capture-setup', (event) => {
+    requireLocalWindow(event)
+    const issue = captureIssues.get(event.sender) ?? null
+    captureIssues.delete(event.sender)
+    return issue
+  })
   const handle = (name: string, fn: Handler): void => {
     handlers.set(name, fn)
     ipcMain.handle(`personal:${name}`, (event, ...args) => {
-      const win = BrowserWindow.fromWebContents(event.sender)
-      if (
-        !win ||
-        event.senderFrame !== event.sender.mainFrame ||
-        ![main(), capture.overlay, capture.editor].includes(win)
-      )
-        throw new Error('허용되지 않은 요청입니다.')
+      requireLocalWindow(event)
       if (name === 'focus-question') return focusQuestion(`window:${event.sender.id}`, args[0])
       return router.route(name, args)
     })
@@ -404,8 +439,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       memoryTokens: Math.round(Number(settings.memoryTokens)),
       extractDelaySec: Math.round(Number(settings.extractDelaySec)),
       retention: settings.retention,
-      autoTitle: !!settings.autoTitle,
-      displayId: settings.displayId
+      autoTitle: !!settings.autoTitle
     }
     if (
       !['manual', 'recommend', 'auto'].includes(clean.routing) ||
@@ -839,7 +873,19 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     if (!capture.preview) throw new Error('편집 미리보기가 없습니다.')
     return capture.preview
   })
-  handle('save-region', (region) => capture.saveRegion(region))
+  handle('save-region', (region) => {
+    const result = capture.saveRegion(region)
+    if (!result.ok) {
+      requestCaptureSetup(result)
+      return result
+    }
+    const targets = new Set([main(), capture.overlay])
+    for (const target of targets)
+      if (target && !target.isDestroyed())
+        target.webContents.send('personal:capture-region-saved', result.value)
+    capture.editor?.close()
+    return result
+  })
   handle('close-editor', () => capture.editor?.close())
   handle('edit-overlay-region', () => {
     if (capture.displayId === null) throw new Error('오버레이를 먼저 열어 주세요.')
@@ -847,13 +893,14 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   })
   handle('open-overlay', (id: string, questionId?: string) => {
     anyProject(id)
-    if (questionId) {
-      if (anyQuestion(questionId).projectId !== id)
-        throw new Error('프로젝트가 다른 질문입니다.')
-      recentQuestions.set(id, questionId)
+    if (questionId && anyQuestion(questionId).projectId !== id)
+      throw new Error('프로젝트가 다른 질문입니다.')
+    const result = capture.open(id, !!questionId)
+    if (result.ok) {
+      if (questionId) recentQuestions.set(id, questionId)
+      lastProjectId = id
     }
-    lastProjectId = id
-    capture.open(id, !!questionId)
+    return result
   })
   handle('capture', (strokes?: string) => capture.question(strokes))
   handle('dashboard', () => capture.showDashboard())

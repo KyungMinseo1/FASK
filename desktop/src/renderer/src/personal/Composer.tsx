@@ -43,7 +43,7 @@ interface Props {
   questionId?: string
   recentQuestion?: Question
   onCapture?: () => Promise<string>
-  /** Overlay has pen strokes: capture defaults on while ink exists, off otherwise. */
+  /** New ink enables capture; clearing ink keeps the user's current capture choice. */
   hasInk?: boolean
   onSaved?: (id: string) => void
   onCompleted?: (id: string, result: { turnId: string; status: 'saved' | 'completed' }) => void
@@ -152,11 +152,11 @@ export default function Composer({
   const finished = useRef('')
   const syncing = useRef(false),
     syncAgain = useRef(false)
-  // Ink toggles the default; an explicitly attached image wins (capture and image are exclusive).
+  // New ink enables capture unless an attached image wins; clearing ink must not change the choice.
   const [inkSeen, setInkSeen] = useState(hasInk)
   if (inkSeen !== hasInk) {
     setInkSeen(hasInk)
-    setIncludeCapture(hasInk && !image)
+    if (hasInk && !image) setIncludeCapture(true)
   }
   // A sent ask stays frozen (same requestId, same image bytes, same fields) until the hub's
   // acceptance is known, so a lost reply is replayed instead of creating a second turn.

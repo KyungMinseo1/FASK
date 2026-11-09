@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
-import type { Reference } from '../../../preload/personal'
+import type { CaptureSetupReason, Reference } from '../../../preload/personal'
+import { captureSetupMessage } from '../../../shared/capture'
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
 import QuestionDetail from './QuestionDetail'
+import Settings from './Settings'
 import TurnNav from './TurnNav'
 import ProjectPicker from './ProjectPicker'
 import { Icon } from './ToolbarIcons'
@@ -22,7 +24,7 @@ const ANCHOR_W = 64,
 /** Matches `.overlay-project-picker` max-height. */
 const PICKER_MAX_H = 360
 /** Elements that must receive clicks instead of passing them to the background app. */
-const HIT_SELECTOR = '.overlay-toolbar,.toolbar-tools,.overlay-panel,.overlay-project-picker'
+const HIT_SELECTOR = '.overlay-toolbar,.toolbar-tools,.overlay-panel,.overlay-project-picker,.modal-backdrop'
 
 export default function Overlay(): React.JSX.Element {
   const t = useT()
@@ -35,6 +37,11 @@ export default function Overlay(): React.JSX.Element {
     [panel, setPanel] = useState(params.get('panel') === '1')
   const [picker, setPicker] = useState<{ top: number; left?: number; right?: number } | null>(null)
   const [composerLock, setComposerLock] = useState(false)
+  const [captureSettingsOpen, setCaptureSettingsOpen] = useState(false)
+  const [captureIssue, setCaptureIssue] = useState<CaptureSetupReason>()
+  const [hitRegionRevision, setHitRegionRevision] = useState(0)
+  const captureSettingsOpenRef = useRef(captureSettingsOpen)
+  captureSettingsOpenRef.current = captureSettingsOpen
   const switchBlocked = panel && composerLock
   const [strokes, setStrokes] = useState<Stroke[]>([]),
     [size, setSize] = useState({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })
@@ -46,7 +53,26 @@ export default function Overlay(): React.JSX.Element {
     asked = useRef(false),
     panelRef = useRef(panel)
   panelRef.current = panel
+  useEffect(() => window.fask.onCaptureSetupRequired((issue) => {
+    setCaptureIssue(issue.reason)
+    setPicker(null)
+    captureSettingsOpenRef.current = true
+    setCaptureSettingsOpen(true)
+  }), [])
+  useEffect(() => window.fask.onCaptureRegionSaved((event) => {
+    setCaptureIssue(undefined)
+    setHitRegionRevision((revision) => revision + 1)
+    if (!event.overlayChanged) return
+    drawing.current = null
+    setStrokes([])
+    captured.current = false
+    asked.current = false
+    setMode('idle')
+    setNotice(t('모니터 또는 화면 크기가 바뀌어 펜 표시를 지웠습니다. 질문하기를 다시 눌러 주세요.'))
+    setPanel(true)
+  }), [t])
   const closePanel = useCallback((): void => {
+    if (captureSettingsOpenRef.current) return
     setPanel(false)
     if (asked.current) {
       asked.current = false
@@ -54,6 +80,7 @@ export default function Overlay(): React.JSX.Element {
     }
   }, [])
   const togglePanel = useCallback((): void => {
+    if (captureSettingsOpenRef.current) return
     if (panelRef.current) closePanel()
     else setPanel(true)
   }, [closePanel])
@@ -121,9 +148,18 @@ export default function Overlay(): React.JSX.Element {
   // The panel has no graph: a concept opens the dashboard, a question becomes the panel conversation.
   const openReference = (ref: Reference): void => {
     const target = ref.kind === 'question' ? data?.questions.find((q) => q.id === ref.id) : undefined
-    void (target ? window.fask.openOverlay(target.projectId, target.id) : window.fask.showDashboard()).catch(
-      (e) => setNotice(errorText(e))
-    )
+    void (async () => {
+      if (!target) {
+        await window.fask.showDashboard()
+        return
+      }
+      const result = await window.fask.openOverlay(target.projectId, target.id)
+      if (!result.ok) {
+        setCaptureIssue(result.reason)
+        setNotice('')
+        setPanel(true)
+      }
+    })().catch((e) => setNotice(errorText(e)))
   }
   const scrollKey = `fask:panel-scroll:${profileId}`
   const conversationKey = `${projectId}:${questionId ?? ''}`
@@ -229,6 +265,7 @@ export default function Overlay(): React.JSX.Element {
     const targets = [document.body, document.documentElement, document.getElementById('root')]
     for (const element of targets) if (element) element.style.background = 'transparent'
     const reset = (): void => {
+      if (captureSettingsOpenRef.current) return
       setMode('idle')
       drawing.current = null
       setPanelInteraction(false)
@@ -250,9 +287,11 @@ export default function Overlay(): React.JSX.Element {
     const off = window.fask.onEscape(reset)
     const offOutside = window.fask.onOutsideClick(() => {
       reset()
+      if (captureSettingsOpenRef.current) return
       closePanel()
     })
     const offToggle = window.fask.onTogglePanel(() => {
+      if (captureSettingsOpenRef.current) return
       setMode('idle')
       togglePanel()
       drawing.current = null
@@ -274,7 +313,7 @@ export default function Overlay(): React.JSX.Element {
       })
       // The popover holds focus like the panel, so a background click blurs and closes it.
       void window.fask
-        .overlayRegions(mode !== 'idle' || panelInteraction, regions, panel || !!picker)
+        .overlayRegions(mode !== 'idle' || panelInteraction, regions, panel || !!picker || captureSettingsOpen)
         .catch(() => {})
     }
     let frame = 0
@@ -299,11 +338,14 @@ export default function Overlay(): React.JSX.Element {
     collapsed,
     peek,
     edge,
-    picker
+    picker,
+    captureSettingsOpen,
+    hitRegionRevision
   ])
   useEffect(() => {
     if (!picker) return
     const close = (e: Event): void => {
+      if (captureSettingsOpenRef.current) return
       if (!(e.target as Element).closest('.overlay-project-picker,.toolbar-project'))
         setPicker(null)
     }
@@ -568,7 +610,13 @@ export default function Overlay(): React.JSX.Element {
           <button
             onClick={() => {
               setNotice('')
-              void window.fask.editOverlayRegion().catch((e) => {
+              void window.fask.editOverlayRegion().then((result) => {
+                if (result.ok) return
+                setCaptureIssue(result.reason)
+                setPicker(null)
+                captureSettingsOpenRef.current = true
+                setCaptureSettingsOpen(true)
+              }).catch((e) => {
                 setNotice(errorText(e))
                 setPanel(true)
               })
@@ -690,10 +738,23 @@ export default function Overlay(): React.JSX.Element {
             onScroll={() => saveScroll(historyOpen)}
           >
             <div className="overlay-capture-note">
-              <span className="chip">{region ? t('캡처 영역 있음') : t('캡처 영역 없음')}</span>
-              <span>{region ? t('설정한 영역만 캡처') : t('전체 모니터')}</span>
+              <span className="chip">
+                {captureIssue ? t('캡처 영역 확인 필요') : region ? t('캡처 영역 있음') : t('캡처 영역 없음')}
+              </span>
+              {!captureIssue && <span>{region ? t('설정한 영역만 캡처') : t('전체 모니터')}</span>}
               <span>{t('캡처 포함을 선택하면 질문 전송 시 촬영합니다.')}</span>
             </div>
+            {captureIssue && (
+              <button
+                onClick={() => {
+                  setPicker(null)
+                  captureSettingsOpenRef.current = true
+                  setCaptureSettingsOpen(true)
+                }}
+              >
+                {t('캡처 영역 다시 설정')}
+              </button>
+            )}
             {data && !project && <p className="notice error">{t('프로젝트를 찾을 수 없습니다.')}</p>}
             {data && project && recent && recent.turns.length > 1 && (
               <details
@@ -751,11 +812,19 @@ export default function Overlay(): React.JSX.Element {
                 recentQuestion={recent}
                 onReference={openReference}
                 hasInk={strokes.length > 0}
-                onCapture={() => {
-                  captured.current = true
-                  return window.fask.captureQuestion(
+                onCapture={async () => {
+                  captured.current = false
+                  const result = await window.fask.captureQuestion(
                     strokes.length ? canvas.current?.toDataURL('image/png') : undefined
                   )
+                  if (!result.ok) {
+                    setCaptureIssue(result.reason)
+                    setPanel(true)
+                    throw new Error(t(captureSetupMessage(result.reason)))
+                  }
+                  setCaptureIssue(undefined)
+                  captured.current = true
+                  return result.value
                 }}
                 onTurnIdentified={() => {
                   if (!captured.current) return
@@ -843,6 +912,17 @@ export default function Overlay(): React.JSX.Element {
             </button>
           </footer>
         </section>
+      )}
+      {captureSettingsOpen && data && (
+        <Settings
+          settings={data.settings}
+          initialSection="capture"
+          captureIssue={captureIssue}
+          onClose={() => {
+            captureSettingsOpenRef.current = false
+            setCaptureSettingsOpen(false)
+          }}
+        />
       )}
     </div>
   )

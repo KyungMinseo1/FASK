@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import type {
+  CaptureSetupReason,
   DisplayInfo,
   HubStatus,
   LocalSettings,
@@ -10,6 +11,7 @@ import type {
   PeerLinkInfo,
   PeerStatus
 } from '../../../preload/personal'
+import { captureSetupMessage, selectCaptureDisplay } from '../../../shared/capture'
 import { errorText } from './common'
 import { Icon } from './ToolbarIcons'
 import {
@@ -28,28 +30,102 @@ import { useT } from '../../../shared/i18n/react'
 
 export default function Settings({
   settings,
-  onClose
+  onClose,
+  initialSection = 'general',
+  captureIssue
 }: {
   settings: LocalSettings
   onClose: () => void
+  initialSection?: 'general' | 'capture'
+  captureIssue?: CaptureSetupReason
 }): React.JSX.Element {
   const [draft, setDraft] = useState(settings),
     [key, setKey] = useState<string | undefined>(),
     [displays, setDisplays] = useState<DisplayInfo[]>([])
+  const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>(),
+    [refreshingDisplays, setRefreshingDisplays] = useState(true),
+    [displayError, setDisplayError] = useState(''),
+    [editing, setEditing] = useState(false)
   const [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false)
+  const [captureReason, setCaptureReason] = useState(captureIssue)
+  const captureSection = useRef<HTMLElement>(null)
+  const captureDisplay = useRef<HTMLSelectElement>(null)
+  const captureFocusPending = useRef(false)
+  const displayRequest = useRef(0)
+  const currentDisplays = useRef<DisplayInfo[]>([])
+  const preferredDisplayId = useRef(settings.displayId)
+  const savedDisplayId = useRef(settings.displayId)
+  const editingRef = useRef(false)
+  const mounted = useRef(false)
   const [theme, setThemeState] = useState(readTheme)
   const [answerBlink, setAnswerBlinkState] = useState(readAnswerBlink)
   const [language, setLanguageState] = useState(readLanguage)
   const [fontScale, setFontScaleState] = useState(readFontScale)
   const t = useT()
   const share = usePeerCode()
-  useEffect(() => {
-    void window.fask
-      .displays()
-      .then(setDisplays)
-      .catch((e) => setNotice(errorText(e)))
+  const refreshDisplays = useCallback(async (): Promise<{ displayId: number | undefined } | null> => {
+    const request = ++displayRequest.current
+    setRefreshingDisplays(true)
+    setDisplayError('')
+    try {
+      const next = await window.fask.displays()
+      if (!mounted.current || request !== displayRequest.current) return null
+      const displayId = selectCaptureDisplay(next, preferredDisplayId.current)
+      currentDisplays.current = next
+      if (displayId !== undefined) preferredDisplayId.current = displayId
+      setDisplays(next)
+      setSelectedDisplayId(displayId)
+      return { displayId }
+    } catch (e) {
+      if (mounted.current && request === displayRequest.current) {
+        currentDisplays.current = []
+        setDisplays([])
+        setSelectedDisplayId(undefined)
+        setDisplayError(errorText(e))
+      }
+      return null
+    } finally {
+      if (mounted.current && request === displayRequest.current) setRefreshingDisplays(false)
+    }
   }, [])
+  useEffect(() => {
+    mounted.current = true
+    const onFocus = (): void => {
+      if (!editingRef.current) void refreshDisplays()
+    }
+    window.addEventListener('focus', onFocus)
+    void refreshDisplays()
+    return () => {
+      mounted.current = false
+      ++displayRequest.current
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [refreshDisplays])
+  useEffect(() => {
+    if (savedDisplayId.current === settings.displayId) return
+    savedDisplayId.current = settings.displayId
+    preferredDisplayId.current = settings.displayId
+    const displayId = selectCaptureDisplay(currentDisplays.current, settings.displayId)
+    if (displayId !== undefined) preferredDisplayId.current = displayId
+    setSelectedDisplayId(displayId)
+  }, [settings.displayId])
+  useEffect(() => {
+    setCaptureReason(captureIssue)
+  }, [captureIssue])
+  useEffect(() => window.fask.onCaptureRegionSaved(() => {
+    setCaptureReason(undefined)
+  }), [])
+  useEffect(() => {
+    if (initialSection !== 'capture') return
+    captureSection.current?.scrollIntoView({ block: 'start' })
+    captureFocusPending.current = true
+  }, [initialSection, captureIssue])
+  useEffect(() => {
+    if (!captureFocusPending.current || refreshingDisplays || editing) return
+    captureDisplay.current?.focus({ preventScroll: true })
+    captureFocusPending.current = false
+  }, [refreshingDisplays, editing, initialSection, captureIssue, captureReason])
   const change = <K extends keyof LocalSettings>(name: K, value: LocalSettings[K]): void =>
     setDraft((s) => ({ ...s, [name]: value }))
   const run = async (fn: () => Promise<unknown>, message: string): Promise<void> => {
@@ -67,12 +143,42 @@ export default function Settings({
   const save = async (): Promise<void> => {
     await window.fask.saveSettings(draft, key)
   }
+  const close = (): void => {
+    if (!editingRef.current) onClose()
+  }
+  const editCaptureRegion = async (): Promise<void> => {
+    if (editingRef.current || busy || refreshingDisplays || displayError || selectedDisplayId === undefined)
+      return
+    editingRef.current = true
+    setEditing(true)
+    setNotice('')
+    try {
+      const next = await refreshDisplays()
+      if (!next) return
+      if (next.displayId === undefined) {
+        if (currentDisplays.current.length) setNotice(t('모니터를 선택해 주세요.'))
+        return
+      }
+      const result = await window.fask.openCaptureEditor(next.displayId)
+      if (!result.ok && mounted.current) {
+        setCaptureReason(result.reason)
+        captureFocusPending.current = true
+        captureSection.current?.scrollIntoView({ block: 'start' })
+        await refreshDisplays()
+      }
+    } catch (e) {
+      if (mounted.current) setNotice(errorText(e))
+    } finally {
+      editingRef.current = false
+      if (mounted.current) setEditing(false)
+    }
+  }
   return (
     <div className="modal-backdrop">
       <section className="settings-modal" role="dialog" aria-modal="true" aria-label={t('설정')}>
         <header>
           <h2>{t('나에게 맞는 질문 환경')}</h2>
-          <button onClick={onClose}>
+          <button disabled={editing} onClick={close}>
             <Icon name="close" size={14} />
             {t('닫기')}
           </button>
@@ -237,8 +343,9 @@ export default function Settings({
               />
             </label>
           </section>
-          <section>
+          <section ref={captureSection}>
             <h3>{t('캡처 영역')}</h3>
+            {captureReason && <p role="alert">{t(captureSetupMessage(captureReason))}</p>}
             <p>
               {t(
                 '영역 설정에서 박스 안은 선명하게, 바깥은 흐리게 표시됩니다. 저장한 영역 안쪽만 전송합니다.'
@@ -247,9 +354,16 @@ export default function Settings({
             <label>
               {t('대상 모니터')}
               <select
-                value={draft.displayId ?? displays[0]?.id ?? ''}
-                onChange={(e) => change('displayId', Number(e.target.value))}
+                ref={captureDisplay}
+                value={selectedDisplayId ?? ''}
+                disabled={refreshingDisplays || editing}
+                onChange={(e) => {
+                  const displayId = e.target.value === '' ? undefined : Number(e.target.value)
+                  preferredDisplayId.current = displayId
+                  setSelectedDisplayId(displayId)
+                }}
               >
+                <option value="">{t('모니터를 선택해 주세요.')}</option>
                 {displays.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.label} ({d.width} × {d.height})
@@ -257,24 +371,42 @@ export default function Settings({
                 ))}
               </select>
             </label>
-            <button
-              disabled={busy || !displays.length}
-              onClick={() =>
-                void run(async () => {
-                  await save()
-                  await window.fask.openCaptureEditor(draft.displayId ?? displays[0].id)
-                  onClose()
-                }, '')
-              }
-            >
-              <Icon name="capture" />
-              {t('캡처 영역 설정')}
-            </button>
-            <small>
-              {settings.regions.length
-                ? t('저장된 영역이 있습니다. 영역은 모니터별로 기억합니다.')
-                : t('아직 영역을 정하지 않았습니다. 현재 기본값은 전체 모니터입니다.')}
-            </small>
+            <small>{t('모니터나 화면 크기가 바뀌면 펜 표시는 지워집니다.')}</small>
+            <div className="button-row">
+              <button
+                disabled={
+                  busy ||
+                  refreshingDisplays ||
+                  editing ||
+                  displayError !== '' ||
+                  selectedDisplayId === undefined
+                }
+                onClick={() => void editCaptureRegion()}
+              >
+                <Icon name="capture" />
+                {t('캡처 영역 설정')}
+              </button>
+              <button
+                disabled={refreshingDisplays || editing}
+                onClick={() => void refreshDisplays()}
+              >
+                {t('모니터 다시 검색')}
+              </button>
+            </div>
+            {displayError && <p role="alert">{displayError}</p>}
+            {!refreshingDisplays && !displayError && !displays.length && (
+              <p role="status">
+                {t('연결된 모니터가 없습니다. 모니터를 연결한 뒤 다시 검색해 주세요.')}
+              </p>
+            )}
+            <small>{t('모니터와 캡처 영역은 편집 화면에서 적용을 눌러야 저장됩니다.')}</small>
+            {selectedDisplayId !== undefined && (
+              <small>
+                {settings.regions.some((region) => region.displayId === selectedDisplayId)
+                  ? t('저장된 영역이 있습니다. 영역은 모니터별로 기억합니다.')
+                  : t('아직 영역을 정하지 않았습니다. 현재 기본값은 전체 모니터입니다.')}
+              </small>
+            )}
           </section>
           <section>
             <h3>{t('이미지 보관')}</h3>
@@ -379,10 +511,10 @@ export default function Settings({
                 {t('백업 내보내기')}
               </button>
               <button
-                disabled={busy}
+                disabled={busy || editing}
                 onClick={() =>
                   void run(async () => {
-                    if (await window.fask.restore()) onClose()
+                    if (await window.fask.restore()) close()
                   }, t('복원 창을 닫았습니다.'))
                 }
               >
@@ -395,11 +527,11 @@ export default function Settings({
           <span role="status">{notice}</span>
           <button
             className="primary"
-            disabled={busy}
+            disabled={busy || editing}
             onClick={() =>
               void run(async () => {
                 await save()
-                onClose()
+                close()
               }, t('저장했습니다.'))
             }
           >
