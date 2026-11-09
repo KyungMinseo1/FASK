@@ -3331,8 +3331,8 @@ button.memo-saved:disabled {
   gap: 6px;
 }
 .graph-dock-toggle {
-  display: grid;
-  place-items: center;
+  display: grid !important;
+  place-items: center !important;
   width: 32px;
   height: 32px;
   padding: 0 !important;

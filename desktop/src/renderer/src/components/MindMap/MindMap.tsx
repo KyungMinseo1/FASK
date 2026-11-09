@@ -416,6 +416,18 @@ function MindMapInner({
   }, [])
 
   const [dockOpen, setDockOpen] = useState(false)
+  const dockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const openDock = (): void => {
+    if (dockTimer.current) clearTimeout(dockTimer.current)
+    setDockOpen(true)
+  }
+  const closeDock = (): void => {
+    if (dockTimer.current) clearTimeout(dockTimer.current)
+      dockTimer.current = setTimeout(() => setDockOpen(false), 250)
+  }
+  useEffect(() => () => {
+    if (dockTimer.current) clearTimeout(dockTimer.current)
+  }, [])
   const [full, setFull] = useState(false)
   const toggleFull = (): void => {
     const box = document.querySelector('.mind-map-box.instance-' + root.id.replace(/[^\w-]/g, ''))
@@ -481,19 +493,22 @@ function MindMapInner({
       <div
         ref={boxRef}
         className={`graph-dock${dockOpen ? ' open' : ''}`}
-        onMouseEnter={() => setDockOpen(true)}
-        onMouseLeave={() => setDockOpen(false)}
+        onMouseEnter={openDock}
+        onMouseLeave={closeDock}
       >
         <button
           className="graph-dock-toggle"
           aria-label={t('그래프 도구')}
           aria-expanded={dockOpen}
-          onClick={() => setDockOpen((o) => !o)}
+          onClick={() => {
+            if (dockTimer.current) clearTimeout(dockTimer.current)
+            setDockOpen((o) => !o)
+          }}
         >
           <svg viewBox="0 0 24 24" aria-hidden>
-            <circle cx="12" cy="6" r="1.6" />
+            <circle cx="6" cy="12" r="1.6" />
             <circle cx="12" cy="12" r="1.6" />
-            <circle cx="12" cy="18" r="1.6" />
+            <circle cx="18" cy="12" r="1.6" />
           </svg>
         </button>
         <div className="graph-dock-items">
