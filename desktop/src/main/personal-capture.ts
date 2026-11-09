@@ -2,15 +2,32 @@ import { BrowserWindow, desktopCapturer, nativeImage, screen } from 'electron'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { is } from '@electron-toolkit/utils'
-import type { CapturePreview, CaptureRegion, CaptureRect } from '../preload/personal'
+import type {
+  CapturePreview,
+  CaptureRegion,
+  CaptureRegionSaved,
+  CaptureRect,
+  CaptureResult,
+  CaptureSetupRequired,
+  CaptureSetupReason
+} from '../preload/personal'
 import type { PersonalStore } from './personal-store'
 import { t } from '../shared/i18n'
+import { captureSetupMessage, selectCaptureDisplay } from '../shared/capture'
+
+class CaptureSetupError extends Error {
+  constructor(readonly reason: CaptureSetupReason) {
+    super(captureSetupMessage(reason))
+  }
+}
 
 export class PersonalCapture {
   overlay: BrowserWindow | null = null
   editor: BrowserWindow | null = null
   displayId: number | null = null
   preview: CapturePreview | null = null
+  private overlayScreenSize: { width: number; height: number } | null = null
+  private overlayHadRegion = false
   private busy = false
   private hitTimer: ReturnType<typeof setInterval> | null = null
   private regions: CaptureRect[] = []
@@ -28,9 +45,20 @@ export class PersonalCapture {
       void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`)
     else void win.loadFile(join(__dirname, '../renderer/index.html'), { hash })
   }
-  private window(displayId: number): BrowserWindow {
-    const display = screen.getAllDisplays().find((d) => d.id === displayId)
-    if (!display) throw new Error('설정한 모니터가 없습니다. 캡처 영역을 다시 설정해 주세요.')
+  private captureDisplay(id: number, width?: number, height?: number): Electron.Display {
+    const displays = screen.getAllDisplays()
+    if (displays.length === 0) throw new CaptureSetupError('no-displays')
+    const display = displays.find((d) => d.id === id)
+    if (!display) throw new CaptureSetupError('display-missing')
+    if (
+      (width !== undefined && display.bounds.width !== width) ||
+      (height !== undefined && display.bounds.height !== height)
+    )
+      throw new CaptureSetupError('region-changed')
+    return display
+  }
+  private window(displayId: number, width?: number, height?: number): BrowserWindow {
+    const display = this.captureDisplay(displayId, width, height)
     const win = new BrowserWindow({
       ...display.bounds,
       show: false,
@@ -49,13 +77,18 @@ export class PersonalCapture {
         nodeIntegration: false
       }
     })
-    // Windows excludes these windows from desktop composition captures, including
-    // a previous editor's full-screen preview. Hiding alone can leave a stale frame.
-    if (process.platform === 'win32') win.setContentProtection(true)
-    // Both the editor and pen overlay use normalized full-monitor coordinates.
-    // A normal window is constrained to the work area on Windows.
-    win.setFullScreen(true)
-    return win
+    try {
+      // Windows excludes these windows from desktop composition captures, including
+      // a previous editor's full-screen preview. Hiding alone can leave a stale frame.
+      if (process.platform === 'win32') win.setContentProtection(true)
+      // Both the editor and pen overlay use normalized full-monitor coordinates.
+      // A normal window is constrained to the work area on Windows.
+      win.setFullScreen(true)
+      return win
+    } catch (error) {
+      if (!win.isDestroyed()) win.destroy()
+      throw error
+    }
   }
   displays(): { id: number; label: string; width: number; height: number }[] {
     return screen.getAllDisplays().map((d, i) => ({
@@ -65,55 +98,161 @@ export class PersonalCapture {
       height: d.bounds.height
     }))
   }
-  open(projectId: string, showPanel = false): void {
+  open(projectId: string, showPanel = false): CaptureResult<void> {
     if (this.editor) throw new Error('캡처 영역 설정을 먼저 마쳐 주세요.')
-    this.stopHitTest()
-    this.overlay?.destroy()
-    const settings = this.store.settings()
-    const id = settings.displayId ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
-    const win = this.window(id)
-    this.overlay = win
-    this.displayId = id
-    this.drawing = false
-    this.panelOpen = false
-    this.releasingFocus = false
-    const bounds = win.getBounds()
-    this.regions = [
-      { x: bounds.width - 106, y: Math.max(0, bounds.height / 2 - 280), width: 101, height: 560 }
-    ]
-    this.accepting = false
-    win.setIgnoreMouseEvents(true, { forward: true })
-    win.setAlwaysOnTop(true, 'screen-saver')
-    win.on('blur', () => {
-      if (this.overlay !== win) return
+    let win: BrowserWindow | undefined
+    let display: Electron.Display
+    let hasRegion: boolean
+    try {
+      const displays = screen.getAllDisplays()
+      if (displays.length === 0) return { ok: false, reason: 'no-displays' }
+      const settings = this.store.settings()
+      if (settings.displayId === undefined && settings.regions.length > 0)
+        return { ok: false, reason: 'display-selection-required' }
+      const id =
+        settings.displayId ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
+      display = this.captureDisplay(id)
+      const region = settings.regions.find((r) => r.displayId === id)
+      if (
+        (!region && settings.regions.length > 0) ||
+        (region &&
+          (region.screenWidth !== display.bounds.width ||
+            region.screenHeight !== display.bounds.height))
+      )
+        return { ok: false, reason: 'region-changed' }
+      hasRegion = region !== undefined
+      win = this.window(id, display.bounds.width, display.bounds.height)
+      win.setIgnoreMouseEvents(true, { forward: true })
+      win.setAlwaysOnTop(true, 'screen-saver')
+      const current = this.captureDisplay(id, display.bounds.width, display.bounds.height)
+      if (current.bounds.x !== display.bounds.x || current.bounds.y !== display.bounds.y)
+        throw new CaptureSetupError('region-changed')
+    } catch (error) {
+      if (win && !win.isDestroyed()) win.destroy()
+      if (error instanceof CaptureSetupError) return { ok: false, reason: error.reason }
+      throw error
+    }
+    const candidate = win
+    candidate.on('blur', () => {
+      if (this.overlay !== candidate) return
       if (this.releasingFocus) {
         this.releasingFocus = false
         return
       }
       // Capturing deliberately hides our windows; that is not an outside click.
-      if (this.busy || !win.isVisible()) return
+      if (this.busy || !candidate.isVisible()) return
       this.drawing = false
-      win.webContents.send('personal:outside-click')
+      candidate.webContents.send('personal:outside-click')
       this.hitTest()
     })
-    win.once('ready-to-show', () => {
-      if (this.panelOpen) win.show()
-      else win.showInactive()
+    candidate.once('ready-to-show', () => {
+      if (this.overlay !== candidate) return
+      if (this.panelOpen) candidate.show()
+      else candidate.showInactive()
     })
-    win.on('closed', () => {
-      if (this.overlay === win) {
+    candidate.on('closed', () => {
+      if (this.overlay === candidate) {
         this.stopHitTest()
         this.overlay = null
         this.displayId = null
+        this.overlayScreenSize = null
+        this.overlayHadRegion = false
       }
     })
     this.load(
-      win,
+      candidate,
       `/personal-overlay?project=${encodeURIComponent(projectId)}&profile=${this.store.active}${showPanel ? '&panel=1' : ''}`
     )
+    const previous = this.overlay
+    this.stopHitTest()
+    this.overlay = candidate
+    this.displayId = display.id
+    this.overlayScreenSize = { width: display.bounds.width, height: display.bounds.height }
+    this.overlayHadRegion = hasRegion
+    this.drawing = false
+    this.panelOpen = false
+    this.releasingFocus = false
+    const bounds = candidate.getBounds()
+    this.regions = [
+      { x: bounds.width - 106, y: Math.max(0, bounds.height / 2 - 280), width: 101, height: 560 }
+    ]
+    this.accepting = false
+    previous?.destroy()
     this.hitTimer = setInterval(() => this.hitTest(), 30)
     this.hitTimer.unref()
     this.main()?.hide()
+    return { ok: true, value: undefined }
+  }
+  captureSetupRequired(): CaptureSetupRequired | null {
+    try {
+      const displays = screen.getAllDisplays()
+      if (displays.length === 0) return { ok: false, reason: 'no-displays' }
+      const win = this.overlay
+      const id = this.displayId
+      if (!win || win.isDestroyed() || id === null)
+        return { ok: false, reason: 'region-changed' }
+      const display = this.captureDisplay(id)
+      const settings = this.store.settings()
+      const region = settings.regions.find((r) => r.displayId === id)
+      const bounds = win.getBounds()
+      if (
+        (!region && (this.overlayHadRegion || settings.regions.length > 0)) ||
+        (region &&
+          (region.screenWidth !== display.bounds.width ||
+            region.screenHeight !== display.bounds.height)) ||
+        !this.overlayScreenSize ||
+        this.overlayScreenSize.width !== display.bounds.width ||
+        this.overlayScreenSize.height !== display.bounds.height ||
+        bounds.x !== display.bounds.x ||
+        bounds.y !== display.bounds.y ||
+        bounds.width !== display.bounds.width ||
+        bounds.height !== display.bounds.height
+      )
+        return { ok: false, reason: 'region-changed' }
+      return null
+    } catch (error) {
+      if (error instanceof CaptureSetupError) return { ok: false, reason: error.reason }
+      throw error
+    }
+  }
+  editorSetupRequired(): CaptureSetupRequired | null {
+    if (!this.editor || this.editor.isDestroyed() || !this.preview)
+      throw new Error('캡처 편집 화면을 다시 열어 주세요.')
+    try {
+      const { id, width, height } = this.preview.display
+      this.captureDisplay(id, width, height)
+      return null
+    } catch (error) {
+      if (error instanceof CaptureSetupError) return { ok: false, reason: error.reason }
+      throw error
+    }
+  }
+  presentRecovery(): void {
+    const win = this.overlay
+    if (!win || win.isDestroyed()) return
+    const displays = screen.getAllDisplays()
+    if (displays.length === 0) return
+    let display = displays.find((d) => d.id === this.displayId)
+    if (!display) {
+      const primaryId = screen.getPrimaryDisplay().id
+      display = displays.find((d) => d.id === primaryId) ?? displays[0]
+    }
+    const bounds = win.getBounds()
+    if (
+      bounds.x !== display.bounds.x ||
+      bounds.y !== display.bounds.y ||
+      bounds.width !== display.bounds.width ||
+      bounds.height !== display.bounds.height
+    ) {
+      // This only makes recovery visible; Apply must still rebind the live capture.
+      win.setFullScreen(false)
+      win.setBounds(display.bounds)
+      win.setFullScreen(true)
+    }
+    if (!this.editor || this.editor.isDestroyed()) {
+      win.show()
+      win.focus()
+    }
   }
   close(): void {
     this.stopHitTest()
@@ -196,52 +335,79 @@ export class PersonalCapture {
       this.hitTest()
     }
   }
-  private async screenshot(id: number): Promise<Electron.NativeImage> {
-    const display = screen.getAllDisplays().find((d) => d.id === id)
-    if (!display) throw new Error('모니터 연결이 바뀌었습니다. 캡처 영역을 다시 설정해 주세요.')
+  private async screenshot(
+    id: number,
+    expectedWidth?: number,
+    expectedHeight?: number
+  ): Promise<Electron.NativeImage> {
+    const display = this.captureDisplay(id, expectedWidth, expectedHeight)
+    const { width, height } = display.bounds
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
       thumbnailSize: {
-        width: Math.round(display.bounds.width * display.scaleFactor),
-        height: Math.round(display.bounds.height * display.scaleFactor)
+        width: Math.round(width * display.scaleFactor),
+        height: Math.round(height * display.scaleFactor)
       }
     })
+    this.captureDisplay(id, width, height)
     const source = sources.find((s) => s.display_id === String(id))
     if (!source || source.thumbnail.isEmpty())
       throw new Error('모니터를 캡처할 수 없습니다. 화면 기록 권한을 확인해 주세요.')
     return source.thumbnail
   }
-  async edit(id: number): Promise<void> {
+  async edit(id: number): Promise<CaptureResult<void>> {
     if (this.busy || this.editor) throw new Error('다른 캡처 창을 먼저 닫아 주세요.')
+    const displays = this.displays()
+    const displayId = selectCaptureDisplay(displays, id)
+    if (displayId === undefined)
+      return {
+        ok: false,
+        reason: displays.length === 0 ? 'no-displays' : 'display-selection-required'
+      }
+    const display = displays.find((d) => d.id === displayId)!
     this.busy = true
-    const resume = this.hideCaptureWindows()
+    let resume: (() => void) | undefined
     try {
+      resume = this.hideCaptureWindows()
       await sleep(180)
-      const image = await this.screenshot(id)
-      const display = this.displays().find((d) => d.id === id)!
-      const saved = this.store.settings().regions.find((r) => r.displayId === id) ?? null
-      this.preview = { image: image.toDataURL(), display, region: saved }
-      const win = this.window(id)
+      const image = await this.screenshot(displayId, display.width, display.height)
+      const saved =
+        this.store.settings().regions.find(
+          (r) =>
+            r.displayId === displayId &&
+            r.screenWidth === display.width &&
+            r.screenHeight === display.height
+        ) ?? null
+      const preview = { image: image.toDataURL(), display, region: saved }
+      const win = this.window(displayId, display.width, display.height)
+      this.preview = preview
       this.editor = win
       win.once('ready-to-show', () => win.show())
       win.setAlwaysOnTop(true, 'screen-saver')
       win.on('closed', () => {
         this.editor = null
         this.preview = null
-        resume()
+        resume?.()
         this.changed()
       })
       this.load(win, '/capture-editor')
+      return { ok: true, value: undefined }
     } catch (e) {
-      resume()
+      resume?.()
+      if (e instanceof CaptureSetupError) return { ok: false, reason: e.reason }
       throw e
     } finally {
       this.busy = false
     }
   }
-  saveRegion(region: CaptureRegion): void {
-    const display = this.displays().find((d) => d.id === region.displayId)
-    if (!this.editor || !display || !this.preview || this.preview.display.id !== region.displayId)
+  saveRegion(region: CaptureRegion): CaptureResult<CaptureRegionSaved> {
+    const preview = this.preview
+    if (
+      !this.editor ||
+      this.editor.isDestroyed() ||
+      !preview ||
+      preview.display.id !== region.displayId
+    )
       throw new Error('캡처 편집 화면을 다시 열어 주세요.')
     const { x, y, width, height } = region.rect
     if (
@@ -254,33 +420,106 @@ export class PersonalCapture {
       y + height > 1.000001
     )
       throw new Error('영역은 모니터 안에 있어야 합니다.')
-    const settings = this.store.settings()
-    settings.regions = [
-      ...settings.regions.filter((r) => r.displayId !== region.displayId),
-      { ...region, screenWidth: display.width, screenHeight: display.height }
-    ]
-    settings.displayId = region.displayId
-    this.store.saveSettings(settings)
-    this.editor.close()
+    const win = this.overlay && !this.overlay.isDestroyed() ? this.overlay : null
+    const previousBounds = win?.getBounds()
+    const previousFullscreen = win?.isFullScreen() ?? false
+    const previousAccepting = this.accepting
+    let moved = false
+    let mouseIgnored = false
+    try {
+      const display = this.captureDisplay(
+        region.displayId,
+        preview.display.width,
+        preview.display.height
+      )
+      const saved: CaptureRegion = {
+        ...region,
+        screenWidth: display.bounds.width,
+        screenHeight: display.bounds.height
+      }
+      const overlayChanged =
+        win !== null &&
+        (this.displayId !== display.id ||
+          this.overlayScreenSize?.width !== display.bounds.width ||
+          this.overlayScreenSize?.height !== display.bounds.height ||
+          previousBounds!.width !== display.bounds.width ||
+          previousBounds!.height !== display.bounds.height)
+      if (win) {
+        // Keep the existing renderer and its unsent question while rebinding its monitor.
+        moved = true
+        if (process.platform === 'win32') win.setFullScreen(false)
+        win.setBounds(display.bounds)
+        win.setFullScreen(true)
+      }
+      const current = this.captureDisplay(
+        display.id,
+        preview.display.width,
+        preview.display.height
+      )
+      if (current.bounds.x !== display.bounds.x || current.bounds.y !== display.bounds.y)
+        throw new CaptureSetupError('region-changed')
+      if (win && overlayChanged) {
+        mouseIgnored = true
+        win.setIgnoreMouseEvents(true, { forward: true })
+      }
+      const settings = this.store.settings()
+      this.store.saveSettings({
+        ...settings,
+        displayId: saved.displayId,
+        regions: [...settings.regions.filter((r) => r.displayId !== saved.displayId), saved]
+      })
+      if (win) {
+        this.displayId = saved.displayId
+        this.overlayScreenSize = { width: saved.screenWidth, height: saved.screenHeight }
+        this.overlayHadRegion = true
+        if (overlayChanged) {
+          this.drawing = false
+          this.regions = []
+          this.accepting = false
+        }
+      }
+      return { ok: true, value: { region: saved, overlayChanged } }
+    } catch (error) {
+      try {
+        if (moved && win && previousBounds && !win.isDestroyed()) {
+          win.setFullScreen(false)
+          win.setBounds(previousBounds)
+          win.setFullScreen(previousFullscreen)
+        }
+      } finally {
+        if (mouseIgnored && win && !win.isDestroyed())
+          win.setIgnoreMouseEvents(!previousAccepting, { forward: true })
+      }
+      if (error instanceof CaptureSetupError) return { ok: false, reason: error.reason }
+      throw error
+    }
   }
-  async question(strokes?: string): Promise<string> {
+  async question(strokes?: string): Promise<CaptureResult<string>> {
     if (this.busy) throw new Error('캡처가 진행 중입니다.')
     const win = this.overlay,
       id = this.displayId
-    if (!win || id === null) throw new Error('질문 오버레이를 먼저 열어 주세요.')
+    if (!win || win.isDestroyed() || id === null)
+      throw new Error('질문 오버레이를 먼저 열어 주세요.')
+    const issue = this.captureSetupRequired()
+    if (issue) return issue
     this.busy = true
-    const resume = this.hideCaptureWindows()
+    let resume: (() => void) | undefined
     try {
+      resume = this.hideCaptureWindows()
       await sleep(180)
-      const display = this.displays().find((d) => d.id === id)
-      if (!display) throw new Error('모니터가 변경되었습니다.')
-      const region = this.store.settings().regions.find((r) => r.displayId === id)
-      if (
-        region &&
-        (region.screenWidth !== display.width || region.screenHeight !== display.height)
+      const beforeCapture = this.captureSetupRequired()
+      if (beforeCapture) return beforeCapture
+      const display = this.captureDisplay(
+        id,
+        this.overlayScreenSize!.width,
+        this.overlayScreenSize!.height
       )
-        throw new Error('화면 크기가 바뀌었습니다. 설정에서 캡처 영역을 다시 확인해 주세요.')
-      const image = await this.screenshot(id)
+      const image = await this.screenshot(id, display.bounds.width, display.bounds.height)
+      if (this.overlay !== win || this.displayId !== id)
+        return { ok: false, reason: 'region-changed' }
+      const afterCapture = this.captureSetupRequired()
+      if (afterCapture) return afterCapture
+      const region = this.store.settings().regions.find((r) => r.displayId === id)
       const size = image.getSize()
       const rect = region?.rect ?? { x: 0, y: 0, width: 1, height: 1 }
       const crop = {
@@ -297,7 +536,7 @@ export class PersonalCapture {
           throw new Error('펜 이미지가 너무 큽니다.')
         // Place ink by the overlay's real content bounds; Windows may offset/shrink the
         // window (taskbar, DPI rounding), so stretching ink to the full screen misaligns it.
-        const db = screen.getAllDisplays().find((d) => d.id === id)!.bounds
+        const db = display.bounds
         const cb = win.getContentBounds()
         const sx = size.width / db.width,
           sy = size.height / db.height
@@ -324,17 +563,28 @@ export class PersonalCapture {
           }
         }
         const selected = nativeImage.createFromBitmap(background, size).crop(crop)
-        return this.store.settings().retention === 'balanced'
-          ? `data:image/jpeg;base64,${selected.toJPEG(90).toString('base64')}`
-          : selected.toDataURL()
+        return {
+          ok: true,
+          value:
+            this.store.settings().retention === 'balanced'
+              ? `data:image/jpeg;base64,${selected.toJPEG(90).toString('base64')}`
+              : selected.toDataURL()
+        }
       }
       const selected = image.crop(crop)
-      return this.store.settings().retention === 'balanced'
-        ? `data:image/jpeg;base64,${selected.toJPEG(90).toString('base64')}`
-        : selected.toDataURL()
+      return {
+        ok: true,
+        value:
+          this.store.settings().retention === 'balanced'
+            ? `data:image/jpeg;base64,${selected.toJPEG(90).toString('base64')}`
+            : selected.toDataURL()
+      }
+    } catch (error) {
+      if (error instanceof CaptureSetupError) return { ok: false, reason: error.reason }
+      throw error
     } finally {
       this.busy = false
-      resume()
+      resume?.()
     }
   }
 }

@@ -369,7 +369,7 @@ app.whenReady().then(async () => {
       captureCount++
       return background.resize({ width: display.bounds.width, height: display.bounds.height })
     }
-    await personal.capture.edit(display.id)
+    assert.equal((await personal.capture.edit(display.id)).ok, true)
     const editor = personal.capture.editor
     await wait(
       () => editor.webContents.executeJavaScript("!!document.querySelector('.capture-box')"),
@@ -426,7 +426,7 @@ app.whenReady().then(async () => {
     const savedRegion = snapshot.settings.regions[0]
     assert.ok(savedRegion.rect.width < 0.8 && savedRegion.rect.width > 0.7)
     report.checks.push('resize handle changes persisted capture rectangle')
-    await personal.capture.edit(display.id)
+    assert.equal((await personal.capture.edit(display.id)).ok, true)
     const cancelEditor = personal.capture.editor
     await wait(
       () => cancelEditor.webContents.executeJavaScript("!!document.querySelector('.capture-box')"),
@@ -441,7 +441,7 @@ app.whenReady().then(async () => {
       savedRegion.rect
     )
     report.checks.push('cancel preserves previous capture region')
-    await personal.capture.open(project.id)
+    assert.equal(personal.capture.open(project.id).ok, true)
     const overlay = personal.capture.overlay
     await wait(
       () => overlay.webContents.executeJavaScript("!!document.querySelector('.overlay-toolbar')"),
@@ -509,7 +509,8 @@ app.whenReady().then(async () => {
     report.checks.push('overlay switches project in place')
     overlay.webContents.send('personal:escape')
     const image = await personal.capture.question()
-    const cropped = nativeImage.createFromDataURL(image).getSize()
+    assert.equal(image.ok, true)
+    const cropped = nativeImage.createFromDataURL(image.value).getSize()
     assert.equal(cropped.width, Math.floor(display.bounds.width * savedRegion.rect.width))
     report.checks.push('capture crops selected rectangle in main process')
     let cursor = { x: display.bounds.x + 5, y: display.bounds.y + 5 }
@@ -807,7 +808,7 @@ app.whenReady().then(async () => {
     await shot('overlay', overlay)
     personal.capture.close()
     await pause(150)
-    await js(`window.fask.openOverlay(${JSON.stringify(project.id)}, 'seed-question')`)
+    assert.equal((await js(`window.fask.openOverlay(${JSON.stringify(project.id)}, 'seed-question')`)).ok, true)
     const resumed = personal.capture.overlay
     const resumedJs = (source) => resumed.webContents.executeJavaScript(source)
     await wait(

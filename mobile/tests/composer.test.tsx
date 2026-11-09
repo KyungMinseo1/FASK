@@ -85,6 +85,18 @@ const complete = async (hub: ReturnType<typeof fakeHub>, turnId: string, answer:
 afterEach(cleanup)
 
 describe('Composer submission', () => {
+  it('keeps capture selected after recovery clears ink without marking the new capture annotated', async () => {
+    const hub = fakeHub()
+    const onCapture = vi.fn(async () => 'data:image/png;base64,recovered-region')
+    const view = mount(hub, { onCapture, hasInk: true })
+    view.update({ hasInk: false })
+    expect((screen.getByLabelText('화면 캡처 포함') as HTMLInputElement).checked).toBe(true)
+    await send()
+    expect(onCapture).toHaveBeenCalledTimes(1)
+    expect(hub.asks[0].image).toBe('data:image/png;base64,recovered-region')
+    expect(!!hub.asks[0].annotated).toBe(false)
+  })
+
   it('keeps a stream-adopted turn and its answer when the HTTP reply fails afterwards', async () => {
     const hub = fakeHub()
     hub.plan = ['lost']

@@ -18,6 +18,22 @@ export interface CaptureRegion {
   screenWidth: number
   screenHeight: number
 }
+export type CaptureSetupReason =
+  | 'no-displays'
+  | 'display-missing'
+  | 'display-selection-required'
+  | 'region-changed'
+export interface CaptureSetupRequired {
+  ok: false
+  reason: CaptureSetupReason
+}
+export type CaptureResult<T> =
+  | { ok: true; value: T }
+  | CaptureSetupRequired
+export interface CaptureRegionSaved {
+  region: CaptureRegion
+  overlayChanged: boolean
+}
 export interface LocalSettings {
   endpoint: string
   hasKey: boolean
@@ -480,7 +496,7 @@ export interface HubStatus {
 export interface PersonalApi extends KnowledgeApi {
   activateProject(id: string): Promise<void>
   clearRecent(projectId: string): Promise<void>
-  editOverlayRegion(): Promise<void>
+  editOverlayRegion(): Promise<CaptureResult<void>>
   overlayRegions(drawing: boolean, regions: CaptureRect[], panelOpen: boolean): Promise<void>
   shortcutInfo(): Promise<ShortcutInfo>
   onTogglePanel(cb: () => void): () => void
@@ -492,12 +508,14 @@ export interface PersonalApi extends KnowledgeApi {
   backup(): Promise<boolean>
   restore(): Promise<boolean>
   displays(): Promise<DisplayInfo[]>
-  openCaptureEditor(displayId: number): Promise<void>
+  openCaptureEditor(displayId: number): Promise<CaptureResult<void>>
   capturePreview(): Promise<CapturePreview>
-  saveRegion(region: CaptureRegion): Promise<void>
+  saveRegion(region: CaptureRegion): Promise<CaptureResult<CaptureRegionSaved>>
   closeCaptureEditor(): Promise<void>
-  openOverlay(projectId: string, questionId?: string): Promise<void>
-  captureQuestion(strokes?: string): Promise<string>
+  onCaptureRegionSaved(cb: (event: CaptureRegionSaved) => void): () => void
+  onCaptureSetupRequired(cb: (issue: CaptureSetupRequired) => void): () => void
+  openOverlay(projectId: string, questionId?: string): Promise<CaptureResult<void>>
+  captureQuestion(strokes?: string): Promise<CaptureResult<string>>
   onEscape(cb: () => void): () => void
   onOutsideClick(cb: () => void): () => void
   showDashboard(): Promise<void>

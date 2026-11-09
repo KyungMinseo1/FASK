@@ -10,7 +10,7 @@ app.whenReady().then(async () => {
   try {
     const main = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
     const personal = registerPersonal(report.restart.dataDir, () => main)
-    personal.capture.open(report.restart.projectId, true)
+    assert.equal(personal.capture.open(report.restart.projectId, true).ok, true)
     const overlay = personal.capture.overlay
     await new Promise((resolve) => overlay.webContents.once('did-finish-load', resolve))
     const js = (source) => overlay.webContents.executeJavaScript(source)

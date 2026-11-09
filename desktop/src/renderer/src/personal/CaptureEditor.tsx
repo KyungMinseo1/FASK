@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import type { CapturePreview, CaptureRect } from '../../../preload/personal'
 import { errorText } from './common'
 import { useT } from '../../../shared/i18n/react'
+import { captureSetupMessage } from '../../../shared/capture'
 
 const initial: CaptureRect = { x: 0.1, y: 0.12, width: 0.8, height: 0.76 }
 export default function CaptureEditor(): React.JSX.Element {
@@ -9,6 +10,9 @@ export default function CaptureEditor(): React.JSX.Element {
   const [preview, setPreview] = useState<CapturePreview | null>(null)
   const [rect, setRect] = useState(initial)
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [setupRequired, setSetupRequired] = useState(false)
+  const busy = useRef(false)
   const drag = useRef<{ mode: string; x: number; y: number; rect: CaptureRect } | null>(null)
   const rectRef = useRef(rect)
   const previewRef = useRef(preview)
@@ -18,16 +22,27 @@ export default function CaptureEditor(): React.JSX.Element {
   }, [rect, preview])
   const apply = async (): Promise<void> => {
     const p = previewRef.current
-    if (!p) return
+    if (!p || busy.current) return
+    busy.current = true
+    setSaving(true)
+    setError('')
+    setSetupRequired(false)
     try {
-      await window.fask.saveRegion({
+      const result = await window.fask.saveRegion({
         displayId: p.display.id,
         rect: rectRef.current,
         screenWidth: p.display.width,
         screenHeight: p.display.height
       })
+      if (!result.ok) {
+        setSetupRequired(true)
+        setError(t(captureSetupMessage(result.reason)))
+      }
     } catch (e) {
       setError(errorText(e))
+    } finally {
+      busy.current = false
+      setSaving(false)
     }
   }
   useEffect(() => {
@@ -39,8 +54,14 @@ export default function CaptureEditor(): React.JSX.Element {
       })
       .catch((e) => setError(errorText(e)))
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') void window.fask.closeCaptureEditor()
-      if (e.key === 'Enter') void apply()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        void window.fask.closeCaptureEditor()
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        void apply()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -147,7 +168,7 @@ export default function CaptureEditor(): React.JSX.Element {
           {t('취소')}
           <kbd>Esc</kbd>
         </button>
-        <button className="primary" onClick={() => void apply()}>
+        <button className="primary" disabled={saving || !preview} onClick={() => void apply()}>
           {t('적용')}
           <kbd>Enter</kbd>
         </button>
@@ -155,7 +176,9 @@ export default function CaptureEditor(): React.JSX.Element {
       {error && (
         <div className="capture-error">
           {error}
-          <button onClick={() => void window.fask.closeCaptureEditor()}>{t('닫기')}</button>
+          <button onClick={() => void window.fask.closeCaptureEditor()}>
+            {t(setupRequired ? '캡처 영역 다시 설정' : '닫기')}
+          </button>
         </div>
       )}
     </div>

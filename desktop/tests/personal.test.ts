@@ -34,6 +34,7 @@ import { egoLayout, pillBorder } from '../src/renderer/src/personal/egoGraph'
 import './knowledge.test'
 import './knowledge-store.test'
 import './mindmap-layout.test'
+import './capture.test'
 import {
   answerJustCompleted,
   applyDelta,
