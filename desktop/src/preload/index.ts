@@ -37,9 +37,12 @@ const fask: PersonalApi = {
   setRelation: (id, action) => ipcRenderer.invoke('personal:set-relation', id, action),
   focusQuestion: (id) => ipcRenderer.invoke('personal:focus-question', id),
   tidyPlan: (workspaceId) => ipcRenderer.invoke('personal:tidy-plan', workspaceId),
-  tidyPreview: (workspaceId) => ipcRenderer.invoke('personal:tidy-preview', workspaceId),
-  tidyApply: (workspaceId, proposalId, accepted) =>
-    ipcRenderer.invoke('personal:tidy-apply', workspaceId, proposalId, accepted),
+  tidyStart: (workspaceId) => ipcRenderer.invoke('personal:tidy-start', workspaceId),
+  tidyStatus: (workspaceId) => ipcRenderer.invoke('personal:tidy-status', workspaceId),
+  tidyClear: (workspaceId, jobId) => ipcRenderer.invoke('personal:tidy-clear', workspaceId, jobId),
+  tidyManagerRequest: (workspaceId) => ipcRenderer.invoke('personal:tidy-manager-request', workspaceId),
+  tidyApply: (workspaceId, proposalId, accepted, dismissed) =>
+    ipcRenderer.invoke('personal:tidy-apply', workspaceId, proposalId, accepted, dismissed),
   ask: (input) => ipcRenderer.invoke('personal:ask', input),
   cancel: (id) => ipcRenderer.invoke('personal:cancel', id),
   turnState: (questionId, turnId) =>
@@ -63,6 +66,7 @@ const fask: PersonalApi = {
   peerCodeCancel: () => ipcRenderer.invoke('personal:peer-code-cancel'),
   peerGrants: () => ipcRenderer.invoke('personal:peer-grants'),
   peerGrantRevoke: (id) => ipcRenderer.invoke('personal:peer-grant-revoke', id),
+  peerGrantManager: (id, decision) => ipcRenderer.invoke('personal:peer-grant-manager', id, decision),
   peerPair: (target, code) => ipcRenderer.invoke('personal:peer-pair', target, code),
   peerLinks: () => ipcRenderer.invoke('personal:peer-links'),
   peerUnlink: (id) => ipcRenderer.invoke('personal:peer-unlink', id),

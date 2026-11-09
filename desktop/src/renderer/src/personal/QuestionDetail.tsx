@@ -9,6 +9,7 @@ import { Icon } from './ToolbarIcons'
 import { useApi } from './api'
 import { loadAttachment } from './attachment-cache'
 import { dateLabel } from './common'
+import { questionTags } from './questionTree'
 import { useT } from '../../../shared/i18n/react'
 
 type Run = (fn: () => Promise<unknown>) => Promise<boolean>
@@ -79,7 +80,7 @@ export default function QuestionDetail({
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [focusTurnId, focusAt.tick])
   const focusConcept = concepts.find((c) => c.id === focusId)
-  const linked = q.conceptIds.flatMap((id) => concepts.filter((c) => c.id === id))
+  const { focus: linked, support } = questionTags(q, concepts)
   const [picking, setPicking] = useState(false)
   const [search, setSearch] = useState('')
   const needle = search.trim().toLowerCase()
@@ -101,6 +102,39 @@ export default function QuestionDetail({
     const ok = await run(() => api.updateQuestion(q.id, { memo }))
     setMemoState(ok ? 'saved' : 'idle')
     if (ok) memoTimer.current = window.setTimeout(() => setMemoState('idle'), 2000)
+  }
+  const chip = (c: Concept): React.JSX.Element => {
+    // 1-based numbers of the recorded turns; a concept without an entry shows none.
+    const turnIds = q.conceptTurns?.[c.id] ?? []
+    const numbers = turnIds.map((id) => q.turns.findIndex((x) => x.id === id) + 1).filter((n) => n > 0)
+    const target = turnIds.find((id) => shownTurns.some((x) => x.id === id))
+    return (
+      <span key={c.id} className="concept-chip">
+        <button
+          className="concept-chip-name"
+          disabled={!target}
+          title={numbers.length ? t('{{turns}}턴', { turns: numbers.join('·'), n: numbers.length }) : undefined}
+          onClick={() => {
+            setPicked({ from: focusConceptId, id: c.id })
+            setFocusAt({ concept: c.id, index: 0, tick: focusAt.tick + 1 })
+          }}
+        >
+          {c.name}
+          {shared?.has(c.id) && <span className="shared-badge">{t('공유')}</span>}
+        </button>
+        <button
+          className="concept-chip-remove"
+          aria-label={t('{{name}} 연결 해제', { name: c.name })}
+          onClick={() =>
+            void run(() =>
+              api.updateQuestion(q.id, { conceptIds: q.conceptIds.filter((id) => id !== c.id) })
+            )
+          }
+        >
+          <Icon name="close" size={12} />
+        </button>
+      </span>
+    )
   }
   return (
     <aside className="question-detail">
@@ -163,40 +197,10 @@ export default function QuestionDetail({
       </div>
       <h3>{t('연결된 개념')}</h3>
       <div className="concept-chips">
-        {linked.map((c) => {
-          // 1-based numbers of the recorded turns; a concept without an entry shows none.
-          const turnIds = q.conceptTurns?.[c.id] ?? []
-          const numbers = turnIds.map((id) => q.turns.findIndex((x) => x.id === id) + 1).filter((n) => n > 0)
-          const target = turnIds.find((id) => shownTurns.some((x) => x.id === id))
-          return (
-            <span key={c.id} className="concept-chip">
-              <button
-                className="concept-chip-name"
-                disabled={!target}
-                title={numbers.length ? t('{{turns}}턴', { turns: numbers.join('·'), n: numbers.length }) : undefined}
-                onClick={() => {
-                  setPicked({ from: focusConceptId, id: c.id })
-                  setFocusAt({ concept: c.id, index: 0, tick: focusAt.tick + 1 })
-                }}
-              >
-                {c.name}
-                {shared?.has(c.id) && <span className="shared-badge">{t('공유')}</span>}
-              </button>
-              <button
-                className="concept-chip-remove"
-                aria-label={t('{{name}} 연결 해제', { name: c.name })}
-                onClick={() =>
-                  void run(() =>
-                    api.updateQuestion(q.id, { conceptIds: q.conceptIds.filter((id) => id !== c.id) })
-                  )
-                }
-              >
-                <Icon name="close" size={12} />
-              </button>
-            </span>
-          )
-        })}
-        {!linked.length && <span className="concept-empty">{t('연결된 개념이 없습니다.')}</span>}
+        {linked.map(chip)}
+        {!linked.length && !support.length && (
+          <span className="concept-empty">{t('연결된 개념이 없습니다.')}</span>
+        )}
         <button
           className="concept-link-add"
           aria-expanded={picking}
@@ -237,9 +241,15 @@ export default function QuestionDetail({
           )}
         </div>
       )}
+      {support.length > 0 && (
+        <div className="concept-chips support" role="group" aria-label={t('관련 개념')}>
+          <small>{t('관련 개념')}</small>
+          {support.map(chip)}
+        </div>
+      )}
       {q.suggestions.length > 0 && (
         <div className="suggestions">
-          <small>{t('새 개념 제안, 누르면 연결됩니다')}</small>
+          <small>{t('다른 질문에서 다시 나오면 개념이 됩니다. 누르면 바로 연결됩니다.')}</small>
           {q.suggestions.map((s) => (
             <button key={s} onClick={() => void run(() => onCreateConcept(s))}>
               <Icon name="plus" size={14} />

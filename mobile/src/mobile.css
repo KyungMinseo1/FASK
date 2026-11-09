@@ -881,6 +881,10 @@
   padding: 10px 12px;
   font-size: 14px;
 }
+.tidy-sheet .tidy-dismiss {
+  min-width: 44px;
+  min-height: 44px;
+}
 .tidy-sheet .tidy-change input {
   width: 20px;
   height: 20px;

@@ -14,7 +14,7 @@ import {
 import { HubRelay, normalizeRelayUrl, RELAY_REPLACED, relayRoom } from './personal-relay'
 import { HUB_PORT, pairWithHost, PeerConnection, type PeerLink } from './personal-peers'
 import { PairError, PairingHost } from './peer-pairing'
-import { checkPeerCall, RemoteRouter, UNSUPPORTED } from './personal-routing'
+import { checkPeerCall, checkPeerManager, RemoteRouter, UNSUPPORTED } from './personal-routing'
 import { isTailscaleTarget, pairRelayKey, TAILSCALE_ADDRESS_ERROR, type PairPayload } from '../shared/pair-code'
 import { PersonalStore } from './personal-store'
 import { DisplayImages } from './image-display'
@@ -35,6 +35,7 @@ import { i18n, t } from '../shared/i18n'
 import type {
   AskInput,
   AskResult,
+  Concept,
   HubAddress,
   HubStatus,
   LocalSettings,
@@ -43,6 +44,7 @@ import type {
   Question,
   Snapshot,
   StreamEvent,
+  TidyStatus,
   Turn,
   TurnState,
   Workspace
@@ -72,7 +74,10 @@ const HUB_METHODS: ReadonlySet<string> = new Set([
   'set-relation',
   'focus-question',
   'tidy-plan',
-  'tidy-preview',
+  'tidy-status',
+  'tidy-start',
+  'tidy-clear',
+  'tidy-manager-request',
   'tidy-apply',
   'ask',
   'cancel',
@@ -88,6 +93,8 @@ interface PeerGrant {
   name: string
   tokenHash: string
   createdAt: number
+  manager?: 'pending' | 'granted' | 'rejected'
+  managerAt?: number
 }
 
 export interface PersonalRuntime {
@@ -139,6 +146,17 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         return null
       }
       checkPeerCall((kind, id) => store.record(kind, id), name, args)
+      const grant = grants().find((g) => g.id === caller.id)
+      checkPeerManager(grant?.manager, name)
+      if (name === 'tidy-status')
+        return { ...(handlers.get(name)!(...args) as TidyStatus), access: grant?.manager ?? 'none' }
+      if (name === 'tidy-manager-request') {
+        if (grant && grant.manager !== 'granted' && grant.manager !== 'pending') {
+          saveGrants(grants().map((g) => (g.id === grant.id ? { ...g, manager: 'pending', managerAt: Date.now() } : g)))
+          changed()
+        }
+        return null
+      }
       // A linked PC tags its own clients (its windows, its phone) so their focus stays apart.
       if (name === 'focus-question')
         return focusQuestion(`peer:${caller.id}:${typeof args[1] === 'string' ? args[1].slice(0, 100) : ''}`, args[0])
@@ -464,18 +482,42 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   })
   handle('tidy-plan', (workspaceId: string) => {
     store.record<Workspace>('workspace', workspaceId)
-    const { candidates, estimatedTokens } = extractor.plan(store.active, workspaceId)
-    return { candidates, estimatedTokens }
+    const { candidates, estimatedTokens, retag, items } = extractor.plan(store.active, workspaceId)
+    return { candidates, estimatedTokens, retag, items }
   })
-  handle('tidy-preview', (workspaceId: string) => {
+  handle('tidy-start', (workspaceId: string) => {
     store.record<Workspace>('workspace', workspaceId)
-    return extractor.tidyPreview(store.active, workspaceId)
+    return extractor.tidyStart(store.active, workspaceId)
   })
-  handle('tidy-apply', (workspaceId: string, proposalId: unknown, accepted: unknown) => {
+  handle('tidy-status', (workspaceId: string): TidyStatus => {
     store.record<Workspace>('workspace', workspaceId)
-    if (typeof proposalId !== 'string' || !Array.isArray(accepted) || !accepted.every(Number.isInteger))
+    return {
+      access: 'owner',
+      job: extractor.tidyStatus(store.active, workspaceId),
+      lastApplied: extractor.tidyLastApplied(store.active, workspaceId)
+    }
+  })
+  handle('tidy-clear', (workspaceId: string, jobId: unknown) => {
+    store.record<Workspace>('workspace', workspaceId)
+    if (typeof jobId !== 'string') throw new Error('요청 형식이 잘못되었습니다.')
+    extractor.tidyClear(store.active, workspaceId, jobId)
+  })
+  // This PC owns its workspaces, so there is no manager role to request.
+  handle('tidy-manager-request', (workspaceId: string) => {
+    store.record<Workspace>('workspace', workspaceId)
+    return null
+  })
+  handle('tidy-apply', (workspaceId: string, proposalId: unknown, accepted: unknown, dismissed: unknown) => {
+    store.record<Workspace>('workspace', workspaceId)
+    if (
+      typeof proposalId !== 'string' ||
+      !Array.isArray(accepted) ||
+      !accepted.every(Number.isInteger) ||
+      !Array.isArray(dismissed) ||
+      !dismissed.every(Number.isInteger)
+    )
       throw new Error('요청 형식이 잘못되었습니다.')
-    return extractor.tidyApply(store.active, workspaceId, proposalId, accepted)
+    return extractor.tidyApply(store.active, workspaceId, proposalId, accepted, dismissed)
   })
   handle('attachment', (id: string) => {
     if (!store.list<Question>('question').some((q) => questionImages(q).includes(id)))
@@ -928,13 +970,19 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           id: mapped(p.id),
           workspaceId: mapped(p.workspaceId)
         })
-      for (const c of snapshot.concepts)
-        store.put('concept', profile, {
+      for (const c of snapshot.concepts) {
+        const concept: Concept = {
           ...c,
           id: mapped(c.id),
           workspaceId: mapped(c.workspaceId),
           parentId: c.parentId ? mapped(c.parentId) : null
-        })
+        }
+        // Partner ids of pairs tidy left apart; partners missing from the backup are dropped.
+        const pairs = c.tidyPairs?.flatMap((id) => ids.get(id) ?? [])
+        if (pairs?.length) concept.tidyPairs = pairs
+        else delete concept.tidyPairs
+        store.put('concept', profile, concept)
+      }
       for (const r of snapshot.relations)
         store.put('relation', profile, {
           ...r,
@@ -945,8 +993,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           questionId: r.questionId ? (ids.get(r.questionId) ?? null) : null,
           turnIds: turnMapped(r.turnIds)
         })
-      for (const q of snapshot.questions)
-        store.put('question', profile, {
+      for (const q of snapshot.questions) {
+        const question: Question = {
           ...q,
           id: mapped(q.id),
           projectId: mapped(q.projectId),
@@ -954,6 +1002,12 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           conceptTurns: Object.fromEntries(
             Object.entries(q.conceptTurns).map(([id, turns]) => [mapped(id), turnMapped(turns)])
           ),
+          ...(q.conceptRoles
+            ? { conceptRoles: Object.fromEntries(Object.entries(q.conceptRoles).map(([id, v]) => [mapped(id), v])) }
+            : {}),
+          ...(q.conceptSources
+            ? { conceptSources: Object.fromEntries(Object.entries(q.conceptSources).map(([id, v]) => [mapped(id), v])) }
+            : {}),
           turns: q.turns.map((t) => ({
             ...t,
             id: turnIds.get(t.id) ?? randomUUID(),
@@ -969,7 +1023,13 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
                 }
               : {})
           }))
-        })
+        }
+        // The workspace in which tidy's move offer was kept; one outside the backup is dropped.
+        const stay = q.tidyStay === undefined ? undefined : ids.get(q.tidyStay)
+        if (stay) question.tidyStay = stay
+        else delete question.tidyStay
+        store.put('question', profile, question)
+      }
       store.saveSettings({
         ...store.settings(),
         ...snapshot.settings,
@@ -1237,7 +1297,30 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     pairStop()
     changed()
   })
-  handle('peer-grants', () => grants().map(({ id, name, createdAt }) => ({ id, name, createdAt })))
+  handle('peer-grants', () =>
+    grants().map(({ id, name, createdAt, manager, managerAt }) => ({
+      id,
+      name,
+      createdAt,
+      manager: manager ?? 'none',
+      managerAt: managerAt ?? null
+    }))
+  )
+  handle('peer-grant-manager', (id: unknown, decision: unknown) => {
+    if (typeof id !== 'string' || (decision !== 'grant' && decision !== 'reject' && decision !== 'revoke'))
+      throw new Error('요청 형식이 잘못되었습니다.')
+    if (!grants().some((g) => g.id === id)) return
+    saveGrants(
+      grants().map((g) => {
+        if (g.id !== id) return g
+        const next: PeerGrant = { ...g, managerAt: Date.now() }
+        if (decision === 'revoke') delete next.manager
+        else next.manager = decision === 'grant' ? 'granted' : 'rejected'
+        return next
+      })
+    )
+    changed()
+  })
   handle('peer-grant-revoke', (id: unknown) => {
     if (typeof id !== 'string') throw new Error('요청 형식이 잘못되었습니다.')
     revokeGrant(id)

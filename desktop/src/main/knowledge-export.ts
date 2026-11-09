@@ -177,8 +177,8 @@ Suggested use:
 ## Files
 
 - \`concepts.jsonl\`: one concept per line — \`id\`, \`name\`, \`aliases\`, \`definition\`, \`level\` (exactly three levels: topic > concept > detail; a parent is always exactly one level up and topics have no parent), \`parentId\` (broader concept), \`questionIds\`.
-- \`relations.jsonl\`: one relation per line — \`from\`, \`to\` (concept ids), \`type\` (${RELATION_TYPES.join(', ')}), \`confidence\`, \`approved\`, provenance \`questionId\` and \`turnIds\`.
-- \`questions.jsonl\`: one conversation per line — \`title\`, \`memo\` (the user's own note), \`concepts\` with the turns they appear in, and \`turns\` (question, AI answer${images ? ', image path under images/' : ''}).
+- \`relations.jsonl\`: one relation per line — \`from\`, \`to\` (concept ids), \`type\` (${RELATION_TYPES.join(', ')}), \`confidence\`, \`approved\`, provenance \`questionId\` and \`turnIds\`, and \`evidence\` (when present: the answer sentence the relation was read from).
+- \`questions.jsonl\`: one conversation per line — \`title\`, \`memo\` (the user's own note), \`concepts\` with their \`role\` (\`focus\`: what the question is about; \`support\`: what the answer drew on to explain it) and the turns they appear in, and \`turns\` (question, AI answer${images ? ', image path under images/' : ''}).
 - \`ontology.ttl\`: the same concept graph as SKOS (Turtle). \`skos:broader\` is the parent link; other relation types are \`fask:\` properties declared as sub-properties of \`skos:related\`.${images ? '\n- `images/`: screenshots attached to questions, referenced by `turns[].image`.' : ''}
 
 ## Concept map
@@ -216,13 +216,16 @@ export function buildExport(source: ExportSource, options: { images: boolean }):
     title: questionHeading(q),
     createdAt: q.createdAt,
     memo: q.memo,
+    // Focus links first; a link without a recorded role predates roles and counts as focus.
     concepts: q.conceptIds
       .filter((id) => ids.has(id))
       .map((id) => ({
         id,
         name: concepts.find((c) => c.id === id)?.name ?? '',
+        role: q.conceptRoles?.[id] ?? 'focus',
         turnIds: q.conceptTurns[id] ?? []
-      })),
+      }))
+      .sort((a, b) => Number(a.role === 'support') - Number(b.role === 'support')),
     turns: q.turns.map((t) => {
       const image = options.images && t.attachment ? `images/${t.attachment}` : undefined
       if (image && t.attachment) imageIds.add(t.attachment)
@@ -266,6 +269,7 @@ export function buildExport(source: ExportSource, options: { images: boolean }):
           approved: r.approved,
           questionId: r.questionId,
           turnIds: r.turnIds,
+          ...(r.evidence ? { evidence: r.evidence } : {}),
           createdAt: r.createdAt
         }))
       )

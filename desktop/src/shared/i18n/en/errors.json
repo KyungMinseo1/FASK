@@ -63,6 +63,7 @@
   "로컬과 외부 워크스페이스 사이에서는 이동·병합할 수 없습니다.": "You can't move or merge between local and remote workspaces.",
   "외부 PC가 오프라인이라 사용할 수 없습니다.": "Unavailable because the remote PC is offline.",
   "외부 워크스페이스 프로젝트에서는 지원하지 않는 기능입니다.": "Not supported for remote workspace projects.",
+  "지식 관리자로 승인된 PC만 정리할 수 있습니다.": "Only PCs approved as knowledge managers can tidy.",
   "외부 PC에서는 워크스페이스를 만들 수 없습니다.": "Remote PCs can't create workspaces.",
   "외부 PC에서는 워크스페이스를 삭제할 수 없습니다.": "Remote PCs can't delete workspaces.",
   "앱이 종료되어 요청이 중단되었습니다.": "The request stopped because the app closed.",
@@ -131,5 +132,7 @@
   "모델이 JSON을 반환하지 않았습니다.": "The model did not return JSON.",
   "내보낼 파일이 너무 많습니다.": "Too many files to export.",
   "내보낼 파일이 너무 큽니다.": "The export is too large.",
-  "정리 제안이 만료되었습니다. 정리 제안을 다시 확인해 주세요.": "This tidy proposal has expired. Review the tidy suggestions again."
+  "정리 제안이 만료되었습니다. 정리 제안을 다시 확인해 주세요.": "This tidy proposal has expired. Review the tidy suggestions again.",
+  "하위 개념이 있는 개념은 흡수할 수 없습니다.": "A concept with child concepts can't be folded.",
+  "하위 개념이 있는 개념은 후보로 되돌릴 수 없습니다.": "A concept with child concepts can't be turned back into a candidate."
 }

@@ -510,6 +510,7 @@ button.danger {
   flex-direction: column;
   gap: 6px;
   position: sticky;
+  z-index: 1;
   top: 0;
   height: 100vh;
   font-size: 14px;
@@ -663,6 +664,91 @@ button.danger {
   display: block;
   color: var(--nav-ink);
   font-weight: 600;
+}
+/* Notification bell: sits with the settings button; the popover opens above it. */
+.notify-wrap {
+  position: relative;
+}
+.fask-app .sidebar-notify {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  background: var(--nav-surface-1);
+  color: var(--nav-ink);
+  border-color: var(--nav-hairline);
+  font-size: 14px;
+}
+.fask-app .sidebar-notify:hover {
+  background: var(--nav-surface-2);
+}
+.sidebar-notify small {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--nav-on);
+  color: var(--nav-on-ink);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 18px;
+}
+.notify-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: 320px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+}
+.notify-popover ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.notify-popover li {
+  padding: 10px;
+  border-radius: var(--r-md);
+}
+.notify-popover li + li {
+  border-top: 1px solid var(--hairline);
+}
+.notify-popover li p,
+.notify-empty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.notify-empty {
+  padding: 10px;
+  color: var(--ink-muted);
+}
+.notify-popover li span {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+.fask-app .notify-popover li button {
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+/* Needs attention: blinks three times (no infinite blinking), then stays accent until seen. */
+.fask-app .attention {
+  color: var(--accent);
+  border-color: var(--accent);
+  animation: fask-attention 1.2s ease-in-out 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fask-app .attention {
+    animation: none;
+  }
 }
 .local-status {
   font-size: 13px;
@@ -1038,6 +1124,12 @@ button.danger {
   color: var(--tag);
   font-weight: 600;
 }
+/* '+N': the tags past the first three, named in its title (also the phone card's `.tag`). */
+.concept-tag.more,
+.fask-mobile .question-tags .tag.more {
+  color: var(--ink-muted);
+  font-weight: 500;
+}
 .question-status {
   display: inline-flex;
   align-items: center;
@@ -1347,6 +1439,22 @@ button.memo-saved:disabled {
   padding: 3px 10px;
   border-style: dashed;
   border-radius: var(--r-pill);
+}
+/* '관련 개념': what the answer drew on; quieter than the tags above. */
+.concept-chips.support {
+  margin-top: 10px;
+}
+.concept-chips.support > small {
+  width: 100%;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.concept-chips.support .concept-chip {
+  border-color: var(--hairline);
+  color: var(--ink-muted);
+}
+.question-detail .concept-chips.support .concept-chip button {
+  font-size: 12px;
 }
 .concept-picker {
   margin-top: 8px;
@@ -3510,6 +3618,15 @@ button.memo-saved:disabled {
   font-size: 10.5px;
   font-weight: 600;
 }
+.support-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-pill);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+}
 .graph-stage {
   position: relative;
 }
@@ -3656,6 +3773,30 @@ button.memo-saved:disabled {
   font-size: 12.5px;
   color: var(--ink-muted);
 }
+.tidy-change ul small {
+  margin-left: 4px;
+  color: var(--ink-muted);
+}
+.tidy-change .tidy-confirm {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+.tidy-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-muted);
+}
+.tidy-dialog .tidy-group > p {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+}
 .tidy-dialog > footer {
   display: flex;
   align-items: center;
@@ -3672,6 +3813,75 @@ button.memo-saved:disabled {
 .tidy-dialog .tidy-select button {
   padding: 6px 10px;
   font-size: 12.5px;
+}
+.fask-app .tidy-bar > span button.tidy-retry {
+  padding: 2px 4px;
+  text-decoration: underline;
+}
+.tidy-candidates {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  font-size: 13px;
+}
+.tidy-candidates summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.tidy-candidates summary span {
+  margin-left: 4px;
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+.tidy-candidates ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-muted);
+}
+.tidy-dialog .tidy-body .tidy-access {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.tidy-access button {
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+.create-modal .tidy-change > .tidy-dismiss {
+  flex: none;
+  margin-left: auto;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+}
+.create-modal .tidy-change > .tidy-dismiss:hover,
+.create-modal .tidy-change.dismissed > .tidy-dismiss {
+  color: var(--ink);
+}
+.tidy-change.dismissed > span {
+  text-decoration: line-through;
+  color: var(--ink-muted);
+}
+.tidy-change > .tidy-dismissed-tag {
+  flex: none;
+  align-self: center;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 .concept-panel label {
   display: flex;

@@ -267,10 +267,25 @@ test('concepts dedupe by name/alias; links keep turns; relations dedupe and are 
     // A manual link records the turns mentioning its name or an alias, case-insensitively.
     store.updateQuestion('q', { conceptIds: [a] })
     assert.deepEqual(turnsOf(), { [a]: ['t2'] })
+    // A link the user adds is theirs and a tag (focus).
+    const linkOf = (): Pick<Question, 'conceptRoles' | 'conceptSources'> => {
+      const { conceptRoles, conceptSources } = store.record<Question>('question', 'q')
+      return { conceptRoles, conceptSources }
+    }
+    assert.deepEqual(linkOf(), { conceptRoles: { [a]: 'focus' }, conceptSources: { [a]: 'user' } })
     store.updateQuestion('q', { conceptIds: [a, b, c] })
     assert.deepEqual(turnsOf(), { [a]: ['t2'], [b]: ['t3'] }, 'no mention: no entry')
     store.updateQuestion('q', { conceptIds: [b] })
     assert.deepEqual(turnsOf(), { [b]: ['t3'] })
+    assert.deepEqual(linkOf(), { conceptRoles: { [b]: 'focus' }, conceptSources: { [b]: 'user' } }, 'removed links lose their entries')
+    // An existing entry stays as it is.
+    store.put('question', profile, { ...store.record<Question>('question', 'q'), conceptRoles: { [b]: 'support' }, conceptSources: { [b]: 'model' } })
+    store.updateQuestion('q', { conceptIds: [b, c] })
+    assert.deepEqual(linkOf(), {
+      conceptRoles: { [b]: 'support', [c]: 'focus' },
+      conceptSources: { [b]: 'model', [c]: 'user' }
+    })
+    store.updateQuestion('q', { conceptIds: [b] })
     // Given positions win; only a newly linked concept without one is searched.
     store.updateQuestion('q', { conceptIds: [a, b], conceptTurns: { [b]: ['t1', 'missing'] } })
     assert.deepEqual(turnsOf(), { [a]: ['t2'], [b]: ['t1'] })
@@ -286,12 +301,18 @@ test('concepts dedupe by name/alias; links keep turns; relations dedupe and are 
       approved: false
     }
     const r1 = store.addRelation(profile, rel)
-    assert.equal(store.addRelation(profile, { ...rel, confidence: 0.9, approved: true }), r1)
+    assert.equal(store.record<Relation>('relation', r1).evidence, undefined)
+    assert.equal(
+      store.addRelation(profile, { ...rel, confidence: 0.9, approved: true, evidence: '  행렬은 고유값을 가진다. ' }),
+      r1
+    )
+    assert.equal(store.addRelation(profile, { ...rel, evidence: '다른 문장' }), r1)
     assert.deepEqual(
-      (({ confidence, approved }) => ({ confidence, approved }))(
+      (({ confidence, approved, evidence }) => ({ confidence, approved, evidence }))(
         store.record<Relation>('relation', r1)
       ),
-      { confidence: 0.9, approved: true }
+      { confidence: 0.9, approved: true, evidence: '행렬은 고유값을 가진다.' },
+      'evidence is filled once'
     )
     assert.throws(() => store.addRelation(profile, { ...rel, to: a }), /서로 다른 개념/)
     store.setRelation(r1, 'remove')
@@ -334,9 +355,16 @@ test('mergeConcept moves links, turn positions, relations and names to the targe
     })
     store.put('question', profile, {
       ...sQuestion('q', project.id, [sTurn('t1', 'x'), sTurn('t2', 'y')], [source, target]),
-      conceptTurns: { [source]: ['t2'] }
+      conceptTurns: { [source]: ['t2'] },
+      conceptRoles: { [source]: 'support' },
+      conceptSources: { [source]: 'model' }
     })
     store.put('question', profile, sQuestion('q2', project.id, [sTurn('u1', 'x')], [source]))
+    store.put('question', profile, {
+      ...sQuestion('q3', project.id, [sTurn('v1', 'x')], [source, target]),
+      conceptRoles: { [source]: 'support', [target]: 'support' },
+      conceptSources: { [source]: 'user', [target]: 'model' }
+    })
     const base = { questionId: null, turnIds: [], confidence: 0.8, approved: true }
     const moved = store.addRelation(profile, { ...base, from: source, to: c, type: 'uses' })
     const twin = store.addRelation(profile, {
@@ -354,8 +382,13 @@ test('mergeConcept moves links, turn positions, relations and names to the targe
     const q = store.record<Question>('question', 'q')
     assert.deepEqual(q.conceptIds, [target])
     assert.deepEqual(q.conceptTurns, { [target]: ['t2'] }, 'only recorded turns carry over')
+    // The target had no entry (counts as focus): focus wins; a source entry carries over.
+    assert.deepEqual([q.conceptRoles, q.conceptSources], [{ [target]: 'focus' }, { [target]: 'model' }])
     const q2 = store.record<Question>('question', 'q2')
     assert.deepEqual([q2.conceptIds, q2.conceptTurns], [[target], {}], 'no recorded turns: no entry')
+    assert.deepEqual([q2.conceptRoles, q2.conceptSources], [undefined, undefined], 'no entries: none written')
+    const q3 = store.record<Question>('question', 'q3')
+    assert.deepEqual([q3.conceptRoles, q3.conceptSources], [{ [target]: 'support' }, { [target]: 'user' }])
     assert.equal(store.record<Concept>('concept', child).parentId, target)
     const merged = store.record<Concept>('concept', target)
     assert.deepEqual(merged.aliases, ['행렬곱', 'matmul'])
@@ -370,6 +403,90 @@ test('mergeConcept moves links, turn positions, relations and names to the targe
     assert.deepEqual([kept.from, kept.to, !!kept.invalidatedAt], [c, target, true])
     assert.equal(store.search(profile, 'matmul', { kinds: ['concept'], limit: 5 })[0]?.id, target)
     assert.throws(() => store.record('concept', source), /찾을 수 없습니다/)
+  })
+})
+
+test('foldConcept moves links as support and appends the definition; demoteConcept leaves candidates', () => {
+  withStore('fold', (store) => {
+    const profile = store.active
+    const project = store.list<Project>('project')[0]
+    const ws = project.workspaceId
+    const coding = store.createConcept(profile, ws, { name: '채널 부호화', definition: '잡음에 강하게 부호를 고르는 방법' })
+    const size = store.createConcept(profile, ws, {
+      name: '코드북 크기',
+      aliases: ['codebook size'],
+      definition: '코드워드의 개수.',
+      level: 'detail',
+      parentId: coding
+    })
+    const other = store.createConcept(profile, ws, { name: '상호정보량' })
+    store.put('question', profile, {
+      ...sQuestion('q', project.id, [sTurn('t1', 'x'), sTurn('t2', 'y')], [size]),
+      conceptTurns: { [size]: ['t2'] },
+      conceptRoles: { [size]: 'focus' },
+      conceptSources: { [size]: 'user' }
+    })
+    store.put('question', profile, {
+      ...sQuestion('q2', project.id, [sTurn('u1', 'x')], [coding, size]),
+      conceptRoles: { [coding]: 'focus', [size]: 'support' },
+      conceptSources: { [coding]: 'model', [size]: 'model' }
+    })
+    const base = { questionId: null, turnIds: [], confidence: 0.8, approved: true }
+    const moved = store.addRelation(profile, { ...base, from: size, to: other, type: 'uses', evidence: '근거' })
+    const loop = store.addRelation(profile, { ...base, from: other, to: coding, type: 'uses' })
+    const self = store.addRelation(profile, { ...base, from: size, to: coding, type: 'part' })
+    assert.throws(() => store.foldConcept(coding, other), /하위 개념이 있는/)
+    store.foldConcept(size, coding)
+
+    const folded = store.record<Concept>('concept', coding)
+    assert.deepEqual(folded.aliases, ['코드북 크기', 'codebook size'])
+    assert.equal(folded.definition, '잡음에 강하게 부호를 고르는 방법. 코드워드의 개수.')
+    assert.equal(folded.manual, false)
+    const q = store.record<Question>('question', 'q')
+    assert.deepEqual(
+      [q.conceptIds, q.conceptTurns, q.conceptRoles, q.conceptSources],
+      [[coding], { [coding]: ['t2'] }, { [coding]: 'support' }, { [coding]: 'user' }],
+      'the link moves as support and stays the user’s'
+    )
+    const q2 = store.record<Question>('question', 'q2')
+    assert.deepEqual([q2.conceptIds, q2.conceptRoles], [[coding], { [coding]: 'focus' }], 'a linked target keeps its role')
+    const relation = store.record<Relation>('relation', moved)
+    assert.deepEqual([relation.from, relation.to, relation.evidence], [coding, other, '근거'])
+    assert.ok(store.record<Relation>('relation', loop))
+    assert.throws(() => store.record('relation', self), /찾을 수 없습니다/, 'a relation to itself is dropped')
+    assert.equal(store.search(profile, 'codebook', { kinds: ['concept'], limit: 5 })[0]?.id, coding)
+
+    // Tidy's rename keeps the old name as an alias and does not make the concept manual.
+    store.renameConcept(coding, '채널 코딩')
+    const renamed = store.record<Concept>('concept', coding)
+    assert.deepEqual([renamed.name, renamed.aliases[0], renamed.manual], ['채널 코딩', '채널 부호화', false])
+    assert.throws(() => store.renameConcept(other, 'codebook size'), /이미 있습니다/)
+
+    // Demoting: the name goes back to the linking questions' candidates; relations go.
+    store.put('question', profile, { ...store.record<Question>('question', 'q2'), suggestions: ['채널 코딩 '] })
+    const euler = store.createConcept(profile, ws, { name: '오일러 공식' })
+    store.updateQuestion('q', { conceptIds: [coding, euler] })
+    store.addRelation(profile, { ...base, from: euler, to: other, type: 'uses' })
+    store.demoteConcept(euler)
+    assert.throws(() => store.record('concept', euler), /찾을 수 없습니다/)
+    const demoted = store.record<Question>('question', 'q')
+    assert.deepEqual([demoted.conceptIds, demoted.suggestions], [[coding], ['오일러 공식']])
+    assert.deepEqual(demoted.conceptRoles, { [coding]: 'support' })
+    assert.equal(store.list<Relation>('relation').some((r) => r.from === euler), false)
+    store.demoteConcept(coding)
+    assert.deepEqual(store.record<Question>('question', 'q2').suggestions, ['채널 코딩 '], 'no duplicate candidate')
+    assert.deepEqual(store.record<Question>('question', 'q').suggestions, ['오일러 공식', '채널 코딩'])
+    const parent = store.createConcept(profile, ws, { name: '정보이론', level: 'topic' })
+    store.createConcept(profile, ws, { name: '엔트로피', parentId: parent })
+    assert.throws(() => store.demoteConcept(parent), /하위 개념이 있는/)
+
+    // Moving to another workspace clears links with their roles and sources, and the stay review.
+    const far = store.create('project', '먼 프로젝트', store.create('workspace', '먼 곳'))
+    store.updateQuestion('q2', { conceptIds: [other] })
+    store.put('question', profile, { ...store.record<Question>('question', 'q2'), tidyStay: ws })
+    store.moveQuestion('q2', far)
+    const away = store.record<Question>('question', 'q2')
+    assert.deepEqual([away.conceptIds, away.conceptRoles, away.conceptSources, away.tidyStay], [[], undefined, undefined, undefined])
   })
 })
 

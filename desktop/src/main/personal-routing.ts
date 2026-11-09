@@ -1,7 +1,16 @@
 // Linked-PC routing: merges remote workspaces into this PC's snapshot, forwards calls on remote ids,
 // and authorizes what a peer PC may do on this host.
 import { questionImages } from '../shared/questions'
-import type { AskInput, AskResult, Project, Question, Snapshot, StreamEvent, PeerStatus } from '../preload/personal'
+import type {
+  AskInput,
+  AskResult,
+  ManagerState,
+  Project,
+  Question,
+  Snapshot,
+  StreamEvent,
+  PeerStatus
+} from '../preload/personal'
 import { PEER_BLOCKED, PEER_REVOKED } from './personal-peers'
 
 export const NOT_ALLOWED = '권한이 없는 요청입니다.'
@@ -9,6 +18,13 @@ export const UNSUPPORTED = '지원하지 않는 요청입니다.'
 export const CROSS_BOUNDARY = '로컬과 외부 워크스페이스 사이에서는 이동·병합할 수 없습니다.'
 export const REMOTE_OFFLINE = '외부 PC가 오프라인이라 사용할 수 없습니다.'
 export const REMOTE_UNSUPPORTED = '외부 워크스페이스 프로젝트에서는 지원하지 않는 기능입니다.'
+export const TIDY_MANAGER_ONLY = '지식 관리자로 승인된 PC만 정리할 수 있습니다.'
+const MANAGER_ONLY: ReadonlySet<string> = new Set(['tidy-start', 'tidy-apply', 'tidy-clear'])
+
+/** Running or applying tidy on this host's workspaces needs the caller PC's knowledge-manager grant. */
+export function checkPeerManager(manager: ManagerState | undefined, name: string): void {
+  if (MANAGER_ONLY.has(name) && manager !== 'granted') throw new Error(TIDY_MANAGER_ONLY)
+}
 
 /**
  * Validates one peer call against the host's active profile before its handler runs.
@@ -58,7 +74,10 @@ export function checkPeerCall(own: (kind: string, id: string) => unknown, name: 
       if (a === null) return
       return owned('question', a)
     case 'tidy-plan':
-    case 'tidy-preview':
+    case 'tidy-status':
+    case 'tidy-start':
+    case 'tidy-clear':
+    case 'tidy-manager-request':
     case 'tidy-apply':
       return owned('workspace', a)
     case 'export':
@@ -102,7 +121,10 @@ const ROUTE_KEY: Record<string, (args: unknown[]) => unknown> = {
   'set-relation': (a) => a[0],
   'focus-question': (a) => a[0],
   'tidy-plan': (a) => a[0],
-  'tidy-preview': (a) => a[0],
+  'tidy-status': (a) => a[0],
+  'tidy-start': (a) => a[0],
+  'tidy-clear': (a) => a[0],
+  'tidy-manager-request': (a) => a[0],
   'tidy-apply': (a) => a[0],
   'clear-attachment': (a) => a[0],
   'turn-state': (a) => a[0],

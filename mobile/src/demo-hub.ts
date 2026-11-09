@@ -7,6 +7,7 @@ import type {
   Snapshot,
   StreamEvent,
   TidyChange,
+  TidyJob,
   TidyRef,
   TidyResult,
   Turn,
@@ -159,6 +160,8 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
       title: '힙과 우선순위 큐 차이',
       conceptIds: ['c-heap', 'c-queue'],
       conceptTurns: { 'c-heap': ['t-heap-1'], 'c-queue': ['t-heap-1'] },
+      conceptRoles: { 'c-heap': 'focus', 'c-queue': 'support' },
+      conceptSources: { 'c-heap': 'model', 'c-queue': 'model' },
       extractedTurns: 1,
       suggestions: [],
       memo: '',
@@ -201,6 +204,8 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
       title: '라운드 로빈 타임 퀀텀',
       conceptIds: ['c-sched', 'c-queue'],
       conceptTurns: { 'c-sched': ['t-rr-1'], 'c-queue': ['t-rr-1'] },
+      conceptRoles: { 'c-sched': 'focus', 'c-queue': 'support' },
+      conceptSources: { 'c-sched': 'model', 'c-queue': 'model' },
       extractedTurns: 1,
       suggestions: [],
       memo: '',
@@ -298,7 +303,11 @@ export function createDemoHub(): HubClient {
     data.relations = data.relations.filter((r) => !ids.has(r.from) && !ids.has(r.to))
     for (const q of data.questions) {
       q.conceptIds = q.conceptIds.filter((c) => !ids.has(c))
-      for (const c of ids) delete q.conceptTurns[c]
+      for (const c of ids) {
+        delete q.conceptTurns[c]
+        delete q.conceptRoles?.[c]
+        delete q.conceptSources?.[c]
+      }
     }
   }
   const removeProjects = (ids: Set<string>): void => {
@@ -307,10 +316,11 @@ export function createDemoHub(): HubClient {
     data.questions = data.questions.filter((q) => !ids.has(q.projectId))
   }
   // Demo tidy: parentless concepts are the candidates; the preview proposes fixed changes for the
-  // seeded ones, and applying marks the rest as reviewed (like the PC's tidy).
+  // seeded ones, and applying marks the rest as reviewed (like the PC's tidy). Nothing is re-judged.
   const orphans = (workspaceId: string): Concept[] =>
     data.concepts.filter((c) => c.workspaceId === workspaceId && c.level !== 'topic' && !c.parentId && !c.tidyReviewed)
-  let proposal: { id: string; workspaceId: string; changes: TidyChange[] } | undefined
+  let job: (TidyJob & { workspaceId: string }) | null = null
+  let lastApplied: string | null = null
 
   return {
     snapshot: async () => structuredClone(data),
@@ -381,11 +391,30 @@ export function createDemoHub(): HubClient {
     moveQuestion: async (qid, projectId) => {
       const q = question(qid)
       if (workspaceOf(q.projectId) === workspaceOf(projectId)) q.projectId = projectId
-      else Object.assign(q, { projectId, conceptIds: [], conceptTurns: {}, suggestions: [] })
+      else {
+        Object.assign(q, { projectId, conceptIds: [], conceptTurns: {}, suggestions: [] })
+        delete q.conceptRoles
+        delete q.conceptSources
+        delete q.tidyStay
+      }
       changed()
     },
     updateQuestion: async (qid, patch) => {
-      Object.assign(question(qid), patch)
+      const q = question(qid)
+      const before = new Set(q.conceptIds)
+      Object.assign(q, patch)
+      // Like the PC store: links the user adds are user focus tags; dropped links lose their entries.
+      const roles = { ...q.conceptRoles },
+        sources = { ...q.conceptSources }
+      for (const c of Object.keys(roles)) if (!q.conceptIds.includes(c)) delete roles[c]
+      for (const c of Object.keys(sources)) if (!q.conceptIds.includes(c)) delete sources[c]
+      for (const c of q.conceptIds)
+        if (!before.has(c)) {
+          roles[c] = 'focus'
+          sources[c] = 'user'
+        }
+      q.conceptRoles = roles
+      q.conceptSources = sources
       changed()
     },
     editConcept: async (cid, name, parentId) => {
@@ -401,8 +430,22 @@ export function createDemoHub(): HubClient {
       }
       data.relations = data.relations.filter((r) => r.from !== r.to)
       for (const q of data.questions) {
-        if (q.conceptIds.includes(source))
+        if (q.conceptIds.includes(source)) {
+          const both = q.conceptIds.includes(target)
           q.conceptIds = [...new Set(q.conceptIds.map((c) => (c === source ? target : c)))]
+          // Focus (or no entry, which counts as focus) wins; 'user' beats 'model' beats unknown.
+          const roleA = q.conceptRoles?.[source],
+            roleB = both ? q.conceptRoles?.[target] : undefined
+          const hadRole = roleA !== undefined || roleB !== undefined
+          const role = (both && roleB !== 'support') || roleA !== 'support' ? 'focus' : 'support'
+          const srcA = q.conceptSources?.[source],
+            srcB = both ? q.conceptSources?.[target] : undefined
+          const src = srcA === 'user' || srcB === 'user' ? 'user' : (srcA ?? srcB)
+          if (q.conceptRoles) delete q.conceptRoles[source]
+          if (q.conceptSources) delete q.conceptSources[source]
+          if (hadRole) q.conceptRoles = { ...q.conceptRoles, [target]: role }
+          if (src) q.conceptSources = { ...q.conceptSources, [target]: src }
+        }
         const turns = q.conceptTurns[source]
         if (turns) {
           q.conceptTurns[target] = [...new Set([...(q.conceptTurns[target] ?? []), ...turns])]
@@ -425,39 +468,87 @@ export function createDemoHub(): HubClient {
     },
     focusQuestion: async () => {},
     tidyPlan: async (workspaceId) => {
-      const n = orphans(workspaceId).length
-      return { candidates: n, estimatedTokens: n * 400 }
-    },
-    tidyPreview: async (workspaceId) => {
-      await new Promise((resolve) => setTimeout(resolve, 900))
       const open = orphans(workspaceId)
-      const ref = (c: Concept): TidyRef => ({ id: c.id, name: c.name })
-      const queue = open.find((c) => c.id === 'c-queue'),
-        dead = open.find((c) => c.id === 'c-dead'),
-        sched = data.concepts.find((c) => c.id === 'c-sched'),
-        heap = data.concepts.find((c) => c.id === 'c-heap')
-      const changes: TidyChange[] = []
-      if (queue)
-        changes.push({
-          kind: 'newParent',
-          name: '자료구조',
-          level: 'topic',
-          parent: null,
-          children: [{ concept: ref(queue), from: null, levelFrom: queue.level, levelTo: 'concept' }]
-        })
-      if (dead && sched)
-        changes.push({ kind: 'move', concept: ref(dead), from: null, to: ref(sched), levelFrom: dead.level, levelTo: 'concept' })
-      if (queue && heap && !data.relations.some((r) => r.from === queue.id && r.to === heap.id))
-        changes.push({ kind: 'relation', from: ref(queue), to: ref(heap), type: 'uses', confidence: 0.8 })
-      proposal = { id: id('tidy'), workspaceId, changes }
-      return { id: proposal.id, changes }
+      const n = open.length
+      return {
+        candidates: n,
+        retag: 0,
+        estimatedTokens: n * 400,
+        items: open.map((c) => ({ kind: 'orphan' as const, concept: { id: c.id, name: c.name } }))
+      }
     },
-    tidyApply: async (workspaceId, proposalId, accepted) => {
-      if (proposal?.id !== proposalId || proposal.workspaceId !== workspaceId)
+    tidyStart: async (workspaceId) => {
+      if (job?.workspaceId === workspaceId && job.state === 'running') {
+        const { workspaceId: _, ...view } = job
+        return structuredClone(view)
+      }
+      const current: TidyJob & { workspaceId: string } = {
+        id: id('tidy'),
+        workspaceId,
+        state: 'running',
+        startedAt: Date.now(),
+        finishedAt: null,
+        progress: { done: 0, total: 0 },
+        proposal: null,
+        error: ''
+      }
+      job = current
+      changed()
+      setTimeout(() => {
+        if (job !== current) return
+        const open = orphans(workspaceId)
+        const ref = (c: Concept): TidyRef => ({ id: c.id, name: c.name })
+        const queue = open.find((c) => c.id === 'c-queue'),
+          dead = open.find((c) => c.id === 'c-dead'),
+          sched = data.concepts.find((c) => c.id === 'c-sched')
+        const changes: TidyChange[] = []
+        if (queue)
+          changes.push({
+            kind: 'newParent',
+            name: '자료구조',
+            level: 'topic',
+            parent: null,
+            children: [{ concept: ref(queue), from: null, levelFrom: queue.level, levelTo: 'concept' }]
+          })
+        if (dead && sched)
+          changes.push({ kind: 'move', concept: ref(dead), from: null, to: ref(sched), levelFrom: dead.level, levelTo: 'concept' })
+        Object.assign(current, { state: 'ready', finishedAt: Date.now(), proposal: { id: current.id, changes, retag: 0 } })
+        changed()
+      }, 900)
+      const { workspaceId: __, ...view } = current
+      return structuredClone(view)
+    },
+    tidyStatus: async (workspaceId) => {
+      if (job?.workspaceId !== workspaceId) return { access: 'owner', job: null, lastApplied }
+      const { workspaceId: _, ...view } = job
+      return { access: 'owner', job: structuredClone(view), lastApplied }
+    },
+    tidyClear: async (workspaceId, jobId) => {
+      if (job?.workspaceId === workspaceId && job.id === jobId && job.state === 'failed') {
+        job = null
+        changed()
+      }
+    },
+    tidyManagerRequest: async () => {},
+    tidyApply: async (workspaceId, proposalId, accepted, dismissed) => {
+      if (job?.workspaceId !== workspaceId || job.proposal?.id !== proposalId)
         throw new Error('정리 제안이 만료되었습니다. 정리 제안을 다시 확인해 주세요.')
-      const { changes: proposed } = proposal
-      proposal = undefined
-      const result: TidyResult = { merged: 0, parents: 0, moved: 0, relations: 0, skipped: [] }
+      const proposed = job.proposal.changes
+      lastApplied = job.id
+      job = null
+      const result: TidyResult = {
+        merged: 0,
+        folded: 0,
+        demoted: 0,
+        renamed: 0,
+        promoted: 0,
+        parents: 0,
+        moved: 0,
+        unrelated: 0,
+        retagged: 0,
+        movedQuestions: 0,
+        skipped: []
+      }
       const find = (r: TidyRef): Concept | undefined => data.concepts.find((c) => c.id === r.id)
       proposed.forEach((change, i) => {
         if (!accepted.includes(i)) return
@@ -471,24 +562,17 @@ export function createDemoHub(): HubClient {
         } else if (change.kind === 'move' && find(change.concept) && find(change.to)) {
           Object.assign(find(change.concept) ?? {}, { parentId: change.to.id, level: change.levelTo })
           result.moved++
-        } else if (change.kind === 'relation' && change.from.id && change.to.id) {
-          data.relations.push({
-            id: id('relation'),
-            workspaceId,
-            from: change.from.id,
-            to: change.to.id,
-            type: change.type,
-            questionId: null,
-            turnIds: [],
-            confidence: change.confidence,
-            approved: change.confidence >= 0.7,
-            createdAt: new Date().toISOString(),
-            invalidatedAt: null
-          })
-          result.relations++
         } else result.skipped.push(i)
       })
-      for (const c of orphans(workspaceId)) c.tidyReviewed = `|${c.level}|`
+      // Skipped changes (neither accepted nor dismissed) leave their subjects to be offered again.
+      const skip = new Set<string>()
+      proposed.forEach((change, i) => {
+        if (accepted.includes(i) || dismissed.includes(i)) return
+        if (change.kind === 'newParent') {
+          for (const p of change.children) if (p.concept.id) skip.add(p.concept.id)
+        } else if (change.kind === 'move' && change.concept.id) skip.add(change.concept.id)
+      })
+      for (const c of orphans(workspaceId)) if (!skip.has(c.id)) c.tidyReviewed = `|${c.level}|`
       changed()
       return result
     },

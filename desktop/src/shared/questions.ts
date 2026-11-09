@@ -1,5 +1,13 @@
 // Pure question-model helpers shared by main, renderer, and mobile. No Node or DOM APIs.
-import type { Question, TextAttachment, Turn, TurnState, TurnStatus } from '../preload/personal'
+import type {
+  ConceptRole,
+  Question,
+  TagSource,
+  TextAttachment,
+  Turn,
+  TurnState,
+  TurnStatus
+} from '../preload/personal'
 
 /** 1.0.x record: one question per follow-up, grouped only by conversationId. */
 export interface LegacyQuestion {
@@ -19,6 +27,8 @@ export interface LegacyQuestion {
   complexity: 'simple' | 'complex' | 'unknown'
   routingReason: string
   conceptIds: string[]
+  conceptRoles?: Record<string, ConceptRole>
+  conceptSources?: Record<string, TagSource>
   suggestions: string[]
   memo: string
   important: boolean
@@ -154,6 +164,12 @@ export function reconcileTurnState(
 const text = (v: unknown): string => (typeof v === 'string' ? v : '')
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+/** Entries of a role/source map whose key is a linked id and whose value is allowed; others dropped. */
+function linkMap<T extends string>(v: unknown, ids: string[], values: readonly T[]): Record<string, T> | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const entries = Object.entries(v).filter(([id, x]) => ids.includes(id) && values.includes(x as T))
+  return entries.length ? (Object.fromEntries(entries) as Record<string, T>) : undefined
+}
 
 export function normalizeLegacyQuestion(r: unknown): LegacyQuestion {
   const o = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>
@@ -204,6 +220,10 @@ export function normalizeLegacyQuestion(r: unknown): LegacyQuestion {
   }
   if (typeof o.title === 'string' && o.title.length >= 1 && o.title.length <= 200)
     q.title = o.title
+  const roles = linkMap<ConceptRole>(o.conceptRoles, q.conceptIds, ['focus', 'support'])
+  if (roles) q.conceptRoles = roles
+  const sources = linkMap<TagSource>(o.conceptSources, q.conceptIds, ['user', 'model'])
+  if (sources) q.conceptSources = sources
   return q
 }
 
@@ -254,6 +274,17 @@ export function mergeLegacyQuestions(records: LegacyQuestion[]): Question[] {
     }
     const title = sorted.find((r) => r.title)?.title
     if (title) question.title = title
+    // Union of the rows' links: focus beats support, 'user' beats 'model'.
+    const roles: Record<string, ConceptRole> = {},
+      sources: Record<string, TagSource> = {}
+    for (const r of sorted) {
+      for (const [id, role] of Object.entries(r.conceptRoles ?? {}))
+        if (roles[id] !== 'focus') roles[id] = role
+      for (const [id, source] of Object.entries(r.conceptSources ?? {}))
+        if (sources[id] !== 'user') sources[id] = source
+    }
+    if (Object.keys(roles).length) question.conceptRoles = roles
+    if (Object.keys(sources).length) question.conceptSources = sources
     return question
   })
 }

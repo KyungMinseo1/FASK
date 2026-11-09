@@ -19,9 +19,17 @@ import ConceptPanel from './ConceptPanel'
 import TidyBar from './TidyBar'
 import Settings from './Settings'
 import { Icon } from './ToolbarIcons'
+import { NotificationBell } from './notifications'
 import { Wordmark } from './Wordmark'
 import { dateLabel, errorText, statuses, useSnapshot } from './common'
-import { linkableConcepts, projectConcepts, questionTree, relationHighlight } from './questionTree'
+import {
+  linkableConcepts,
+  projectConcepts,
+  questionTags,
+  questionTree,
+  relationHighlight,
+  TAG_CHIPS
+} from './questionTree'
 import { canDropGraphNode, canMoveGraphNode, moveGraphNode } from './graphMove'
 import { useT } from '../../../shared/i18n/react'
 import { i18n } from '../../../shared/i18n'
@@ -350,6 +358,7 @@ export default function Dashboard(): React.JSX.Element {
             {t('로컬에 저장 중')}
             <small>{t('이미지 {{size}} MB', { size: (data.storageBytes / 1024 / 1024).toFixed(1) })}</small>
           </div>
+          <NotificationBell />
           <button onClick={() => setSettingsOpen(true)}>
             <Icon name="gear" />
             {t('설정과 AI 연결')}
@@ -636,7 +645,14 @@ export default function Dashboard(): React.JSX.Element {
               <section className="records-panel">
                 {view === 'graph' && project && graphRoot ? (
                   <div className="graph-stage">
-                    {workspace && <TidyBar workspaceId={workspace.id} revision={data} disabled={locked} />}
+                    {workspace && (
+                      <TidyBar
+                        workspaceId={workspace.id}
+                        workspaceName={workspace.name}
+                        revision={data}
+                        disabled={locked}
+                      />
+                    )}
                     <MindMap
                       key={project.id}
                       root={graphRoot}
@@ -684,7 +700,8 @@ export default function Dashboard(): React.JSX.Element {
                   <div className="records-scroll" ref={scrollRef}>
                   <div className={view === 'list' ? 'question-list compact' : 'question-list'}>
                     {paged.items.map((q, index) => {
-                      const tags = q.conceptIds.flatMap((id) => concepts.filter((c) => c.id === id))
+                      const tags = questionTags(q, concepts).focus
+                      const hidden = tags.slice(TAG_CHIPS)
                       return (
                         <div key={q.id}>
                           {view === 'timeline' &&
@@ -736,16 +753,28 @@ export default function Dashboard(): React.JSX.Element {
                             )}
                             <div className="question-footer">
                               <span className="question-tags">
-                                {tags.length
-                                  ? tags.map((c) => (
+                                {tags.length ? (
+                                  <>
+                                    {tags.slice(0, TAG_CHIPS).map((c) => (
                                       <span key={c.id} className="concept-tag">
                                         {c.name}
                                         {shared.has(c.id) && (
                                           <span className="shared-badge">{t('공유')}</span>
                                         )}
                                       </span>
-                                    ))
-                                  : t('미분류')}
+                                    ))}
+                                    {hidden.length > 0 && (
+                                      <span
+                                        className="concept-tag more"
+                                        title={hidden.map((c) => c.name).join(', ')}
+                                      >
+                                        +{hidden.length}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  t('미분류')
+                                )}
                               </span>
                               <span className="question-status">
                                 {questionImages(q).length > 0 && (

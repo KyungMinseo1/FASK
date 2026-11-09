@@ -75,12 +75,25 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       const q = data.questions.find((x) => x.id === questionId)
       const workspace = (pid: string): string | undefined => data.projects.find((p) => p.id === pid)?.workspaceId
       if (q && workspace(q.projectId) === workspace(projectId)) q.projectId = projectId
-      else if (q) Object.assign(q, { projectId, conceptIds: [], conceptTurns: {}, suggestions: [] })
+      else if (q) {
+        Object.assign(q, { projectId, conceptIds: [], conceptTurns: {}, suggestions: [] })
+        delete q.conceptRoles
+        delete q.conceptSources
+        delete q.tidyStay
+      }
       changed()
     },
     updateQuestion: async (questionId, patch) => {
       const q = data.questions.find((x) => x.id === questionId)
-      if (q) Object.assign(q, patch)
+      if (q) {
+        Object.assign(q, patch)
+        // The preview has no concepts; dropped links still lose their role/source entries.
+        const keep = (map?: Record<string, string>): void => {
+          for (const key of Object.keys(map ?? {})) if (!q.conceptIds.includes(key)) delete map![key]
+        }
+        keep(q.conceptRoles)
+        keep(q.conceptSources)
+      }
       changed()
     },
     editConcept: async () => {},
@@ -88,9 +101,32 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     editConceptInfo: async () => {},
     setRelation: async () => {},
     focusQuestion: async () => {},
-    tidyPlan: async () => ({ candidates: 0, estimatedTokens: 0 }),
-    tidyPreview: async () => ({ id: 'preview-tidy', changes: [] }),
-    tidyApply: async () => ({ merged: 0, parents: 0, moved: 0, relations: 0, skipped: [] }),
+    tidyPlan: async () => ({ candidates: 0, retag: 0, estimatedTokens: 0, items: [] }),
+    tidyStart: async () => ({
+      id: 'preview-tidy',
+      state: 'ready',
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+      progress: { done: 0, total: 0 },
+      proposal: { id: 'preview-tidy', changes: [], retag: 0 },
+      error: ''
+    }),
+    tidyStatus: async () => ({ access: 'owner', job: null, lastApplied: null }),
+    tidyClear: async () => {},
+    tidyManagerRequest: async () => {},
+    tidyApply: async () => ({
+      merged: 0,
+      folded: 0,
+      demoted: 0,
+      renamed: 0,
+      promoted: 0,
+      parents: 0,
+      moved: 0,
+      unrelated: 0,
+      retagged: 0,
+      movedQuestions: 0,
+      skipped: []
+    }),
     ask: async (input) => {
       let q: Question | undefined = input.questionId
         ? data.questions.find((x) => x.id === input.questionId)

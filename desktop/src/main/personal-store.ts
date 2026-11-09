@@ -13,6 +13,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type {
   Concept,
   ConceptLevel,
+  ConceptRole,
   LocalSettings,
   Profile,
   Project,
@@ -72,10 +73,68 @@ export interface ConceptFields {
 export type NewRelation = Pick<
   Relation,
   'from' | 'to' | 'type' | 'questionId' | 'turnIds' | 'confidence' | 'approved'
->
+> & { evidence?: string }
 
 const MAX_ALIASES = 20
 const MAX_DEFINITION = 2000
+const MAX_EVIDENCE = 300
+const MAX_SUGGESTIONS = 10
+
+/** Adds candidate names to a question's list unless a same-normalized one is there; the newest 10 stay. */
+export function addSuggestions(suggestions: string[], names: string[]): string[] {
+  const out = [...suggestions]
+  for (const name of names) {
+    const key = normalizeName(name)
+    if (key && !out.some((s) => normalizeName(s) === key)) out.push(name.trim())
+  }
+  return out.slice(-MAX_SUGGESTIONS)
+}
+
+/** The entries of `map` whose key is in `ids`; undefined when none is left. */
+function only<T>(map: Record<string, T> | undefined, ids: string[]): Record<string, T> | undefined {
+  if (!map) return undefined
+  const kept = Object.entries(map).filter(([id]) => ids.includes(id))
+  return kept.length ? Object.fromEntries(kept) : undefined
+}
+
+/** A question whose role and source entries are kept to its links (keys ⊂ conceptIds); empty maps go. */
+function linkMeta(q: Question): Question {
+  const { conceptRoles, conceptSources, ...rest } = q
+  const roles = only(conceptRoles, q.conceptIds),
+    sources = only(conceptSources, q.conceptIds)
+  return { ...rest, ...(roles ? { conceptRoles: roles } : {}), ...(sources ? { conceptSources: sources } : {}) }
+}
+
+/**
+ * `q` with its link to `source` moved onto `target`: recorded turn positions union, the link
+ * source keeps the stronger side (user > model > unknown), and `role` becomes the target's role
+ * entry (undefined: none).
+ */
+function moveLink(q: Question, source: string, target: string, role: ConceptRole | undefined): Question {
+  const conceptTurns = { ...q.conceptTurns }
+  delete conceptTurns[source]
+  // Only recorded positions carry over; a link without any stays without an entry.
+  const turns = orderedTurns(q, [...(q.conceptTurns[source] ?? []), ...(q.conceptTurns[target] ?? [])])
+  if (turns.length) conceptTurns[target] = turns
+  else delete conceptTurns[target]
+  const roles = { ...q.conceptRoles },
+    sources = { ...q.conceptSources }
+  const by = [sources[source], q.conceptIds.includes(target) ? sources[target] : undefined]
+  const from = by.includes('user') ? 'user' : by.includes('model') ? 'model' : undefined
+  delete roles[source]
+  delete sources[source]
+  if (role) roles[target] = role
+  else delete roles[target]
+  if (from) sources[target] = from
+  else delete sources[target]
+  return {
+    ...q,
+    conceptIds: [...new Set(q.conceptIds.map((id) => (id === source ? target : id)))],
+    conceptTurns,
+    conceptRoles: roles,
+    conceptSources: sources
+  }
+}
 
 /** Trimmed, unique (by normalized form) aliases that differ from the concept's own name. */
 function cleanAliases(aliases: string[], name: string): string[] {
@@ -456,10 +515,16 @@ export class PersonalStore {
   }
   /**
    * Upserts a record; concepts and questions are kept in the search index in the same statement
-   * batch. A concept written at another placement than its tidy review loses the review.
+   * batch. A concept written at another placement than its tidy review loses the review; a
+   * question keeps role and source entries for its links only.
    */
   put<T extends { id: string }>(kind: string, profile: string, value: T): string {
-    const data = kind === 'concept' ? freshReview(value as unknown as Concept) : value
+    const data =
+      kind === 'concept'
+        ? freshReview(value as unknown as Concept)
+        : kind === 'question'
+          ? linkMeta(value as unknown as Question)
+          : value
     const row = this.db
       .prepare(
         'INSERT INTO records VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data RETURNING rowid'
@@ -642,7 +707,8 @@ export class PersonalStore {
   }
   /**
    * Adds a relation between two concepts of one workspace. The same active from/to/type is updated
-   * (approval and confidence only rise); one the user removed is never revived.
+   * (approval and confidence only rise, evidence is filled when it had none); one the user removed
+   * is never revived.
    */
   addRelation(profile: string, rel: NewRelation): string {
     const from = this.record<Concept>('concept', rel.from, profile)
@@ -653,6 +719,7 @@ export class PersonalStore {
     const confidence = Number.isFinite(rel.confidence)
       ? Math.min(1, Math.max(0, rel.confidence))
       : 0
+    const evidence = typeof rel.evidence === 'string' ? rel.evidence.trim().slice(0, MAX_EVIDENCE) : ''
     const same = this.list<Relation>('relation', profile).filter(
       (r) => r.from === rel.from && r.to === rel.to && r.type === rel.type
     )
@@ -660,12 +727,15 @@ export class PersonalStore {
     if (existing) {
       if (
         !existing.invalidatedAt &&
-        ((rel.approved && !existing.approved) || confidence > existing.confidence)
+        ((rel.approved && !existing.approved) ||
+          confidence > existing.confidence ||
+          (evidence && !existing.evidence))
       )
         this.put('relation', profile, {
           ...existing,
           approved: existing.approved || !!rel.approved,
-          confidence: Math.max(existing.confidence, confidence)
+          confidence: Math.max(existing.confidence, confidence),
+          ...(existing.evidence || !evidence ? {} : { evidence })
         })
       return existing.id
     }
@@ -683,7 +753,8 @@ export class PersonalStore {
       confidence,
       approved: !!rel.approved,
       createdAt: new Date().toISOString(),
-      invalidatedAt: null
+      invalidatedAt: null,
+      ...(evidence ? { evidence } : {})
     })
   }
   setRelation(id: string, action: 'approve' | 'remove', profile = this.active): void {
@@ -915,32 +986,45 @@ export class PersonalStore {
         }
       safe.conceptTurns = conceptTurns
     }
+    if (safe.conceptIds) {
+      // A link the user adds is theirs and a tag (focus); removed links lose their entries (put).
+      const roles = { ...q.conceptRoles },
+        sources = { ...q.conceptSources }
+      for (const cid of safe.conceptIds)
+        if (!q.conceptIds.includes(cid)) {
+          roles[cid] = 'focus'
+          sources[cid] = 'user'
+        }
+      safe.conceptRoles = roles
+      safe.conceptSources = sources
+    }
     if (Array.isArray(patch.suggestions))
-      safe.suggestions = patch.suggestions.filter((s) => typeof s === 'string').slice(0, 10)
+      safe.suggestions = patch.suggestions.filter((s) => typeof s === 'string').slice(0, MAX_SUGGESTIONS)
     this.put('question', this.active, { ...q, ...safe })
   }
   /**
-   * Within a workspace a question keeps its concept links. Across workspaces they are cleared and
-   * the question becomes unextracted, so the target workspace's map picks it up.
+   * Within a workspace a question keeps its concept links. Across workspaces they are cleared (with
+   * their roles and sources, and a tidy's "stay" review) and the question becomes unextracted, so
+   * the target workspace's map picks it up.
    */
   moveQuestion(id: string, projectId: string): void {
     const q = this.record<Question>('question', id)
     const target = this.record<Project>('project', projectId)
     if (q.projectId === projectId) return
-    this.put(
-      'question',
-      this.active,
-      this.workspaceOf(q.projectId) === target.workspaceId
-        ? { ...q, projectId }
-        : {
-            ...q,
-            projectId,
-            conceptIds: [],
-            conceptTurns: {},
-            suggestions: [],
-            extractedTurns: 0
-          }
-    )
+    if (this.workspaceOf(q.projectId) === target.workspaceId) {
+      this.put('question', this.active, { ...q, projectId })
+      return
+    }
+    const moved: Question = {
+      ...q,
+      projectId,
+      conceptIds: [],
+      conceptTurns: {},
+      suggestions: [],
+      extractedTurns: 0
+    }
+    delete moved.tidyStay
+    this.put('question', this.active, moved)
   }
   editConcept(id: string, name: string, parentId: string | null): void {
     const c = this.record<Concept>('concept', id)
@@ -968,11 +1052,24 @@ export class PersonalStore {
     this.put('concept', this.active, edited)
   }
   /**
-   * Folds `source` into `target`: links, turn positions, children, relations and names move over.
-   * The target keeps its own level and parent; a child of `source` moves under the target only when
-   * it is exactly one level below the target, otherwise it becomes a root (a tidy candidate).
+   * Tidy's rename: unlike editConcept it does not mark the concept manual. The old name stays an
+   * alias, so search and recall still find it, and the approved name counts as reviewed
+   * (`tidyNamed`), so tidy does not offer to rename it again.
    */
-  mergeConcept(source: string, target: string): void {
+  renameConcept(id: string, name: string, profile = this.active): void {
+    const c = this.record<Concept>('concept', id, profile)
+    const trimmed = name.trim().slice(0, 200)
+    if (!trimmed) throw new Error('개념 이름을 입력해 주세요.')
+    this.assertNamesFree(c, [trimmed], profile)
+    this.put('concept', profile, {
+      ...c,
+      name: trimmed,
+      aliases: cleanAliases([c.name, ...c.aliases], trimmed),
+      tidyNamed: trimmed
+    })
+  }
+  /** Two concepts of one workspace for a merge or fold; `target` must not lie under `source`. */
+  private pair(source: string, target: string): [Concept, Concept] {
     const a = this.record<Concept>('concept', source),
       b = this.record<Concept>('concept', target)
     if (source === target || a.workspaceId !== b.workspaceId)
@@ -983,23 +1080,63 @@ export class PersonalStore {
       if (parent.id === source) throw new Error('하위 개념으로 병합할 수 없습니다.')
       parent = parent.parentId ? this.record<Concept>('concept', parent.parentId) : undefined
     }
-    const profile = this.active
+    return [a, b]
+  }
+  /**
+   * Moves `source`'s relations onto `target`: one that would point at itself is dropped, one that
+   * matches an existing relation of the target (same direction, type and state) merges into it.
+   */
+  private moveRelations(source: string, target: string, profile: string): void {
     const swap = (id: string): string => (id === source ? target : id)
+    const relations = this.list<Relation>('relation', profile)
+    for (const r of relations) {
+      if (r.from !== source && r.to !== source) continue
+      const moved = { ...r, from: swap(r.from), to: swap(r.to) }
+      const twin = relations.find(
+        (o) =>
+          o.id !== r.id &&
+          o.from === moved.from &&
+          o.to === moved.to &&
+          o.type === moved.type &&
+          !o.invalidatedAt === !moved.invalidatedAt
+      )
+      if (moved.from === moved.to) this.drop(r.id, profile)
+      else if (twin) {
+        this.drop(r.id, profile)
+        const fresh = this.record<Relation>('relation', twin.id, profile)
+        this.put('relation', profile, {
+          ...fresh,
+          approved: fresh.approved || r.approved,
+          confidence: Math.max(fresh.confidence, r.confidence),
+          ...(fresh.evidence || !r.evidence ? {} : { evidence: r.evidence })
+        })
+      } else this.put('relation', profile, moved)
+    }
+  }
+  /**
+   * Folds `source` into `target`: links, turn positions, children, relations and names move over.
+   * The target keeps its own level and parent; a child of `source` moves under the target only when
+   * it is exactly one level below the target, otherwise it becomes a root (a tidy candidate). A
+   * question linking both keeps the target as focus when either side was focus (no entry counts
+   * as focus; an entry is written only when one side had one).
+   */
+  mergeConcept(source: string, target: string): void {
+    const [a, b] = this.pair(source, target)
+    const profile = this.active
     this.db.exec('BEGIN')
     try {
       for (const q of this.list<Question>('question', profile))
         if (q.conceptIds.includes(source)) {
-          const conceptTurns = { ...q.conceptTurns }
-          delete conceptTurns[source]
-          // Only recorded positions carry over; a link without any stays without an entry.
-          const turns = orderedTurns(q, [...(q.conceptTurns[source] ?? []), ...(q.conceptTurns[target] ?? [])])
-          if (turns.length) conceptTurns[target] = turns
-          else delete conceptTurns[target]
-          this.put('question', profile, {
-            ...q,
-            conceptIds: [...new Set(q.conceptIds.map(swap))],
-            conceptTurns
-          })
+          const ra = q.conceptRoles?.[source],
+            rb = q.conceptRoles?.[target]
+          const role = !q.conceptIds.includes(target)
+            ? ra
+            : ra === undefined && rb === undefined
+              ? undefined
+              : (ra ?? 'focus') === 'focus' || (rb ?? 'focus') === 'focus'
+                ? 'focus'
+                : 'support'
+          this.put('question', profile, moveLink(q, source, target, role))
         }
       for (const c of this.list<Concept>('concept', profile))
         if (c.parentId === source)
@@ -1007,29 +1144,7 @@ export class PersonalStore {
             ...c,
             parentId: c.level === CHILD_LEVEL[b.level] ? target : null
           })
-      const relations = this.list<Relation>('relation', profile)
-      for (const r of relations) {
-        if (r.from !== source && r.to !== source) continue
-        const moved = { ...r, from: swap(r.from), to: swap(r.to) }
-        const twin = relations.find(
-          (o) =>
-            o.id !== r.id &&
-            o.from === moved.from &&
-            o.to === moved.to &&
-            o.type === moved.type &&
-            !o.invalidatedAt === !moved.invalidatedAt
-        )
-        if (moved.from === moved.to) this.drop(r.id, profile)
-        else if (twin) {
-          this.drop(r.id, profile)
-          const fresh = this.record<Relation>('relation', twin.id, profile)
-          this.put('relation', profile, {
-            ...fresh,
-            approved: fresh.approved || r.approved,
-            confidence: Math.max(fresh.confidence, r.confidence)
-          })
-        } else this.put('relation', profile, moved)
-      }
+      this.moveRelations(source, target, profile)
       this.put('concept', profile, {
         ...b,
         aliases: cleanAliases([...b.aliases, a.name, ...a.aliases], b.name),
@@ -1037,6 +1152,80 @@ export class PersonalStore {
       })
       this.drop(source, profile)
       this.forgetPairs(source, profile)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+  /**
+   * Folds a narrower `source` (without children) into a broader `target`: its names become the
+   * target's aliases and its definition one more sentence of the target's. A question linking it
+   * links the target instead, as support unless it already linked the target (whose role stays);
+   * the link source carries over. Relations move as in mergeConcept.
+   */
+  foldConcept(source: string, target: string): void {
+    const [a, b] = this.pair(source, target)
+    const profile = this.active
+    if (this.list<Concept>('concept', profile).some((c) => c.parentId === source))
+      throw new Error('하위 개념이 있는 개념은 흡수할 수 없습니다.')
+    const base = b.definition.trim(),
+      extra = a.definition.trim()
+    const definition =
+      !extra || base.includes(extra)
+        ? base
+        : base
+          ? `${/[.!?。]$/.test(base) ? base : `${base}.`} ${extra}`
+          : extra
+    this.db.exec('BEGIN')
+    try {
+      for (const q of this.list<Question>('question', profile))
+        if (q.conceptIds.includes(source))
+          this.put(
+            'question',
+            profile,
+            moveLink(q, source, target, q.conceptIds.includes(target) ? q.conceptRoles?.[target] : 'support')
+          )
+      this.moveRelations(source, target, profile)
+      this.put('concept', profile, {
+        ...b,
+        aliases: cleanAliases([...b.aliases, a.name, ...a.aliases], b.name),
+        definition: definition.slice(0, MAX_DEFINITION)
+      })
+      this.drop(source, profile)
+      this.forgetPairs(source, profile)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+  /**
+   * Takes a concept (without children) out of the tree: every question linking it keeps its name
+   * as a candidate (`suggestions`) instead, and its relations are dropped. Nothing becomes manual.
+   */
+  demoteConcept(id: string): void {
+    const profile = this.active
+    const c = this.record<Concept>('concept', id, profile)
+    if (this.list<Concept>('concept', profile).some((k) => k.parentId === id))
+      throw new Error('하위 개념이 있는 개념은 후보로 되돌릴 수 없습니다.')
+    this.db.exec('BEGIN')
+    try {
+      for (const q of this.list<Question>('question', profile))
+        if (q.conceptIds.includes(id)) {
+          const conceptTurns = { ...q.conceptTurns }
+          delete conceptTurns[id]
+          this.put('question', profile, {
+            ...q,
+            conceptIds: q.conceptIds.filter((k) => k !== id),
+            conceptTurns,
+            suggestions: addSuggestions(q.suggestions, [c.name])
+          })
+        }
+      for (const r of this.list<Relation>('relation', profile))
+        if (r.from === id || r.to === id) this.drop(r.id, profile)
+      this.drop(id, profile)
+      this.forgetPairs(id, profile)
       this.db.exec('COMMIT')
     } catch (e) {
       this.db.exec('ROLLBACK')
