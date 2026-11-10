@@ -31,11 +31,18 @@ const run = (window, source) => window.webContents.executeJavaScript(source)
 const frames = (window) => run(window, 'new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
 const literal = JSON.stringify
 const button = (text, root = 'document') => `[...${root}.querySelectorAll('button')].find(b=>{const c=b.cloneNode(true);c.querySelectorAll('kbd').forEach(k=>k.remove());return c.textContent.trim()===${literal(text)}})`
-const captureSelect = ".settings-modal select:has(option[value=\"\"])"
-const endpointInput = '.settings-modal input[placeholder="http://127.0.0.1:8317/v1"]'
-const modelInput = '.settings-modal input[list="local-models"]'
+const settingsRoot = ':is(.settings-page,.settings-modal)'
+const captureSelect = `${settingsRoot} select:has(option[value=""])`
+const endpointInput = `${settingsRoot} input[placeholder="http://127.0.0.1:8317/v1"]`
+const modelInput = `${settingsRoot} input[list="local-models"]`
+const passwordInput = `${settingsRoot} input[type=password]`
 const change = (window, selector, value) => run(window, `(()=>{const e=document.querySelector(${literal(selector)});if(!e)throw Error(${literal(selector)});const p=e.tagName==='TEXTAREA'?HTMLTextAreaElement:e.tagName==='SELECT'?HTMLSelectElement:HTMLInputElement;Object.getOwnPropertyDescriptor(p.prototype,'value').set.call(e,${literal(String(value))});e.dispatchEvent(new Event(e.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`)
 const click = (window, text, root) => run(window, `${button(text, root)}.click()`)
+const navRoot = "document.querySelector('.settings-nav')"
+const nav = async (window, label) => {
+  await wait(() => run(window, `!!${navRoot}&&${button(label, navRoot)}!==undefined`), `settings nav ${label}`)
+  await click(window, label, navRoot)
+}
 const hasInk = (window) => run(window, `(()=>{const c=document.querySelector('canvas');return !!c&&c.getContext('2d').getImageData(0,0,c.width,c.height).data.some((v,i)=>i%4===3&&v>0)})()`)
 checkpoint('starting')
 
@@ -142,8 +149,13 @@ app.whenReady().then(async () => {
       await wait(() => run(window, `!!document.querySelector(${literal(captureSelect)})&&!document.querySelector(${literal(captureSelect)}).disabled`), 'capture settings ready')
       if (value !== undefined) assert.equal(await selected(window), String(value))
     }
-    const closeSettings = async (window = win) => { await run(window, "document.querySelector('.settings-modal header button').click()"); await wait(() => run(window, "!document.querySelector('.settings-modal')"), 'settings closes') }
-    const openSettings = async () => { await run(win, "[...document.querySelectorAll('.fask-sidebar button')].find(b=>b.textContent.includes('설정')).click()"); await readySettings(win) }
+    const closeSettings = async (window = win) => { await run(window, "document.querySelector('.settings-back,.settings-modal header button').click()"); await wait(() => run(window, "!document.querySelector('.settings-page,.settings-modal')"), 'settings closes') }
+    const openSettings = async () => {
+      await run(win, "[...document.querySelectorAll('.fask-sidebar button')].find(b=>b.textContent.includes('설정')).click()")
+      await wait(() => run(win, "!!document.querySelector('.settings-nav')"), 'settings page opens')
+      await nav(win, '화면 캡처')
+      await readySettings(win)
+    }
     const refresh = async (window = win) => { await click(window, '모니터 다시 검색'); await readySettings(window) }
     const editorReady = async () => {
       await wait(() => !!capture.editor, 'editor created')
@@ -187,7 +199,7 @@ app.whenReady().then(async () => {
     await win.loadFile(join(__dirname, '../out/renderer/index.html'))
     await readySettings(win, 0)
     assert.equal(await run(win, `document.activeElement===document.querySelector(${literal(captureSelect)})`), true)
-    assert.equal(await run(win, "document.querySelector('.settings-modal').textContent.includes('모니터 연결이 달라졌습니다.')"), true)
+    assert.equal(await run(win, `document.querySelector(${literal(settingsRoot)}).textContent.includes('모니터 연결이 달라졌습니다.')`), true)
     check('pre-subscription shortcut issue is consumed by production preload initial pull; sole display ID 0 is focused and selected')
     const savedBefore = settings()
     for (let i = 0; i < 2; i++) {
@@ -210,7 +222,7 @@ app.whenReady().then(async () => {
     displays = []
     await refresh()
     assert.equal(await selected(win), '')
-    assert.equal(await run(win, "document.querySelector('.settings-modal').textContent.includes('연결된 모니터가 없습니다.')"), true)
+    assert.equal(await run(win, `document.querySelector(${literal(settingsRoot)}).textContent.includes('연결된 모니터가 없습니다.')`), true)
     assert.equal(await run(win, `${button('캡처 영역 설정')}.disabled`), true)
     assert.deepEqual(capture.open(project.id), { ok: false, reason: 'no-displays' })
     assert.deepEqual(await capture.edit(staleId), { ok: false, reason: 'no-displays' })
@@ -236,19 +248,23 @@ app.whenReady().then(async () => {
     restoreHandler('personal:displays')
     intercept('personal:displays', (event, ...args) => { handlers.get('personal:displays')(event, ...args); throw new Error('monitor fixture display lookup failure') })
     await click(win, '모니터 다시 검색')
-    await wait(() => run(win, "document.querySelector('.settings-modal').textContent.includes('monitor fixture display lookup failure')"), 'display lookup failure visible')
+    await wait(() => run(win, `document.querySelector(${literal(settingsRoot)}).textContent.includes('monitor fixture display lookup failure')`), 'display lookup failure visible')
     assert.equal(await run(win, `${button('캡처 영역 설정')}.disabled`), true)
     restoreHandler('personal:displays')
     await refresh()
     await change(win, captureSelect, d2.id)
+    await nav(win, 'AI 연결')
     await change(win, endpointInput, `${endpoint}/unsaved`)
     await change(win, modelInput, 'unsaved-model')
-    await change(win, '.settings-modal input[type=password]', 'unsaved-key')
+    await change(win, passwordInput, 'unsaved-key')
+    await nav(win, '화면 캡처')
     await refresh()
     assert.equal(await selected(win), String(d2.id))
+    await nav(win, 'AI 연결')
     assert.equal(await run(win, `document.querySelector(${literal(endpointInput)}).value`), `${endpoint}/unsaved`)
     assert.equal(await run(win, `document.querySelector(${literal(modelInput)}).value`), 'unsaved-model')
-    assert.equal(await run(win, "document.querySelector('.settings-modal input[type=password]').value"), 'unsaved-key')
+    assert.equal(await run(win, `document.querySelector(${literal(passwordInput)}).value`), 'unsaved-key')
+    await nav(win, '화면 캡처')
     check('out-of-order display replies keep newer list and selection; manual monitor and endpoint/model/key drafts survive refresh')
     await click(win, '캡처 영역 설정')
     await cancel(await editorReady())
@@ -268,14 +284,18 @@ app.whenReady().then(async () => {
     assert.deepEqual(settings().regions.find(r => r.displayId === staleId), oldRegion)
     const applied = settings().regions.find(r => r.displayId === d2.id)
     await readySettings(win, d2.id)
+    await nav(win, 'AI 연결')
     assert.equal(await run(win, `document.querySelector(${literal(endpointInput)}).value`), `${endpoint}/unsaved`)
+    await nav(win, '화면 캡처')
+    await readySettings(win)
     await change(win, captureSelect, d1.id)
     // Discard AI drafts deliberately; general save must not persist the un-applied monitor.
+    await nav(win, 'AI 연결')
     await change(win, endpointInput, endpoint)
     await change(win, modelInput, 'test-fast')
-    await change(win, '.settings-modal input[type=password]', '')
+    await change(win, passwordInput, '')
     await click(win, '설정 저장')
-    await wait(() => run(win, "!document.querySelector('.settings-modal')"), 'general save closes')
+    await wait(() => run(win, "!document.querySelector('.settings-page')"), 'general save closes')
     assert.equal(settings().displayId, d2.id)
     assert.deepEqual(settings().regions.find(r => r.displayId === d2.id), applied)
     check('editor Apply saves monitor and region only, preserves other monitor regions and AI drafts; Apply+Enter saves once; general save ignores unapplied monitor')
@@ -311,16 +331,16 @@ app.whenReady().then(async () => {
     restoreHandler('personal:open-editor')
     assert.equal(settings().displayId, d2.id)
     check('disconnect immediately before edit uses sole candidate or requests explicit selection without saving')
-    const localIssue = await run(win, "document.querySelector('.settings-modal [role=alert]')?.textContent")
+    const localIssue = await run(win, `document.querySelector(${literal(`${settingsRoot} [role=alert]`)})?.textContent`)
     assert.ok(localIssue)
     displays = [d2]
     await refresh()
     await click(win, '캡처 영역 설정')
     await cancel(await editorReady())
-    assert.equal(await run(win, "document.querySelector('.settings-modal [role=alert]')?.textContent"), localIssue)
+    assert.equal(await run(win, `document.querySelector(${literal(`${settingsRoot} [role=alert]`)})?.textContent`), localIssue)
     await click(win, '캡처 영역 설정')
     await apply(await editorReady())
-    await wait(() => run(win, "!document.querySelector('.settings-modal [role=alert]')"), 'local capture reason clears after Apply')
+    await wait(() => run(win, `!document.querySelector(${literal(`${settingsRoot} [role=alert]`)})`), 'local capture reason clears after Apply')
     check('normally opened Settings retains local recovery issue after retry Cancel and clears it only after retry Apply')
     await closeSettings()
     for (const kind of ['disconnect', 'resize']) {
@@ -493,6 +513,7 @@ app.whenReady().then(async () => {
     await frames(overlay)
     assert.equal(await ov("!!document.querySelector('.overlay-panel')&&!!document.querySelector('.settings-modal')"), true)
     overlay.focus()
+    await ov("(()=>{const b=document.querySelector('.settings-body');b.style.flex='none';b.style.height='160px'})()")
     const scrollBefore = await ov("document.querySelector('.settings-body').scrollTop")
     await ov("document.querySelector('.settings-body').scrollTop=0")
     const scrollPoint = await ov("(()=>{const r=document.querySelector('.settings-body').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()")
@@ -518,6 +539,7 @@ app.whenReady().then(async () => {
     overlay.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
     await change(overlay, captureSelect, d1.id)
     await wait(async () => (await selected(overlay)) === String(d1.id), 'select changes monitor candidate')
+    await ov("document.querySelector('.settings-body').removeAttribute('style')")
     await screenshot('overlay-recovery-modal', overlay)
     await closeSettings(overlay)
     outside.destroy()
@@ -650,13 +672,15 @@ app.whenReady().then(async () => {
     setSettings({ displayId: staleId, regions: [oldRegion] })
     personal.quickQuestion()
     await readySettings(win)
-    await run(win, "(()=>{const s=[...document.querySelectorAll('.settings-modal select')].find(s=>[...s.options].some(o=>o.value==='en'));s.value='en';s.dispatchEvent(new Event('change',{bubbles:true}));})()")
-    await wait(() => run(win, "document.querySelector('.settings-modal').textContent.includes('Please select a monitor.')&&document.querySelector('.settings-modal').textContent.includes('Monitor connections have changed.')"), 'English selection and recovery')
+    await nav(win, '화면 표시')
+    await run(win, `(()=>{const s=[...document.querySelectorAll(${literal(`${settingsRoot} select`)})].find(s=>[...s.options].some(o=>o.value==='en'));s.value='en';s.dispatchEvent(new Event('change',{bubbles:true}));})()`)
+    await nav(win, 'Screen capture')
+    await wait(() => run(win, `document.querySelector(${literal(settingsRoot)}).textContent.includes('Please select a monitor.')&&document.querySelector(${literal(settingsRoot)}).textContent.includes('Monitor connections have changed.')`), 'English selection and recovery')
     await screenshot('english-selection')
     displays = []
     await click(win, 'Rescan monitors')
     await readySettings(win)
-    assert.equal(await run(win, "document.querySelector('.settings-modal').textContent.includes('No monitors are connected. Connect a monitor, then scan again.')"), true)
+    assert.equal(await run(win, `document.querySelector(${literal(settingsRoot)}).textContent.includes('No monitors are connected. Connect a monitor, then scan again.')`), true)
     displays = [d1]
     await click(win, 'Rescan monitors')
     await readySettings(win, d1.id)
@@ -666,7 +690,7 @@ app.whenReady().then(async () => {
     desktopCapturer.getSources = async () => []
     try {
       await click(win, 'Set capture area')
-      await wait(() => run(win, "document.querySelector('.settings-modal').textContent.includes(\"Can't capture the monitor. Check screen recording permission.\")"), 'English permission message')
+      await wait(() => run(win, `document.querySelector(${literal(settingsRoot)}).textContent.includes("Can't capture the monitor. Check screen recording permission.")`), 'English permission message')
     } finally { desktopCapturer.getSources = nativeSources; permissionFailure = false }
     await screenshot('english-error')
     await closeSettings()
