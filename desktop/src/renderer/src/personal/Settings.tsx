@@ -31,12 +31,49 @@ import { useT } from '../../../shared/i18n/react'
 export type SettingsCategory = 'ai' | 'questions' | 'capture' | 'display' | 'devices' | 'data'
 
 const CATEGORIES: { id: SettingsCategory; label: string; icon: IconName }[] = [
-  { id: 'ai', label: 'AI 연결', icon: 'key' },
-  { id: 'questions', label: '질문과 지식', icon: 'ask' },
-  { id: 'capture', label: '화면 캡처', icon: 'capture' },
-  { id: 'display', label: '화면 표시', icon: 'dashboard' },
-  { id: 'devices', label: '기기 연결', icon: 'device' },
-  { id: 'data', label: '데이터', icon: 'file' }
+  { id: 'ai', label: 'AI 연결', icon: 'plug' },
+  { id: 'questions', label: '질문과 지식', icon: 'book' },
+  { id: 'capture', label: '화면 캡처', icon: 'scan' },
+  { id: 'display', label: '화면 표시', icon: 'contrast' },
+  { id: 'devices', label: '기기 연결', icon: 'devices' },
+  { id: 'data', label: '데이터', icon: 'database' }
+]
+
+/** Model slots in fallback order; descriptions follow where main/renderer pick each one. */
+const MODEL_ROLES: {
+  field: 'model' | 'fastModel' | 'deepModel' | 'organizeModel'
+  label: string
+  description: string
+  placeholder?: string
+  icon: IconName
+}[] = [
+  {
+    field: 'model',
+    label: '기본 모델',
+    description: '질문에 답할 때 쓰는 기본 모델입니다. 다른 칸을 비워 두면 대신 쓰입니다.',
+    icon: 'modelBase'
+  },
+  {
+    field: 'fastModel',
+    label: '빠른 모델',
+    description: '간단한 질문, 질문 다듬기, 제목과 검색어 생성처럼 가벼운 작업에 씁니다.',
+    placeholder: '기본 모델 사용',
+    icon: 'modelFast'
+  },
+  {
+    field: 'deepModel',
+    label: '깊은 추론 모델',
+    description: '증명, 설계, 분석처럼 복잡한 질문에 추천하거나 자동으로 고릅니다.',
+    placeholder: '기본 모델 사용',
+    icon: 'modelDeep'
+  },
+  {
+    field: 'organizeModel',
+    label: '개념 정리 모델',
+    description: '답변에서 개념을 뽑고 개념 지도를 정리할 때 씁니다.',
+    placeholder: '빠른 모델 사용',
+    icon: 'modelOrganize'
+  }
 ]
 
 export default function Settings({
@@ -244,38 +281,24 @@ export default function Settings({
             <option key={m} value={m} />
           ))}
         </datalist>
-        <div className="settings-grid">
-          <label>
-            {t('기본 모델')}
-            <input list="local-models" value={draft.model} onChange={(e) => change('model', e.target.value)} />
-          </label>
-          <label>
-            {t('빠른 모델')}
-            <input
-              list="local-models"
-              value={draft.fastModel}
-              onChange={(e) => change('fastModel', e.target.value)}
-              placeholder={t('기본 모델 사용')}
-            />
-          </label>
-          <label>
-            {t('깊은 추론 모델')}
-            <input
-              list="local-models"
-              value={draft.deepModel}
-              onChange={(e) => change('deepModel', e.target.value)}
-              placeholder={t('기본 모델 사용')}
-            />
-          </label>
-          <label>
-            {t('개념 정리 모델')}
-            <input
-              list="local-models"
-              value={draft.organizeModel}
-              onChange={(e) => change('organizeModel', e.target.value)}
-              placeholder={t('빠른 모델 사용')}
-            />
-          </label>
+        <div className="model-roles">
+          {MODEL_ROLES.map((r) => (
+            <label key={r.field} className="model-role">
+              <span className="model-role-art">
+                <Icon name={r.icon} size={22} />
+              </span>
+              <span className="model-role-text">
+                <b>{t(r.label)}</b>
+                <small>{t(r.description)}</small>
+              </span>
+              <input
+                list="local-models"
+                value={draft[r.field]}
+                onChange={(e) => change(r.field, e.target.value)}
+                placeholder={r.placeholder && t(r.placeholder)}
+              />
+            </label>
+          ))}
         </div>
       </section>
     </>
