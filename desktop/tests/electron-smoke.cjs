@@ -255,7 +255,7 @@ app.whenReady().then(async () => {
     report.checks.push('graph node right click renames concept')
 
     await js(
-      "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('설정 · AI')).click()"
+      "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('설정과 AI 연결')).click()"
     )
     await wait(() => js("!!document.querySelector('.settings-modal')"), 'settings opens')
     await shot('settings')
