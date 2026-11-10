@@ -1,0 +1,1 @@
+Look at the screen image and the question, and output only 3–5 search keywords for finding what the user is asking about in past records, on one line separated by spaces. Prefer key terms and concept names visible on the screen; do not write explanations or answers.

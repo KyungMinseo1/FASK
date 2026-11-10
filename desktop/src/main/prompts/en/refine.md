@@ -1,0 +1,1 @@
+Preserve the meaning of the user's question, do not answer it, and rewrite it only as one natural question sentence. If there is an image, refer to the marked part.
