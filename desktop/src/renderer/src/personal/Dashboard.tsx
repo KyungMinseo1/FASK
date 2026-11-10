@@ -18,7 +18,7 @@ import Pager from './Pager'
 import QuestionDetail from './QuestionDetail'
 import ConceptPanel from './ConceptPanel'
 import TidyBar from './TidyBar'
-import Settings from './Settings'
+import Settings, { type SettingsCategory } from './Settings'
 import { Icon } from './ToolbarIcons'
 import { NotificationBell } from './notifications'
 import { Wordmark } from './Wordmark'
@@ -94,7 +94,7 @@ export default function Dashboard(): React.JSX.Element {
   const [view, setView] = useState<'timeline' | 'graph' | 'list'>('timeline'),
     [query, setQuery] = useState(''),
     [filter, setFilter] = useState('all')
-  const [settingsSection, setSettingsSection] = useState<'general' | 'capture' | null>(null)
+  const [settingsSection, setSettingsSection] = useState<SettingsCategory | null>(null)
   const [captureIssue, setCaptureIssue] = useState<CaptureSetupReason>()
   const [captureNotice, setCaptureNotice] = useState<CaptureSetupReason>()
   useEffect(() => window.fask.onCaptureSetupRequired((issue) => {
@@ -270,7 +270,7 @@ export default function Dashboard(): React.JSX.Element {
   if (!data) return <div className="fask-loading">{error || t('나의 질문 공간을 열고 있습니다…')}</div>
   return (
     <div className="fask-app">
-      <aside className="fask-sidebar">
+      <aside className="fask-sidebar" inert={!!settingsSection}>
         <div className="fask-wordmark">
           <Wordmark />
           <small>{t('개인용')}</small>
@@ -394,7 +394,7 @@ export default function Dashboard(): React.JSX.Element {
           <NotificationBell />
           <button onClick={() => {
             setCaptureIssue(undefined)
-            setSettingsSection('general')
+            setSettingsSection('ai')
           }}>
             <Icon name="gear" />
             {t('설정과 AI 연결')}
@@ -414,7 +414,7 @@ export default function Dashboard(): React.JSX.Element {
           </small>
         </div>
       </aside>
-      <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`}>
+      <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`} inert={!!settingsSection}>
         <nav className="breadcrumb" aria-label={t('상위 경로')}>
           <button
             aria-label={t('이전 화면')}
@@ -975,7 +975,7 @@ export default function Dashboard(): React.JSX.Element {
       {settingsSection && (
         <Settings
           settings={data.settings}
-          initialSection={settingsSection}
+          initialCategory={settingsSection}
           captureIssue={captureIssue}
           onClose={() => setSettingsSection(null)}
         />

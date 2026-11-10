@@ -13,7 +13,7 @@ import type {
 } from '../../../preload/personal'
 import { captureSetupMessage, selectCaptureDisplay } from '../../../shared/capture'
 import { errorText } from './common'
-import { Icon } from './ToolbarIcons'
+import { Icon, type IconName } from './ToolbarIcons'
 import {
   FONT_SCALE_OPTIONS,
   readFontScale,
@@ -28,16 +28,66 @@ import { readAnswerBlink, setAnswerBlink } from './answer-blink'
 import { LANGUAGE_OPTIONS, readLanguage, resolveLanguage, setLanguage, type LanguagePref } from '../../../shared/i18n'
 import { useT } from '../../../shared/i18n/react'
 
+export type SettingsCategory = 'ai' | 'questions' | 'capture' | 'display' | 'devices' | 'data'
+
+const CATEGORIES: { id: SettingsCategory; label: string; icon: IconName }[] = [
+  { id: 'ai', label: 'AI 연결', icon: 'plug' },
+  { id: 'questions', label: '질문과 지식', icon: 'book' },
+  { id: 'capture', label: '화면 캡처', icon: 'scan' },
+  { id: 'display', label: '화면 표시', icon: 'contrast' },
+  { id: 'devices', label: '기기 연결', icon: 'devices' },
+  { id: 'data', label: '데이터', icon: 'database' }
+]
+
+/** Model slots in fallback order; descriptions follow where main/renderer pick each one. */
+const MODEL_ROLES: {
+  field: 'model' | 'fastModel' | 'deepModel' | 'organizeModel'
+  label: string
+  description: string
+  placeholder?: string
+  icon: IconName
+}[] = [
+  {
+    field: 'model',
+    label: '기본 모델',
+    description: '질문에 답할 때 쓰는 기본 모델입니다. 다른 칸을 비워 두면 대신 쓰입니다.',
+    icon: 'modelBase'
+  },
+  {
+    field: 'fastModel',
+    label: '빠른 모델',
+    description: '간단한 질문, 질문 다듬기, 제목과 검색어 생성처럼 가벼운 작업에 씁니다.',
+    placeholder: '기본 모델 사용',
+    icon: 'modelFast'
+  },
+  {
+    field: 'deepModel',
+    label: '깊은 추론 모델',
+    description: '증명, 설계, 분석처럼 복잡한 질문에 추천하거나 자동으로 고릅니다.',
+    placeholder: '기본 모델 사용',
+    icon: 'modelDeep'
+  },
+  {
+    field: 'organizeModel',
+    label: '개념 정리 모델',
+    description: '답변에서 개념을 뽑고 개념 지도를 정리할 때 씁니다.',
+    placeholder: '빠른 모델 사용',
+    icon: 'modelOrganize'
+  }
+]
+
 export default function Settings({
   settings,
   onClose,
-  initialSection = 'general',
-  captureIssue
+  initialCategory = 'ai',
+  captureIssue,
+  variant = 'page'
 }: {
   settings: LocalSettings
   onClose: () => void
-  initialSection?: 'general' | 'capture'
+  initialCategory?: SettingsCategory
   captureIssue?: CaptureSetupReason
+  variant?: 'page' | 'capture'
 }): React.JSX.Element {
   const [draft, setDraft] = useState(settings),
     [key, setKey] = useState<string | undefined>(),
@@ -58,6 +108,9 @@ export default function Settings({
   const savedDisplayId = useRef(settings.displayId)
   const editingRef = useRef(false)
   const mounted = useRef(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [category, setCategory] = useState<SettingsCategory>(variant === 'capture' ? 'capture' : initialCategory)
+  const shown = variant === 'capture' ? 'capture' : category
   const [theme, setThemeState] = useState(readTheme)
   const [answerBlink, setAnswerBlinkState] = useState(readAnswerBlink)
   const [language, setLanguageState] = useState(readLanguage)
@@ -117,15 +170,17 @@ export default function Settings({
     setCaptureReason(undefined)
   }), [])
   useEffect(() => {
-    if (initialSection !== 'capture') return
+    if (variant !== 'capture' && initialCategory !== 'capture') return
+    setCategory('capture')
     captureSection.current?.scrollIntoView({ block: 'start' })
     captureFocusPending.current = true
-  }, [initialSection, captureIssue])
+  }, [variant, initialCategory, captureIssue])
   useEffect(() => {
-    if (!captureFocusPending.current || refreshingDisplays || editing) return
-    captureDisplay.current?.focus({ preventScroll: true })
+    if (!captureFocusPending.current || refreshingDisplays || editing || !captureDisplay.current) return
+    captureDisplay.current.focus({ preventScroll: true })
     captureFocusPending.current = false
-  }, [refreshingDisplays, editing, initialSection, captureIssue, captureReason])
+  }, [refreshingDisplays, editing, category, captureIssue, captureReason])
+  useEffect(() => scrollRef.current?.scrollTo({ top: 0 }), [category])
   const change = <K extends keyof LocalSettings>(name: K, value: LocalSettings[K]): void =>
     setDraft((s) => ({ ...s, [name]: value }))
   const run = async (fn: () => Promise<unknown>, message: string): Promise<void> => {
@@ -173,383 +228,421 @@ export default function Settings({
       if (mounted.current) setEditing(false)
     }
   }
-  return (
-    <div className="modal-backdrop">
-      <section className="settings-modal" role="dialog" aria-modal="true" aria-label={t('설정')}>
-        <header>
-          <h2>{t('나에게 맞는 질문 환경')}</h2>
-          <button disabled={editing} onClick={close}>
-            <Icon name="close" size={14} />
-            {t('닫기')}
-          </button>
-        </header>
-        <div className="settings-body">
-          <section>
-            <h3>{t('로컬 AI 연결')}</h3>
-            <p>{t('EasyCLIProxyAPI에서 계정을 연결하고, Home에 있는 OpenAI 호환 주소를 붙여넣으세요.')}</p>
-            <label>
-              {t('로컬 API 주소')}
+  const shownLabel = t(CATEGORIES.find((c) => c.id === shown)!.label)
+  const aiContent = (
+    <>
+      <section>
+        <h3>{t('로컬 AI 연결')}</h3>
+        <p>{t('EasyCLIProxyAPI에서 계정을 연결하고, Home에 있는 OpenAI 호환 주소를 붙여넣으세요.')}</p>
+        <label>
+          {t('로컬 API 주소')}
+          <input
+            value={draft.endpoint}
+            onChange={(e) => change('endpoint', e.target.value)}
+            placeholder="http://127.0.0.1:8317/v1"
+          />
+        </label>
+        <label>
+          {t('로컬 접속 키')}
+          <input
+            type="password"
+            value={key ?? ''}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder={
+              settings.hasKey ? t('저장된 키 사용 중, 바꾸려면 입력') : t('프록시가 요구하는 경우에만 입력')
+            }
+          />
+        </label>
+        {settings.hasKey && <button onClick={() => setKey('')}>{t('저장된 키 제거')}</button>}
+        <button
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              const models = await window.fask.models(draft.endpoint, key)
+              setDraft((s) => ({ ...s, models, model: s.model || models[0] || '' }))
+              if (!models.length)
+                throw new Error(t('연결됐지만 모델이 없습니다. 프록시에서 계정을 연결해 주세요.'))
+            }, t('연결을 확인하고 모델 목록을 갱신했습니다. 저장을 눌러 적용하세요.'))
+          }
+        >
+          <Icon name="key" />
+          {busy ? t('확인 중…') : t('연결 확인하고 모델 불러오기')}
+        </button>
+        <small>
+          {t(
+            '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 EasyCLIProxyAPI에서 관리하세요.'
+          )}
+        </small>
+      </section>
+      <section>
+        <h3>{t('모델')}</h3>
+        <datalist id="local-models">
+          {draft.models.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+        <div className="model-roles">
+          {MODEL_ROLES.map((r) => (
+            <label key={r.field} className="model-role">
+              <span className="model-role-art">
+                <Icon name={r.icon} size={22} />
+              </span>
+              <span className="model-role-text">
+                <b>{t(r.label)}</b>
+                <small>{t(r.description)}</small>
+              </span>
               <input
-                value={draft.endpoint}
-                onChange={(e) => change('endpoint', e.target.value)}
-                placeholder="http://127.0.0.1:8317/v1"
+                list="local-models"
+                value={draft[r.field]}
+                onChange={(e) => change(r.field, e.target.value)}
+                placeholder={r.placeholder && t(r.placeholder)}
               />
             </label>
-            <label>
-              {t('로컬 접속 키')}
-              <input
-                type="password"
-                value={key ?? ''}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder={
-                  settings.hasKey
-                    ? t('저장된 키 사용 중, 바꾸려면 입력')
-                    : t('프록시가 요구하는 경우에만 입력')
-                }
-              />
-            </label>
-            {settings.hasKey && <button onClick={() => setKey('')}>{t('저장된 키 제거')}</button>}
-            <button
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  const models = await window.fask.models(draft.endpoint, key)
-                  setDraft((s) => ({ ...s, models, model: s.model || models[0] || '' }))
-                  if (!models.length)
-                    throw new Error(t('연결됐지만 모델이 없습니다. 프록시에서 계정을 연결해 주세요.'))
-                }, t('연결을 확인하고 모델 목록을 갱신했습니다. 저장을 눌러 적용하세요.'))
-              }
-            >
-              <Icon name="key" />
-              {busy ? t('확인 중…') : t('연결 확인하고 모델 불러오기')}
-            </button>
-            <datalist id="local-models">
-              {draft.models.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-            <div className="settings-grid">
-              <label>
-                {t('기본 모델')}
-                <input
-                  list="local-models"
-                  value={draft.model}
-                  onChange={(e) => change('model', e.target.value)}
-                />
-              </label>
-              <label>
-                {t('빠른 모델')}
-                <input
-                  list="local-models"
-                  value={draft.fastModel}
-                  onChange={(e) => change('fastModel', e.target.value)}
-                  placeholder={t('기본 모델 사용')}
-                />
-              </label>
-              <label>
-                {t('깊은 추론 모델')}
-                <input
-                  list="local-models"
-                  value={draft.deepModel}
-                  onChange={(e) => change('deepModel', e.target.value)}
-                  placeholder={t('기본 모델 사용')}
-                />
-              </label>
-              <label>
-                {t('개념 정리 모델')}
-                <input
-                  list="local-models"
-                  value={draft.organizeModel}
-                  onChange={(e) => change('organizeModel', e.target.value)}
-                  placeholder={t('빠른 모델 사용')}
-                />
-              </label>
-            </div>
-            <small>
-              {t(
-                '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 EasyCLIProxyAPI에서 관리하세요.'
-              )}
-            </small>
-          </section>
-          <section>
-            <h3>{t('질문과 기억')}</h3>
-            <label>
-              {t('AI 프롬프트 언어')}
-              <select
-                value={draft.promptLanguage}
-                onChange={(e) => change('promptLanguage', e.target.value as LocalSettings['promptLanguage'])}
-              >
-                <option value="ko">한국어</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-            <small>
-              {t('모델에게 보내는 지시문의 언어입니다. 화면 언어와 따로 정하며, 답변과 개념 이름은 대화에 쓰인 언어를 따릅니다.')}
-            </small>
-            <label>
-              {t('모델 선택')}
-              <select
-                value={draft.routing}
-                onChange={(e) => change('routing', e.target.value as LocalSettings['routing'])}
-              >
-                <option value="manual">{t('직접 선택')}</option>
-                <option value="recommend">{t('추천 표시, 전송 전에 바꿀 수 있음')}</option>
-                <option value="auto">{t('복잡도에 따라 자동 선택')}</option>
-              </select>
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={draft.refine}
-                onChange={(e) => change('refine', e.target.checked)}
-              />
-              {t('전송 전에 질문 다듬기와 검토')}
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={draft.organize}
-                onChange={(e) => change('organize', e.target.checked)}
-              />
-              {t('답변 후 개념과 관계를 자동 추출 (추가 모델 요청)')}
-            </label>
-            <label>
-              {t('추출 대기 시간 (초)')}
-              <input
-                type="number"
-                min={0}
-                max={3600}
-                value={draft.extractDelaySec}
-                disabled={!draft.organize}
-                onChange={(e) => change('extractDelaySec', Math.max(0, Math.round(Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={draft.autoTitle}
-                onChange={(e) => change('autoTitle', e.target.checked)}
-              />
-              {t('새 질문 제목 자동 생성, 질문과 이미지와 첨부 기반 (추가 모델 요청)')}
-            </label>
-            <label>
-              {t('질문에 참고할 지식')}
-              <select
-                value={draft.memoryScope}
-                onChange={(e) => change('memoryScope', e.target.value as LocalSettings['memoryScope'])}
-              >
-                <option value="off">{t('참고하지 않음')}</option>
-                <option value="project">{t('현재 프로젝트')}</option>
-                <option value="workspace">{t('워크스페이스 전체')}</option>
-              </select>
-            </label>
-            <label>
-              {t('참고 지식 최대 토큰')}
-              <input
-                type="number"
-                min={100}
-                max={20000}
-                step={100}
-                value={draft.memoryTokens}
-                disabled={draft.memoryScope === 'off'}
-                onChange={(e) => change('memoryTokens', Math.max(0, Math.round(Number(e.target.value) || 0)))}
-              />
-            </label>
-          </section>
-          <section ref={captureSection}>
-            <h3>{t('캡처 영역')}</h3>
-            {captureReason && <p role="alert">{t(captureSetupMessage(captureReason))}</p>}
-            <p>
-              {t(
-                '영역 설정에서 박스 안은 선명하게, 바깥은 흐리게 표시됩니다. 저장한 영역 안쪽만 전송합니다.'
-              )}
-            </p>
-            <label>
-              {t('대상 모니터')}
-              <select
-                ref={captureDisplay}
-                value={selectedDisplayId ?? ''}
-                disabled={refreshingDisplays || editing}
-                onChange={(e) => {
-                  const displayId = e.target.value === '' ? undefined : Number(e.target.value)
-                  preferredDisplayId.current = displayId
-                  setSelectedDisplayId(displayId)
-                }}
-              >
-                <option value="">{t('모니터를 선택해 주세요.')}</option>
-                {displays.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.label} ({d.width} × {d.height})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <small>{t('모니터나 화면 크기가 바뀌면 펜 표시는 지워집니다.')}</small>
-            <div className="button-row">
-              <button
-                disabled={
-                  busy ||
-                  refreshingDisplays ||
-                  editing ||
-                  displayError !== '' ||
-                  selectedDisplayId === undefined
-                }
-                onClick={() => void editCaptureRegion()}
-              >
-                <Icon name="capture" />
-                {t('캡처 영역 설정')}
-              </button>
-              <button
-                disabled={refreshingDisplays || editing}
-                onClick={() => void refreshDisplays()}
-              >
-                {t('모니터 다시 검색')}
-              </button>
-            </div>
-            {displayError && <p role="alert">{displayError}</p>}
-            {!refreshingDisplays && !displayError && !displays.length && (
-              <p role="status">
-                {t('연결된 모니터가 없습니다. 모니터를 연결한 뒤 다시 검색해 주세요.')}
-              </p>
-            )}
-            <small>{t('모니터와 캡처 영역은 편집 화면에서 적용을 눌러야 저장됩니다.')}</small>
-            {selectedDisplayId !== undefined && (
-              <small>
-                {settings.regions.some((region) => region.displayId === selectedDisplayId)
-                  ? t('저장된 영역이 있습니다. 영역은 모니터별로 기억합니다.')
-                  : t('아직 영역을 정하지 않았습니다. 현재 기본값은 전체 모니터입니다.')}
-              </small>
-            )}
-          </section>
-          <section>
-            <h3>{t('이미지 보관')}</h3>
-            <label>
-              {t('보관 방식')}
-              <select
-                value={draft.retention}
-                onChange={(e) => change('retention', e.target.value as LocalSettings['retention'])}
-              >
-                <option value="minimal">{t('최소: 답변 완료 후 캡처 제거')}</option>
-                <option value="balanced">{t('균형: 선택 영역 JPEG 보관')}</option>
-                <option value="preserve">{t('보존: 선택 영역 PNG 보관')}</option>
-              </select>
-            </label>
-            <p>
-              {t(
-                '실패한 질문의 이미지는 재시도를 위해 남깁니다. 기존 이미지는 질문 상세에서 직접 제거할 수 있습니다.'
-              )}
-            </p>
-          </section>
-          <section>
-            <h3>{t('화면 테마')}</h3>
-            <label>
-              {t('테마')}
-              <select
-                value={theme}
-                onChange={(e) => {
-                  const v = e.target.value as ThemePref
-                  setThemeState(v)
-                  setTheme(v)
-                }}
-              >
-                {THEME_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {t(o.label)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={answerBlink}
-                onChange={(e) => {
-                  setAnswerBlinkState(e.target.checked)
-                  setAnswerBlink(e.target.checked)
-                }}
-              />
-              {t('답변 완료 시 토글 로고 깜빡임')}
-            </label>
-            <label>
-              {t('언어')}
-              <select
-                value={language}
-                onChange={(e) => {
-                  const v = e.target.value as LanguagePref
-                  setLanguageState(v)
-                  setLanguage(v)
-                  void window.fask.setUiLanguage(resolveLanguage(v))
-                }}
-              >
-                {LANGUAGE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.value === 'system' ? t(o.label) : o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              {t('글꼴 크기')}
-              <select
-                value={fontScale}
-                onChange={(e) => {
-                  const v = e.target.value as FontScale
-                  setFontScaleState(v)
-                  setFontScale(v)
-                }}
-              >
-                {FONT_SCALE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {t(o.label)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <small>{t('이 기기에만 적용되며 바로 바뀝니다.')}</small>
-          </section>
-          <MobileHubSection share={share} />
-          <PeerSection share={share} />
-          <section>
-            <h3>{t('백업과 복원')}</h3>
-            <p>
-              {t(
-                '현재 프로필의 질문, 개념, 이미지를 백업합니다. 복원은 새 프로필에 추가하며 접속 키는 포함하지 않습니다.'
-              )}
-            </p>
-            <div className="button-row">
-              <button
-                disabled={busy}
-                onClick={() => void run(() => window.fask.backup(), t('백업 창을 닫았습니다.'))}
-              >
-                {t('백업 내보내기')}
-              </button>
-              <button
-                disabled={busy || editing}
-                onClick={() =>
-                  void run(async () => {
-                    if (await window.fask.restore()) close()
-                  }, t('복원 창을 닫았습니다.'))
-                }
-              >
-                {t('백업 복원')}
-              </button>
-            </div>
-          </section>
+          ))}
         </div>
-        <footer>
-          <span role="status">{notice}</span>
+      </section>
+    </>
+  )
+  const questionsContent = (
+    <>
+      <section>
+        <h3>{t('질문 처리')}</h3>
+        <label>
+          {t('AI 프롬프트 언어')}
+          <select
+            value={draft.promptLanguage}
+            onChange={(e) => change('promptLanguage', e.target.value as LocalSettings['promptLanguage'])}
+          >
+            <option value="ko">한국어</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <small>
+          {t('모델에게 보내는 지시문의 언어입니다. 화면 언어와 따로 정하며, 답변과 개념 이름은 대화에 쓰인 언어를 따릅니다.')}
+        </small>
+        <label>
+          {t('모델 선택')}
+          <select
+            value={draft.routing}
+            onChange={(e) => change('routing', e.target.value as LocalSettings['routing'])}
+          >
+            <option value="manual">{t('직접 선택')}</option>
+            <option value="recommend">{t('추천 표시, 전송 전에 바꿀 수 있음')}</option>
+            <option value="auto">{t('복잡도에 따라 자동 선택')}</option>
+          </select>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={draft.refine} onChange={(e) => change('refine', e.target.checked)} />
+          {t('전송 전에 질문 다듬기와 검토')}
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.autoTitle}
+            onChange={(e) => change('autoTitle', e.target.checked)}
+          />
+          {t('새 질문 제목 자동 생성, 질문과 이미지와 첨부 기반 (추가 모델 요청)')}
+        </label>
+      </section>
+      <section>
+        <h3>{t('개념 추출')}</h3>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.organize}
+            onChange={(e) => change('organize', e.target.checked)}
+          />
+          {t('답변 후 개념과 관계를 자동 추출 (추가 모델 요청)')}
+        </label>
+        <label>
+          {t('추출 대기 시간 (초)')}
+          <input
+            type="number"
+            min={0}
+            max={3600}
+            value={draft.extractDelaySec}
+            disabled={!draft.organize}
+            onChange={(e) => change('extractDelaySec', Math.max(0, Math.round(Number(e.target.value) || 0)))}
+          />
+        </label>
+      </section>
+      <section>
+        <h3>{t('참고 지식')}</h3>
+        <label>
+          {t('질문에 참고할 지식')}
+          <select
+            value={draft.memoryScope}
+            onChange={(e) => change('memoryScope', e.target.value as LocalSettings['memoryScope'])}
+          >
+            <option value="off">{t('참고하지 않음')}</option>
+            <option value="project">{t('현재 프로젝트')}</option>
+            <option value="workspace">{t('워크스페이스 전체')}</option>
+          </select>
+        </label>
+        <label>
+          {t('참고 지식 최대 토큰')}
+          <input
+            type="number"
+            min={100}
+            max={20000}
+            step={100}
+            value={draft.memoryTokens}
+            disabled={draft.memoryScope === 'off'}
+            onChange={(e) => change('memoryTokens', Math.max(0, Math.round(Number(e.target.value) || 0)))}
+          />
+        </label>
+      </section>
+    </>
+  )
+  const captureContent = (
+    <section ref={captureSection}>
+      <h3>{t('캡처 영역')}</h3>
+      {captureReason && <p role="alert">{t(captureSetupMessage(captureReason))}</p>}
+      <p>{t('영역 설정에서 박스 안은 선명하게, 바깥은 흐리게 표시됩니다. 저장한 영역 안쪽만 전송합니다.')}</p>
+      <label>
+        {t('대상 모니터')}
+        <select
+          ref={captureDisplay}
+          value={selectedDisplayId ?? ''}
+          disabled={refreshingDisplays || editing}
+          onChange={(e) => {
+            const displayId = e.target.value === '' ? undefined : Number(e.target.value)
+            preferredDisplayId.current = displayId
+            setSelectedDisplayId(displayId)
+          }}
+        >
+          <option value="">{t('모니터를 선택해 주세요.')}</option>
+          {displays.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.label} ({d.width} × {d.height})
+            </option>
+          ))}
+        </select>
+      </label>
+      <small>{t('모니터나 화면 크기가 바뀌면 펜 표시는 지워집니다.')}</small>
+      <div className="button-row">
+        <button
+          disabled={busy || refreshingDisplays || editing || displayError !== '' || selectedDisplayId === undefined}
+          onClick={() => void editCaptureRegion()}
+        >
+          <Icon name="capture" />
+          {t('캡처 영역 설정')}
+        </button>
+        <button disabled={refreshingDisplays || editing} onClick={() => void refreshDisplays()}>
+          {t('모니터 다시 검색')}
+        </button>
+      </div>
+      {displayError && <p role="alert">{displayError}</p>}
+      {!refreshingDisplays && !displayError && !displays.length && (
+        <p role="status">{t('연결된 모니터가 없습니다. 모니터를 연결한 뒤 다시 검색해 주세요.')}</p>
+      )}
+      <small>{t('모니터와 캡처 영역은 편집 화면에서 적용을 눌러야 저장됩니다.')}</small>
+      {selectedDisplayId !== undefined && (
+        <small>
+          {settings.regions.some((region) => region.displayId === selectedDisplayId)
+            ? t('저장된 영역이 있습니다. 영역은 모니터별로 기억합니다.')
+            : t('아직 영역을 정하지 않았습니다. 현재 기본값은 전체 모니터입니다.')}
+        </small>
+      )}
+    </section>
+  )
+  const displayContent = (
+    <>
+      <p>{t('이 기기에만 적용되며 바로 바뀝니다.')}</p>
+      <section>
+        <h3>{t('화면 테마')}</h3>
+        <label>
+          {t('테마')}
+          <select
+            value={theme}
+            onChange={(e) => {
+              const v = e.target.value as ThemePref
+              setThemeState(v)
+              setTheme(v)
+            }}
+          >
+            {THEME_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {t(o.label)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t('글꼴 크기')}
+          <select
+            value={fontScale}
+            onChange={(e) => {
+              const v = e.target.value as FontScale
+              setFontScaleState(v)
+              setFontScale(v)
+            }}
+          >
+            {FONT_SCALE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {t(o.label)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+      <section>
+        <h3>{t('언어와 알림')}</h3>
+        <label>
+          {t('언어')}
+          <select
+            value={language}
+            onChange={(e) => {
+              const v = e.target.value as LanguagePref
+              setLanguageState(v)
+              setLanguage(v)
+              void window.fask.setUiLanguage(resolveLanguage(v))
+            }}
+          >
+            {LANGUAGE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.value === 'system' ? t(o.label) : o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={answerBlink}
+            onChange={(e) => {
+              setAnswerBlinkState(e.target.checked)
+              setAnswerBlink(e.target.checked)
+            }}
+          />
+          {t('답변 완료 시 토글 로고 깜빡임')}
+        </label>
+      </section>
+    </>
+  )
+  const devicesContent = (
+    <>
+      <MobileHubSection share={share} />
+      <PeerSection share={share} />
+    </>
+  )
+  const dataContent = (
+    <>
+      <section>
+        <h3>{t('이미지 보관')}</h3>
+        <label>
+          {t('보관 방식')}
+          <select
+            value={draft.retention}
+            onChange={(e) => change('retention', e.target.value as LocalSettings['retention'])}
+          >
+            <option value="minimal">{t('최소: 답변 완료 후 캡처 제거')}</option>
+            <option value="balanced">{t('균형: 선택 영역 JPEG 보관')}</option>
+            <option value="preserve">{t('보존: 선택 영역 PNG 보관')}</option>
+          </select>
+        </label>
+        <p>
+          {t(
+            '실패한 질문의 이미지는 재시도를 위해 남깁니다. 기존 이미지는 질문 상세에서 직접 제거할 수 있습니다.'
+          )}
+        </p>
+      </section>
+      <section>
+        <h3>{t('백업과 복원')}</h3>
+        <p>
+          {t(
+            '현재 프로필의 질문, 개념, 이미지를 백업합니다. 복원은 새 프로필에 추가하며 접속 키는 포함하지 않습니다.'
+          )}
+        </p>
+        <div className="button-row">
+          <button disabled={busy} onClick={() => void run(() => window.fask.backup(), t('백업 창을 닫았습니다.'))}>
+            {t('백업 내보내기')}
+          </button>
           <button
-            className="primary"
             disabled={busy || editing}
             onClick={() =>
               void run(async () => {
-                await save()
-                close()
-              }, t('저장했습니다.'))
+                if (await window.fask.restore()) close()
+              }, t('복원 창을 닫았습니다.'))
             }
           >
-            {t('설정 저장')}
+            {t('백업 복원')}
           </button>
+        </div>
+      </section>
+    </>
+  )
+  const content: Record<SettingsCategory, React.JSX.Element> = {
+    ai: aiContent,
+    questions: questionsContent,
+    capture: captureContent,
+    display: displayContent,
+    devices: devicesContent,
+    data: dataContent
+  }
+  if (variant === 'capture')
+    return (
+      <div className="modal-backdrop">
+        <section className="settings-modal" role="dialog" aria-modal="true" aria-label={t('화면 캡처')}>
+          <header>
+            <h2>{t('화면 캡처')}</h2>
+            <button disabled={editing} onClick={close}>
+              <Icon name="close" size={14} />
+              {t('닫기')}
+            </button>
+          </header>
+          <div className="settings-body">{captureContent}</div>
+          <footer>
+            <span role="status">{notice}</span>
+          </footer>
+        </section>
+      </div>
+    )
+  return (
+    <div className="settings-page">
+      <aside className="settings-nav">
+        <button className="settings-back" disabled={editing} onClick={close}>
+          <Icon name="back" />
+          {t('돌아가기')}
+        </button>
+        <h2>{t('설정')}</h2>
+        <nav aria-label={t('설정 항목')}>
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              className={category === c.id ? 'active' : ''}
+              aria-current={category === c.id ? 'page' : undefined}
+              onClick={() => setCategory(c.id)}
+            >
+              <Icon name={c.icon} />
+              {t(c.label)}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <section className="settings-main" aria-label={shownLabel}>
+        <div className="settings-scroll" ref={scrollRef}>
+          <div className="settings-body">
+            <h2>{shownLabel}</h2>
+            {content[shown]}
+          </div>
+        </div>
+        <footer className="settings-footer">
+          <div>
+            <span role="status">{notice}</span>
+            <button
+              className="primary"
+              disabled={busy || editing}
+              onClick={() =>
+                void run(async () => {
+                  await save()
+                  close()
+                }, t('저장했습니다.'))
+              }
+            >
+              {t('설정 저장')}
+            </button>
+          </div>
         </footer>
       </section>
     </div>
