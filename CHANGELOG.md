@@ -1,10 +1,25 @@
 # Changelog
 
-All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run version:bump -- X.Y.Z` moves them into that version's section, and pushing the tag puts the section at the top of the GitHub Release notes.
+All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run version:bump -- X.Y.Z` moves them into that version's section, and pushing the tag puts the section at the top of the GitHub Release notes, followed by download links and the auto-generated PR list. Start a section with a one-sentence summary, and add a `> [!WARNING]` block only when users must act.
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-11-10
 
+FASK 1.1.8 lets you choose Korean or English AI prompts, moves settings into a categorized page, and fixes screen questions capturing the wrong monitor.
+
+### Added
+- **Korean and English AI prompts**: choose the language FASK uses for answers, refinements, titles, search and knowledge extraction, on desktop and mobile. Korean stays the default.
+- **Categorized settings page**: the desktop settings modal became a full page grouped by category, with guidance for each model role and clearer icons.
+
+### Fixed
+- Stale monitor settings no longer make screen questions capture the wrong display. Saving capture settings now requires picking a monitor and pressing Apply, and missing or resized displays lead you through recovery without losing your draft.
+- Pen marks are cleared only when you switch to a different monitor or screen size.
+
+### Other
+- Settings and error messages now describe any OpenAI-compatible local API, not one specific proxy.
+- GitHub Releases now open with the matching CHANGELOG notes.
+- Added the MIT license.
 
 ## [1.1.7] - 2026-11-09
 

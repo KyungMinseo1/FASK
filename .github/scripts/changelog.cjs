@@ -29,10 +29,39 @@ function promoteUnreleased(text, version, date) {
     text.slice(unreleased.headingEnd)
 }
 
-module.exports = { releaseNotes, promoteUnreleased }
+// Release page body: CHANGELOG notes, then download links and install notes for the uploaded files.
+function releaseBody(notes, { repo, tag, windows, android }) {
+  const link = (path) => {
+    const name = path.split('/').pop()
+    return `[${name}](https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)})`
+  }
+  return `${notes}
 
+## Download
+
+| Platform | File |
+|---|---|
+| Windows | ${link(windows)} |
+| Android | ${link(android)} |
+
+> [!NOTE]
+> The Windows installer is not code-signed, so SmartScreen may warn you: choose **More info → Run anyway**.
+> On Android, allow installing unknown apps for the browser or file manager that opens the APK.
+`
+}
+
+module.exports = { releaseNotes, promoteUnreleased, releaseBody }
+
+// Usage: node changelog.cjs vX.Y.Z [WINDOWS_INSTALLER ANDROID_APK]; with files, GITHUB_REPOSITORY is required.
 if (require.main === module) {
-  const tag = process.argv[2] || ''
+  const [tag = '', windows, android] = process.argv.slice(2)
   const text = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../CHANGELOG.md'), 'utf8')
-  process.stdout.write(releaseNotes(text, tag.replace(/^v/, '')) + '\n')
+  const notes = releaseNotes(text, tag.replace(/^v/, ''))
+  if (!windows) {
+    process.stdout.write(notes + '\n')
+  } else {
+    const repo = process.env.GITHUB_REPOSITORY
+    if (!repo || !android) throw new Error('Release body needs GITHUB_REPOSITORY, a Windows installer and an Android APK')
+    process.stdout.write(releaseBody(notes, { repo, tag, windows, android }))
+  }
 }

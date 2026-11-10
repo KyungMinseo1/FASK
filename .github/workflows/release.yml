@@ -168,7 +168,7 @@ jobs:
           windows=(release-assets/*-setup.exe)
           android=(release-assets/*-android.apk)
           [[ ${#windows[@]} == 1 && ${#android[@]} == 1 ]] || { echo '::error::Expected one Windows installer and one Android APK'; exit 1; }
-          node .github/scripts/changelog.cjs "$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"
+          node .github/scripts/changelog.cjs "$RELEASE_TAG" "${windows[0]}" "${android[0]}" > "$RUNNER_TEMP/release-notes.md"
           if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
             node -e 'if (!JSON.parse(require("fs").readFileSync("release-state.json")).isDraft) { console.error("Refusing to overwrite a published release"); process.exit(1) }'
             # A rerun recreates the leftover draft so its notes match the current CHANGELOG.
