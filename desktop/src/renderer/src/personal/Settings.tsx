@@ -274,6 +274,19 @@ export default function Settings({
           <section>
             <h3>{t('질문과 기억')}</h3>
             <label>
+              {t('AI 프롬프트 언어')}
+              <select
+                value={draft.promptLanguage}
+                onChange={(e) => change('promptLanguage', e.target.value as LocalSettings['promptLanguage'])}
+              >
+                <option value="ko">한국어</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <small>
+              {t('모델에게 보내는 지시문의 언어입니다. 화면 언어와 따로 정하며, 답변과 개념 이름은 대화에 쓰인 언어를 따릅니다.')}
+            </small>
+            <label>
               {t('모델 선택')}
               <select
                 value={draft.routing}

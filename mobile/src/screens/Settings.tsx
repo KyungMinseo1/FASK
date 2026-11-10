@@ -181,6 +181,10 @@ export default function Settings(): React.JSX.Element {
               <dt>{t('AI 모델')}</dt>
               <dd>{data.settings.model || t('설정되지 않음')}</dd>
             </div>
+            <div>
+              <dt>{t('AI 프롬프트 언어')}</dt>
+              <dd>{data.settings.promptLanguage === 'en' ? 'English' : '한국어'}</dd>
+            </div>
           </dl>
           <button className="danger" onClick={() => void unpair(demo ? '' : t('연결을 해제했습니다.'))}>
             {demo ? t('데모 종료') : t('연결 해제')}

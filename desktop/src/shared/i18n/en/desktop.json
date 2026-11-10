@@ -373,5 +373,7 @@
   "지식 관리자": "Knowledge manager",
   "요청 거절됨": "Request rejected",
   "관리자로 지정": "Make knowledge manager",
-  "관리자 해제": "Revoke manager access"
+  "관리자 해제": "Revoke manager access",
+  "AI 프롬프트 언어": "AI prompt language",
+  "모델에게 보내는 지시문의 언어입니다. 화면 언어와 따로 정하며, 답변과 개념 이름은 대화에 쓰인 언어를 따릅니다.": "Language of the instructions sent to the model. Set separately from the display language; answers and concept names follow the language of the conversation."
 }

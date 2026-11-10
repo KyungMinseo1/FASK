@@ -35,6 +35,7 @@ import './knowledge.test'
 import './knowledge-store.test'
 import './mindmap-layout.test'
 import './capture.test'
+import './prompts.test'
 import {
   answerJustCompleted,
   applyDelta,
