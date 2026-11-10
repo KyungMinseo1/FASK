@@ -31,6 +31,7 @@ function check(options = {}) {
   }
   const fs = {
     readFileSync(path) {
+      if (path === 'CHANGELOG.md') return options.changelog ?? '## [Unreleased]\n\n## [1.1.1] - 2026-10-29\n\n- 질문 이동\n'
       if (path.endsWith('build.gradle')) return gradle(options.androidVersion ?? '1.1.1', options.code ?? 2)
       const version = path === 'mobile/package.json' ? options.mobileVersion ?? '1.1.1' : '1.1.1'
       if (path.endsWith('package-lock.json')) {
@@ -44,6 +45,7 @@ function check(options = {}) {
       require: (name) => {
         if (name === 'node:child_process') return child
         if (name === 'node:fs') return fs
+        if (name === './changelog.cjs') return require('./changelog.cjs')
         throw new Error(`Unexpected module: ${name}`)
       },
       console: { error: (message) => messages.push(message), log() {} },
@@ -73,7 +75,9 @@ for (const [name, options, message] of [
   ['invalid Android code', { code: 0 }, /versionCode/],
   ['unchanged Android code', { code: 1 }, /greater than 1/],
   ['decreased Android code', { previousCode: 3 }, /greater than 3/],
-  ['version downgrade', { tags: 'v1.2.0\nv1.1.1' }, /newer than reachable tag/]
+  ['version downgrade', { tags: 'v1.2.0\nv1.1.1' }, /newer than reachable tag/],
+  ['missing release notes', { changelog: '## [Unreleased]\n\n- 질문 이동\n\n## [1.1.0] - 2026-10-28\n\n- 테마\n' }, /## \[1\.1\.1\]/],
+  ['empty release notes', { changelog: '## [1.1.1] - 2026-10-29\n\n## [1.1.0] - 2026-10-28\n\n- 테마\n' }, /## \[1\.1\.1\]/]
 ]) {
   test(`rejects ${name}`, () => {
     const result = check(options)
