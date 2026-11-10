@@ -255,9 +255,9 @@ app.whenReady().then(async () => {
     report.checks.push('graph node right click renames concept')
 
     await js(
-      "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('설정 · AI')).click()"
+      "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('설정과 AI 연결')).click()"
     )
-    await wait(() => js("!!document.querySelector('.settings-modal')"), 'settings opens')
+    await wait(() => js("!!document.querySelector('.settings-page')"), 'settings opens')
     await shot('settings')
     const shortcut = await js('window.fask.shortcutInfo()')
     assert.ok(shortcut.accelerator && globalShortcut.isRegistered(shortcut.accelerator))
@@ -307,8 +307,10 @@ app.whenReady().then(async () => {
         throw new Error(`annotation instruction mismatch (annotated=${annotated})`)
     }
     report.checks.push('pen annotation prompt only for annotated captures')
+    await js("document.querySelector('.settings-back').click()")
+    await wait(() => js("!document.querySelector('.settings-page')"), 'settings closes')
     await js(
-      "document.querySelector('.settings-modal header button').click();[...document.querySelectorAll('.view-bar button')].find(b=>b.textContent.includes('새 질문')).click()"
+      "[...document.querySelectorAll('.view-bar button')].find(b=>b.textContent.includes('새 질문')).click()"
     )
     await wait(
       () => js("!!document.querySelector('.composer textarea')"),

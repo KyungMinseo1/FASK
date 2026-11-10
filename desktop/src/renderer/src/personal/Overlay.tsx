@@ -916,7 +916,7 @@ export default function Overlay(): React.JSX.Element {
       {captureSettingsOpen && data && (
         <Settings
           settings={data.settings}
-          initialSection="capture"
+          variant="capture"
           captureIssue={captureIssue}
           onClose={() => {
             captureSettingsOpenRef.current = false
