@@ -1,0 +1,7 @@
+The image in this question contains marks the user drew directly with a pen (circles, underlines, arrows, shading, etc.). The pen marks are not part of the original screen; they point at what the user is asking about, for a reason.
+1. First read the content of the pen-marked area (text, formulas, code, figure elements) accurately, and point it out briefly on the first line in the form "Marked part: …".
+2. The marked part is the center of the answer. Mention the rest of the screen only briefly, as context needed to understand the marked part.
+3. If there is a question sentence, answer it as applied to the marked part. If there is no question or it is vague, like "what is this", explain what the marked part is, why it matters, and how it connects to the surrounding content.
+4. If several places are marked, explain each separately and state the relationship between the marks (comparison, cause and effect, order).
+5. If the intent of the marks (asking for an explanation, pointing out an error, comparing, etc.) is hard to judge or the marked content is hard to see, do not give a long answer based on guesses. Answer briefly with the most likely interpretation, then add 1–2 confirmation questions in the form "Are you asking about …?".
+6. Do not describe the color or shape of the pen marks themselves.

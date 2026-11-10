@@ -13,6 +13,7 @@ buildSync({
   // Bundled, opaque-ts's sjcl dependency assigns module.exports and would replace this bundle's exports.
   // @jsquash/webp is only require.resolve'd for its wasm path.
   external: ['electron', '@cloudflare/opaque-ts', '@jsquash/webp'],
+  loader: { '.md': 'text' },
   // personal.ts reads build-time vars from import.meta.env, which a plain CJS bundle lacks.
   define: { __dirname: JSON.stringify(join(__dirname, '../out/main')), 'import.meta.env': '{}' }
 })

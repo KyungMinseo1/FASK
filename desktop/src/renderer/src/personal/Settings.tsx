@@ -233,7 +233,7 @@ export default function Settings({
     <>
       <section>
         <h3>{t('로컬 AI 연결')}</h3>
-        <p>{t('EasyCLIProxyAPI에서 계정을 연결하고, Home에 있는 OpenAI 호환 주소를 붙여넣으세요.')}</p>
+        <p>{t('OpenAI compatible API의 주소를 붙여넣으세요.')}</p>
         <label>
           {t('로컬 API 주소')}
           <input
@@ -270,7 +270,7 @@ export default function Settings({
         </button>
         <small>
           {t(
-            '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 EasyCLIProxyAPI에서 관리하세요.'
+            '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 OpenAI compatible API에서 관리하세요.'
           )}
         </small>
       </section>
@@ -307,6 +307,19 @@ export default function Settings({
     <>
       <section>
         <h3>{t('질문 처리')}</h3>
+        <label>
+          {t('AI 프롬프트 언어')}
+          <select
+            value={draft.promptLanguage}
+            onChange={(e) => change('promptLanguage', e.target.value as LocalSettings['promptLanguage'])}
+          >
+            <option value="ko">한국어</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <small>
+          {t('모델에게 보내는 지시문의 언어입니다. 화면 언어와 따로 정하며, 답변과 개념 이름은 대화에 쓰인 언어를 따릅니다.')}
+        </small>
         <label>
           {t('모델 선택')}
           <select

@@ -11,7 +11,8 @@ try {
     outfile: output,
     bundle: true,
     platform: 'node',
-    format: 'cjs'
+    format: 'cjs',
+    loader: { '.md': 'text' }
   })
   const result = spawnSync(process.execPath, ['--test', output], { stdio: 'inherit' })
   process.exitCode = result.status ?? 1

@@ -464,6 +464,7 @@ export function validateBackup(input: unknown): Backup {
       fail()
   if (s.settings.organizeModel !== undefined && typeof s.settings.organizeModel !== 'string')
     fail()
+  if (s.settings.promptLanguage !== undefined && !['ko', 'en'].includes(s.settings.promptLanguage)) fail()
   for (const region of s.settings.regions) {
     if (
       !region ||

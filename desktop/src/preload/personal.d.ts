@@ -52,6 +52,8 @@ export interface LocalSettings {
   extractDelaySec: number
   /** Model for extraction and tidy; empty uses fastModel, then model. */
   organizeModel: string
+  /** Language of the instructions sent to the model (not the UI language); outputs still follow the conversation's language. */
+  promptLanguage: 'ko' | 'en'
   retention: 'minimal' | 'balanced' | 'preserve'
   autoTitle: boolean
   regions: CaptureRegion[]

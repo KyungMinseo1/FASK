@@ -57,6 +57,7 @@ export const defaults: LocalSettings = {
   memoryTokens: 1500,
   extractDelaySec: 120,
   organizeModel: '',
+  promptLanguage: 'ko',
   retention: 'balanced',
   autoTitle: true,
   regions: []
