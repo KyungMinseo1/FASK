@@ -1,5 +1,6 @@
 const { execFileSync, spawnSync } = require('node:child_process')
 const { readFileSync } = require('node:fs')
+const { releaseNotes } = require('./changelog.cjs')
 
 function fail(message) {
   console.error(message)
@@ -34,6 +35,11 @@ function androidVersion(text) {
 const android = androidVersion(readFileSync('mobile/android/app/build.gradle', 'utf8'))
 if (android.name !== version || !Number.isSafeInteger(android.code) || android.code < 1 || android.code > 2100000000) {
   fail('Android versionName must match the tag and versionCode must be a valid positive integer')
+}
+try {
+  releaseNotes(readFileSync('CHANGELOG.md', 'utf8'), version)
+} catch (error) {
+  fail(error.message)
 }
 // Compare with every earlier version tag reachable from this commit. Legacy tags
 // without an Android app are allowed; an existing Android version must increase.

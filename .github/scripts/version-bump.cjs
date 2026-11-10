@@ -1,6 +1,7 @@
 const { execFileSync, spawnSync } = require('node:child_process')
 const { readFileSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
+const { promoteUnreleased } = require('./changelog.cjs')
 
 const root = join(__dirname, '../..')
 const version = process.argv[2]
@@ -36,6 +37,10 @@ const jsonFiles = files.map((path) => {
   return { fullPath, original, content, current }
 })
 
+const changelogPath = join(root, 'CHANGELOG.md')
+const changelog = readFileSync(changelogPath, 'utf8')
+const nextChangelog = promoteUnreleased(changelog, version, new Date().toLocaleDateString('sv-SE'))
+
 const gradlePath = join(root, 'mobile/android/app/build.gradle')
 const gradle = readFileSync(gradlePath, 'utf8')
 const nameMatch = gradle.match(/\bversionName\s+["']([^"']+)["']/)
@@ -62,6 +67,7 @@ for (const tag of tags) {
 const alreadySynced = jsonFiles.every(({ current }) => current === version) &&
   nameMatch[1] === version && currentCode > maxPreviousCode && currentCode <= 2100000000
 if (alreadySynced) {
+  if (nextChangelog !== changelog) writeFileSync(changelogPath, nextChangelog)
   console.log(`Version ${version} is already synchronized`)
   process.exit(0)
 }
@@ -73,4 +79,5 @@ for (const { fullPath, original, content } of jsonFiles) {
   if (content !== original) writeFileSync(fullPath, content)
 }
 if (nextGradle !== gradle) writeFileSync(gradlePath, nextGradle)
+if (nextChangelog !== changelog) writeFileSync(changelogPath, nextChangelog)
 console.log(`Version ${version}, Android versionCode ${nextCode}`)
