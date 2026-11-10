@@ -51,7 +51,7 @@ function statusError(status: number): Error {
         ? 'endpoint 또는 모델을 확인해 주세요.'
         : status === 429
           ? '한도에 도달했습니다. 프록시에서 상태를 확인해 주세요.'
-          : 'EasyCLIProxyAPI의 실행 상태와 모델 연결을 확인해 주세요.'
+          : 'OpenAI compatible API의 실행 상태와 모델 연결을 확인해 주세요.'
   return new Error(t('로컬 API 오류 ({{status}}). {{hint}}', { status, hint: t(hint) }))
 }
 export async function streamChat(
@@ -80,7 +80,7 @@ export async function streamChat(
     if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'))
       throw new Error('응답 시간이 초과되었습니다. 다시 시도해 주세요.')
     throw new Error(
-      '로컬 API에 연결할 수 없습니다. EasyCLIProxyAPI 실행과 endpoint를 확인해 주세요.'
+      '로컬 API에 연결할 수 없습니다. OpenAI compatible API 실행과 endpoint를 확인해 주세요.'
     )
   }
   if (!res.ok) throw statusError(res.status)
@@ -112,7 +112,7 @@ export async function streamChat(
     }
     if (item.error)
       throw new Error(
-        '프록시가 추론 오류를 반환했습니다. EasyCLIProxyAPI에서 연결 상태를 확인해 주세요.'
+        '프록시가 추론 오류를 반환했습니다. OpenAI compatible API에서 연결 상태를 확인해 주세요.'
       )
     const choice = item.choices?.[0]
     if (typeof choice?.delta?.content === 'string') delta(choice.delta.content, item.model)

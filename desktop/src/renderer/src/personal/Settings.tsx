@@ -233,7 +233,7 @@ export default function Settings({
     <>
       <section>
         <h3>{t('로컬 AI 연결')}</h3>
-        <p>{t('EasyCLIProxyAPI에서 계정을 연결하고, Home에 있는 OpenAI 호환 주소를 붙여넣으세요.')}</p>
+        <p>{t('OpenAI compatible API의 주소를 붙여넣으세요.')}</p>
         <label>
           {t('로컬 API 주소')}
           <input
@@ -270,7 +270,7 @@ export default function Settings({
         </button>
         <small>
           {t(
-            '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 EasyCLIProxyAPI에서 관리하세요.'
+            '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 OpenAI compatible API에서 관리하세요.'
           )}
         </small>
       </section>
