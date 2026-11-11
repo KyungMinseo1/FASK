@@ -18,6 +18,8 @@ interface OverlayPlugin {
     pairing: Pairing
     profileId: string
     projectId: string
+    /** Continues this question instead of starting a new conversation. */
+    questionId?: string
   }): Promise<{ sessionId: string }>
   stop(): Promise<void>
   consumeRevocation(): Promise<{ fingerprint: string } | null>

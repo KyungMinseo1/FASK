@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
-import type { CaptureSetupReason, Reference } from '../../../preload/personal'
+import type { CaptureSetupReason, Question, Reference } from '../../../preload/personal'
 import { captureSetupMessage } from '../../../shared/capture'
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
 import QuestionDetail from './QuestionDetail'
+import ReferencePanel, { REF_H, REF_W } from './ReferencePanel'
 import Settings from './Settings'
 import TurnNav from './TurnNav'
 import ProjectPicker from './ProjectPicker'
 import { Icon } from './ToolbarIcons'
 import { MarkF } from './Wordmark'
 import { errorText, useSnapshot } from './common'
-import { linkableConcepts, projectConcepts } from './questionTree'
+import { linkableConcepts, projectConcepts, projectHost } from './questionTree'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
 import { answerJustCompleted, questionHeading } from '../../../shared/questions'
@@ -25,6 +26,8 @@ const ANCHOR_W = 64,
 const PICKER_MAX_H = 360
 /** Elements that must receive clicks instead of passing them to the background app. */
 const HIT_SELECTOR = '.overlay-toolbar,.toolbar-tools,.overlay-panel,.overlay-project-picker,.modal-backdrop'
+/** overlayRegions accepts at most 8 regions: toolbar, tools, question panel, picker, modal and these. */
+const MAX_REFS = 3
 
 export default function Overlay(): React.JSX.Element {
   const t = useT()
@@ -145,21 +148,79 @@ export default function Overlay(): React.JSX.Element {
         : null,
     [data, projectId]
   )
-  // The panel has no graph: a concept opens the dashboard, a question becomes the panel conversation.
+  // Referenced questions open read-only beside the panel, so its conversation and the ink stay put.
+  const [refs, setRefs] = useState<{ id: string; x: number; y: number; w: number; h: number }[]>([])
+  // The size the last resized reference ended at; the next one opens with it (this overlay only).
+  const [refSize, setRefSize] = useState({ w: REF_W, h: REF_H })
+  const panelHeader = useRef<HTMLElement>(null)
+  const refToFront = (id: string): void =>
+    setRefs((list) =>
+      list.at(-1)?.id === id ? list : [...list.filter((r) => r.id !== id), ...list.filter((r) => r.id === id)]
+    )
+  const openRef = (id: string): void => {
+    if (refs.some((r) => r.id === id)) {
+      refToFront(id)
+      return
+    }
+    const w = Math.min(refSize.w, innerWidth - 16),
+      n = refs.length
+    const base = maximized ? { x: 8, y: 8 } : visiblePosition
+    const width = maximized ? innerWidth - 16 : panelSize.width
+    const last = refs.at(-1)
+    const beside =
+      base.x - w - 12 >= 8
+        ? base.x - w - 12
+        : base.x + width + 12 + w <= innerWidth - 8
+          ? base.x + width + 12
+          : null
+    // Covering the panel (expanded, or no room beside it): start below its header so its title stays readable.
+    const below = (panelHeader.current?.getBoundingClientRect().bottom ?? base.y) + 8
+    const next = !panel
+      ? last
+        ? { x: last.x + 24, y: last.y + 28 }
+        : { x: (innerWidth - w) / 2, y: 64 }
+      : beside === null
+        ? { x: base.x + 24 * (n + 1), y: below + 28 * n }
+        : { x: beside, y: base.y + 28 * n }
+    setRefs((list) => [...list, { id, ...next, ...refSize }].slice(-MAX_REFS))
+  }
+  // The panel has no graph: a concept opens the dashboard, a question opens a reference panel.
   const openReference = (ref: Reference): void => {
-    const target = ref.kind === 'question' ? data?.questions.find((q) => q.id === ref.id) : undefined
+    if (ref.kind === 'question' && data?.questions.some((q) => q.id === ref.id)) {
+      openRef(ref.id)
+      return
+    }
+    window.fask.showDashboard().catch((e) => setNotice(errorText(e)))
+  }
+  /** Makes `q` the panel's conversation in place; the overlay window and its ink stay. */
+  const continueConversation = (q: Question): void => {
+    if (switchBlocked) {
+      setNotice(t('질문을 보내는 중에는 대화를 바꿀 수 없습니다.'))
+      setPanel(true)
+      return
+    }
     void (async () => {
-      if (!target) {
-        await window.fask.showDashboard()
-        return
+      await window.fask.continueQuestion(q.projectId, q.id)
+      if (q.projectId !== projectId) {
+        await window.fask.activateProject(q.projectId)
+        setParams(
+          (prev) => {
+            const next = new URLSearchParams(prev)
+            next.set('project', q.projectId)
+            return next
+          },
+          { replace: true }
+        )
       }
-      const result = await window.fask.openOverlay(target.projectId, target.id)
-      if (!result.ok) {
-        setCaptureIssue(result.reason)
-        setNotice('')
-        setPanel(true)
-      }
-    })().catch((e) => setNotice(errorText(e)))
+      await refresh()
+      setResetCount((c) => c + 1)
+      setRefs((list) => list.filter((r) => r.id !== q.id))
+      setMode('idle')
+      setPanel(true)
+    })().catch((e) => {
+      setNotice(errorText(e))
+      setPanel(true)
+    })
   }
   const scrollKey = `fask:panel-scroll:${profileId}`
   const conversationKey = `${projectId}:${questionId ?? ''}`
@@ -232,6 +293,11 @@ export default function Overlay(): React.JSX.Element {
       height: Math.min(innerHeight - 16, Math.max(260, Number(saved.height) || 600))
     }
   })
+  const maximizedKey = `fask:panel-maximized:${profileId}`
+  const [maximized, setMaximized] = useState(() => localStorage.getItem(maximizedKey) === '1')
+  useEffect(() => {
+    localStorage.setItem(maximizedKey, maximized ? '1' : '0')
+  }, [maximizedKey, maximized])
   const [panelInteraction, setPanelInteraction] = useState(false)
   const visiblePosition = {
     x: Math.max(8, Math.min(position.x, innerWidth - panelSize.width - 8)),
@@ -307,13 +373,20 @@ export default function Overlay(): React.JSX.Element {
   }, [])
   useLayoutEffect(() => {
     const update = (): void => {
-      const regions = [...document.querySelectorAll(HIT_SELECTOR)].map((el) => {
-        const r = el.getBoundingClientRect()
-        return { x: r.x, y: r.y, width: r.width, height: r.height }
-      })
+      // Folded references keep their layout (and scroll) but must not catch clicks.
+      const regions = [...document.querySelectorAll(HIT_SELECTOR)]
+        .filter((el) => !el.classList.contains('folded'))
+        .map((el) => {
+          const r = el.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        })
       // The popover holds focus like the panel, so a background click blurs and closes it.
       void window.fask
-        .overlayRegions(mode !== 'idle' || panelInteraction, regions, panel || !!picker || captureSettingsOpen)
+        .overlayRegions(
+          mode !== 'idle' || panelInteraction,
+          regions,
+          panel || !!picker || captureSettingsOpen
+        )
         .catch(() => {})
     }
     let frame = 0
@@ -339,8 +412,9 @@ export default function Overlay(): React.JSX.Element {
     peek,
     edge,
     picker,
-    captureSettingsOpen,
-    hitRegionRevision
+    hitRegionRevision,
+    maximized,
+    refs
   ])
   useEffect(() => {
     if (!picker) return
@@ -402,11 +476,11 @@ export default function Overlay(): React.JSX.Element {
   }
   const project = data?.projects.find((p) => p.id === projectId)
   const projectName = project?.name ?? ''
-  const remote = !!project && !!data?.workspaces.find((w) => w.id === project.workspaceId)?.remote
+  const host = data ? projectHost(data, projectId) : undefined
   const heading = recent ? questionHeading(recent).replace(/\s+/g, ' ').trim() : ''
   const headingChars = [...heading]
   const threadName =
-    headingChars.length > THREAD_CHARS ? `${headingChars.slice(0, THREAD_CHARS).join('')}…` : heading
+    maximized || headingChars.length <= THREAD_CHARS ? heading : `${headingChars.slice(0, THREAD_CHARS).join('')}…`
   const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
       setNotice('')
@@ -665,18 +739,23 @@ export default function Overlay(): React.JSX.Element {
       )}
       {panel && (
         <section
-          className="overlay-panel"
+          className={`overlay-panel${maximized ? ' maximized' : ''}`}
           aria-label={t('질문 창')}
-          style={{
-            left: visiblePosition.x,
-            top: visiblePosition.y,
-            width: panelSize.width,
-            height: panelSize.height
-          }}
+          style={
+            maximized
+              ? { left: 8, top: 8, width: innerWidth - 16, height: innerHeight - 16 }
+              : {
+                  left: visiblePosition.x,
+                  top: visiblePosition.y,
+                  width: panelSize.width,
+                  height: panelSize.height
+                }
+          }
         >
           <header
+            ref={panelHeader}
             onPointerDown={(e) => {
-              if ((e.target as HTMLElement).closest('button')) return
+              if (maximized || (e.target as HTMLElement).closest('button')) return
               e.currentTarget.setPointerCapture(e.pointerId)
               setPanelInteraction(true)
               moving.current = {
@@ -712,7 +791,7 @@ export default function Overlay(): React.JSX.Element {
             <div>
               <small>
                 {projectName || t('화면 질문')}
-                {remote && <Icon name="globe" size={12} />}
+                {host && <Icon name="globe" size={12} />}
               </small>
               {project && (
                 <b className="overlay-panel-thread" title={heading || undefined}>
@@ -727,7 +806,16 @@ export default function Overlay(): React.JSX.Element {
                 </b>
               )}
             </div>
-            <button onClick={closePanel}>
+            <button
+              className="panel-maximize"
+              aria-label={maximized ? t('질문 창 원래 크기로') : t('질문 창 확장')}
+              aria-pressed={maximized}
+              onClick={() => setMaximized((m) => !m)}
+            >
+              <Icon name={maximized ? 'restore' : 'maximize'} size={14} />
+              {maximized ? t('원래 크기') : t('확장')}
+            </button>
+            <button className="panel-close" onClick={closePanel}>
               <Icon name="close" size={14} />
               {t('접기')}
             </button>
@@ -808,6 +896,7 @@ export default function Overlay(): React.JSX.Element {
                 projectId={projectId}
                 profileId={profileId}
                 settings={data.settings}
+                host={host}
                 questionId={questionId}
                 recentQuestion={recent}
                 onReference={openReference}
@@ -853,6 +942,7 @@ export default function Overlay(): React.JSX.Element {
             )}
             {(notice || error) && <p className="notice error">{notice || error}</p>}
           </div>
+          {!maximized && (
           <footer className="overlay-panel-footer">
             <small>{t('모서리를 드래그해 크기 조절')}</small>
             <button
@@ -911,8 +1001,38 @@ export default function Overlay(): React.JSX.Element {
               <Icon name="resize" size={14} />
             </button>
           </footer>
+          )}
         </section>
       )}
+      {data &&
+        refs.map((r) => {
+          const q = data.questions.find((x) => x.id === r.id)
+          return (
+            q && (
+              <ReferencePanel
+                key={r.id}
+                data={data}
+                question={q}
+                x={r.x}
+                y={r.y}
+                width={r.w}
+                height={r.h}
+                run={run}
+                onMove={(x, y) => setRefs((list) => list.map((e) => (e.id === r.id ? { ...e, x, y } : e)))}
+                onResize={(w, h) => {
+                  setRefs((list) => list.map((e) => (e.id === r.id ? { ...e, w, h } : e)))
+                  setRefSize({ w, h })
+                }}
+                onInteraction={setPanelInteraction}
+                onFront={() => refToFront(r.id)}
+                onClose={() => setRefs((list) => list.filter((e) => e.id !== r.id))}
+                onContinue={q.id === questionId ? undefined : () => continueConversation(q)}
+                onReference={openReference}
+                folded={!panel}
+              />
+            )
+          )
+        })}
       {captureSettingsOpen && data && (
         <Settings
           settings={data.settings}

@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Snapshot } from '@desktop/preload/personal'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Question, Reference, Snapshot } from '@desktop/preload/personal'
 import { answerJustCompleted, questionHeading } from '@desktop/shared/questions'
 import { useApi } from '@desktop/renderer/src/personal/api'
 import { errorText } from '@desktop/renderer/src/personal/common'
 import Composer from '@desktop/renderer/src/personal/Composer'
 import ProjectPicker from '@desktop/renderer/src/personal/ProjectPicker'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
-import { linkableConcepts, projectConcepts } from '@desktop/renderer/src/personal/questionTree'
+import {
+  linkableConcepts,
+  projectConcepts,
+  projectHost
+} from '@desktop/renderer/src/personal/questionTree'
 import TurnNav from '@desktop/renderer/src/personal/TurnNav'
 import { t } from '@desktop/shared/i18n'
 import { useT } from '@desktop/shared/i18n/react'
@@ -67,6 +71,18 @@ export default function OverlayPanel({
   const turnInk = useRef(new Map<string, number>())
   const clearQueue = useRef<number[]>([])
   const seq = useRef(0)
+  // Referenced question shown read-only over the conversation, which stays mounted underneath.
+  const [refId, setRefId] = useState<string | null>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const savedScroll = useRef(0)
+  const shownRef = useRef<string | null>(null)
+  const refQuestion = refId ? data.questions.find((q) => q.id === refId) : undefined
+  // Opening a reference starts at its top; going back returns to where the conversation was.
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (el && refId !== shownRef.current) el.scrollTop = refId ? 0 : savedScroll.current
+    shownRef.current = refId
+  }, [refId])
 
   const refresh = useCallback(async (): Promise<void> => {
     const my = ++seq.current
@@ -117,6 +133,11 @@ export default function OverlayPanel({
     () => ({ concepts: linkableConcepts(data, projectId), shared: projectConcepts(data, projectId).shared }),
     [data, projectId]
   )
+  const refProjectId = refQuestion?.projectId ?? projectId
+  const refKnown = useMemo(
+    () => ({ concepts: linkableConcepts(data, refProjectId), shared: projectConcepts(data, refProjectId).shared }),
+    [data, refProjectId]
+  )
 
   // The Composer's autofocused input otherwise keeps the panel scrolled past the opened list.
   const head = useRef<HTMLDivElement>(null)
@@ -163,11 +184,11 @@ export default function OverlayPanel({
     setQuestionId(qid)
     void bridge.call('setQuestion', { questionId: qid }).catch((e) => setNotice(errorText(e)))
   }
-  const onCompleted = (_id: string, result: { turnId: string; status: 'saved' | 'completed' }): void => {
+  const onCompleted = (_id: string, result: { turnId: string; status: 'completed' }): void => {
     const revision = turnInk.current.get(result.turnId)
     turnInk.current.delete(result.turnId)
     // Only an answered turn clears the ink it was sent with; newer strokes stay.
-    if (result.status === 'completed' && revision !== undefined) {
+    if (revision !== undefined) {
       clearQueue.current.push(revision)
       const s = interactionRef.current
       if (!s.busy && !s.running && !s.unresolved) flushClears()
@@ -216,6 +237,41 @@ export default function OverlayPanel({
   }
   const switchRef = useRef(switchProject)
   switchRef.current = switchProject
+  const openReference = (ref: Reference): void => {
+    if (ref.kind === 'concept') {
+      setNotice(t('개념은 폰 앱의 개념 그래프에서 볼 수 있습니다.'))
+      return
+    }
+    if (!data.questions.some((q) => q.id === ref.id)) {
+      setNotice(t('삭제되었거나 찾을 수 없는 질문입니다.'))
+      return
+    }
+    // A reference opened from inside the view replaces it; only the conversation's spot is kept.
+    if (refId === null) savedScroll.current = contentRef.current?.scrollTop ?? 0
+    setNotice('')
+    setRefId(ref.id)
+  }
+  const back = (): void => setRefId(null)
+  /** Makes the referenced question this panel's conversation; the ink stays, as on desktop. */
+  const continueReference = async (q: Question): Promise<void> => {
+    if (locked) {
+      setNotice(t('질문을 보내는 중에는 대화를 바꿀 수 없습니다.'))
+      return
+    }
+    try {
+      if (q.projectId !== projectId) await bridge.call('setProject', { projectId: q.projectId })
+      await bridge.call('setQuestion', { questionId: q.id })
+      // One batch: contextProblem never sees the question paired with the previous project.
+      setProjectId(q.projectId)
+      setQuestionId(q.id)
+      setHistoryOpen(false)
+      setComposerKey((k) => k + 1)
+      setRefId(null)
+      setNotice('')
+    } catch (e) {
+      setNotice(errorText(e))
+    }
+  }
   const lockReason = locked ? t('답변이 끝난 뒤 프로젝트를 바꿀 수 있습니다.') : null
   const projectsKey = JSON.stringify([data.projects, data.workspaces, projectId, lockReason, notice])
   // The native toolbar's project popover mirrors this list; resent after every switch attempt.
@@ -262,22 +318,7 @@ export default function OverlayPanel({
           />
         </div>
       )}
-      <div className="overlay-panel-content">
-        <div className="screen-q-followup" role="status">
-          {questionId ? (
-            <>
-              <span className="screen-q-followup-tag">{t('이어서 질문 중')}</span>
-              <b title={question ? questionHeading(question) : undefined}>
-                {question ? questionHeading(question) : ''}
-              </b>
-              <button disabled={locked} onClick={newConversation}>
-                {confirmNew ? t('다시 눌러 새 대화 시작') : t('새 질문')}
-              </button>
-            </>
-          ) : (
-            <b>{t('새 대화')}</b>
-          )}
-        </div>
+      <div className="overlay-panel-content" ref={contentRef}>
         {unpaired && <p className="notice error">{unpaired}</p>}
         {conn.state === 'offline' && (
           <p className="notice">{t('PC에 연결할 수 없습니다. 연결되면 이어서 표시합니다.')}</p>
@@ -286,80 +327,131 @@ export default function OverlayPanel({
           <p className="notice error">{t('인증서가 일치하지 않는 연결을 차단했습니다.')}</p>
         )}
         {blocked && <p className="notice error">{blocked}</p>}
-        <small className="overlay-capture-note">
-          <b>
-            {overlay.region ? t('캡처 영역 {{width}}×{{height}}px', overlay.region) : t('영역 미설정')}
-          </b>
-          {!overlay.region && <span>{t('화면을 첨부하기 전에 영역을 선택하세요.')}</span>}
-          {overlay.hasInk && <span>{t('필기 있음')}</span>}
-          <span>{t('화면 캡처 포함을 선택하면 질문을 보낼 때 촬영합니다.')}</span>
-          <button
-            disabled={locked}
-            onClick={() => void bridge.call('selectRegion').catch((e) => setNotice(errorText(e)))}
-          >
-            {t('영역 선택')}
-          </button>
-        </small>
-        {question && question.turns.length > 1 && (
-          <details
-            className="overlay-history"
-            open={historyOpen}
-            onToggle={(e) => setHistoryOpen(e.currentTarget.open)}
-          >
-            <summary>
-              {t('이전 대화 {{count}}개', { count: question.turns.length - 1 })}
-              {question.memo.trim() !== '' && (
-                <span className="memo-badge" title={t('메모 있음')}>
-                  <Icon name="pen" size={14} />
-                  {t('메모')}
-                </span>
-              )}
-            </summary>
+        {refQuestion && (
+          <div className="overlay-ref-panel screen-q-ref">
+            <div className="screen-q-ref-head">
+              <button onClick={back}>
+                <Icon name="back" size={18} />
+                {t('대화로 돌아가기')}
+              </button>
+              <small>
+                {t('참고한 질문')} · {data.projects.find((p) => p.id === refQuestion.projectId)?.name ?? ''}
+              </small>
+            </div>
+            {notice && <p className="notice error">{notice}</p>}
             <QuestionDetail
-              question={question}
-              concepts={known.concepts}
-              shared={known.shared}
+              key={refQuestion.id}
+              question={refQuestion}
+              concepts={refKnown.concepts}
+              shared={refKnown.shared}
               run={run}
-              earlierOnly
+              onReference={openReference}
+              onContinue={refQuestion.id === questionId ? undefined : () => void continueReference(refQuestion)}
               onCreateConcept={async (name) => {
-                const id = await api.create('concept', name, projectId)
-                await api.updateQuestion(question.id, {
-                  conceptIds: [...question.conceptIds, id],
-                  suggestions: question.suggestions.filter((s) => s !== name)
+                const id = await api.create('concept', name, refQuestion.projectId)
+                await api.updateQuestion(refQuestion.id, {
+                  conceptIds: [...refQuestion.conceptIds, id],
+                  suggestions: refQuestion.suggestions.filter((s) => s !== name)
                 })
               }}
             />
-          </details>
+          </div>
         )}
-        {question && (
-          <TurnNav
-            turns={question.turns}
-            important={question.important}
-            onToggleImportant={() =>
-              void run(() => api.updateQuestion(question.id, { important: !question.important }))
-            }
-            panel={{ historyOpen, onToggleHistory: () => setHistoryOpen((open) => !open) }}
-          />
-        )}
-        {!blocked && (
-          <Composer
-            submitOnEnter={false}
-            key={composerKey}
-            projectId={projectId}
-            profileId={boot.profileId}
-            settings={data.settings}
-            questionId={questionId}
-            recentQuestion={question}
-            persistDraft={false}
-            hasInk={overlay.hasInk}
-            onCapture={onCapture}
-            onSaved={() => void refresh()}
-            onCompleted={onCompleted}
-            onTurnIdentified={onTurnIdentified}
-            onInteractionState={onInteractionState}
-          />
-        )}
-        {notice && <p className="notice error">{notice}</p>}
+        <div className="screen-q-conversation" hidden={!!refQuestion}>
+          <div className="screen-q-followup" role="status">
+            {questionId ? (
+              <>
+                <span className="screen-q-followup-tag">{t('이어서 질문 중')}</span>
+                <b title={question ? questionHeading(question) : undefined}>
+                  {question ? questionHeading(question) : ''}
+                </b>
+                <button disabled={locked} onClick={newConversation}>
+                  {confirmNew ? t('다시 눌러 새 대화 시작') : t('새 질문')}
+                </button>
+              </>
+            ) : (
+              <b>{t('새 대화')}</b>
+            )}
+          </div>
+          <small className="overlay-capture-note">
+            <b>
+              {overlay.region ? t('캡처 영역 {{width}}×{{height}}px', overlay.region) : t('영역 미설정')}
+            </b>
+            {!overlay.region && <span>{t('화면을 첨부하기 전에 영역을 선택하세요.')}</span>}
+            {overlay.hasInk && <span>{t('필기 있음')}</span>}
+            <span>{t('화면 캡처 포함을 선택하면 질문을 보낼 때 촬영합니다.')}</span>
+            <button
+              disabled={locked}
+              onClick={() => void bridge.call('selectRegion').catch((e) => setNotice(errorText(e)))}
+            >
+              {t('영역 선택')}
+            </button>
+          </small>
+          {question && question.turns.length > 1 && (
+            <details
+              className="overlay-history"
+              open={historyOpen}
+              onToggle={(e) => setHistoryOpen(e.currentTarget.open)}
+            >
+              <summary>
+                {t('이전 대화 {{count}}개', { count: question.turns.length - 1 })}
+                {question.memo.trim() !== '' && (
+                  <span className="memo-badge" title={t('메모 있음')}>
+                    <Icon name="pen" size={14} />
+                    {t('메모')}
+                  </span>
+                )}
+              </summary>
+              <QuestionDetail
+                question={question}
+                concepts={known.concepts}
+                shared={known.shared}
+                run={run}
+                earlierOnly
+                onReference={openReference}
+                onCreateConcept={async (name) => {
+                  const id = await api.create('concept', name, projectId)
+                  await api.updateQuestion(question.id, {
+                    conceptIds: [...question.conceptIds, id],
+                    suggestions: question.suggestions.filter((s) => s !== name)
+                  })
+                }}
+              />
+            </details>
+          )}
+          {/* Both TurnNavs follow the same scroller; the reference view brings its own. */}
+          {question && !refQuestion && (
+            <TurnNav
+              turns={question.turns}
+              important={question.important}
+              onToggleImportant={() =>
+                void run(() => api.updateQuestion(question.id, { important: !question.important }))
+              }
+              panel={{ historyOpen, onToggleHistory: () => setHistoryOpen((open) => !open) }}
+            />
+          )}
+          {!blocked && (
+            <Composer
+              submitOnEnter={false}
+              key={composerKey}
+              projectId={projectId}
+              host={projectHost(data, projectId)}
+              profileId={boot.profileId}
+              settings={data.settings}
+              questionId={questionId}
+              recentQuestion={question}
+              persistDraft={false}
+              hasInk={overlay.hasInk}
+              onCapture={onCapture}
+              onSaved={() => void refresh()}
+              onCompleted={onCompleted}
+              onTurnIdentified={onTurnIdentified}
+              onInteractionState={onInteractionState}
+              onReference={openReference}
+            />
+          )}
+          {notice && <p className="notice error">{notice}</p>}
+        </div>
       </div>
     </div>
   )

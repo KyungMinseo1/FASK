@@ -503,7 +503,7 @@ app.whenReady().then(async () => {
     await pickProject(target, '전환 대상')
     const original = (await js('window.fask.snapshot()')).projects.find((p) => p.id === project.id)
     await pickProject(project.id, original.name)
-    await overlay.webContents.executeJavaScript("document.querySelector('.overlay-panel header button').click()")
+    await overlay.webContents.executeJavaScript("document.querySelector('.overlay-panel header .panel-close').click()")
     await wait(
       () => overlay.webContents.executeJavaScript("!document.querySelector('.overlay-panel')"),
       'overlay panel closes after project switch'
@@ -565,7 +565,7 @@ app.whenReady().then(async () => {
       }
       const handle = await center('.toolbar-drag-handle')
       await point(handle)
-      await ov("document.querySelector('.overlay-panel header button').click()")
+      await ov("document.querySelector('.overlay-panel header .panel-close').click()")
       await wait(() => ov("!document.querySelector('.overlay-panel')"), 'panel closes before popover checks')
       if (!(await ov("document.querySelector('.overlay-toolbar').classList.contains('collapsed')"))) {
         overlay.webContents.sendInputEvent({ type: 'mouseDown', ...handle, button: 'left', clickCount: 1 })

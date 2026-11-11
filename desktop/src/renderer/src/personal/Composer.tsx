@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AskInput,
   LocalSettings,
+  ModelSettings,
+  ReasoningEffort,
   Reference,
   Question,
   TextAttachment,
-  TurnState
+  TurnState,
+  Workspace
 } from '../../../preload/personal'
 import {
   applyDelta,
   lastTurn,
   reconcileTurnState,
+  recommend,
+  routedModel,
   type LiveAnswer
 } from '../../../shared/questions'
 import { attachmentAccept, readAttachment } from './attachments'
@@ -30,7 +35,14 @@ const REJECTED = [
   '질문이나 첨부를 추가해 주세요.',
   '질문은 50,000자 이내로 입력해 주세요.',
   '텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.',
-  '같은 요청 ID로 다른 내용을 보낼 수 없습니다.'
+  '같은 요청 ID로 다른 내용을 보낼 수 없습니다.',
+  '모델 이름이 잘못되었습니다.',
+  '추론 강도가 잘못되었습니다.'
+]
+const EFFORTS: { value: ReasoningEffort; label: string }[] = [
+  { value: 'low', label: '낮음' },
+  { value: 'medium', label: '보통' },
+  { value: 'high', label: '높음' }
 ]
 
 interface Props {
@@ -46,7 +58,7 @@ interface Props {
   /** New ink enables capture; clearing ink keeps the user's current capture choice. */
   hasInk?: boolean
   onSaved?: (id: string) => void
-  onCompleted?: (id: string, result: { turnId: string; status: 'saved' | 'completed' }) => void
+  onCompleted?: (id: string, result: { turnId: string; status: 'completed' }) => void
   /** Called once per turn when an ask reply or matching stream identifies it. */
   onTurnIdentified?: (state: { questionId: string; turnId: string }) => void
   /** busy: capture/ask/refine in flight; unresolved: sent but acceptance unknown. */
@@ -63,6 +75,11 @@ interface Props {
   submitOnEnter?: boolean
   /** Opens a "참고한 지식" chip of the shown answer; chips are hidden when omitted. */
   onReference?: (ref: Reference) => void
+  /**
+   * Linked-PC project: that PC answers, so models come from its shared settings. A PC on an older
+   * build shares none; it then picks the model itself and no picker is shown.
+   */
+  host?: Workspace['remote']
 }
 export default function Composer({
   projectId,
@@ -82,22 +99,44 @@ export default function Composer({
   mediaActions,
   submitOnEnter = true,
   persistDraft = true,
-  onReference
+  onReference,
+  host
 }: Props): React.JSX.Element {
   const t = useT()
   const api = useApi()
   const draftKey = `fask:draft:${profileId}:${projectId}`
   const recentTurn = recentQuestion ? lastTurn(recentQuestion) : undefined
+  // The settings that pick the answer model: the answering PC's own; undefined when it shares none.
+  const modelSettings: ModelSettings | undefined = host ? host.models : settings
+  const lastModelKey = host ? `fask:last-model:${profileId}:peer:${host.peerId}` : `fask:last-model:${profileId}`
+  const effortKey = `fask:reasoning-effort:${profileId}`
   const [raw, setRaw] = useState(
       () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
     ),
     [refined, setRefined] = useState(''),
-    [chosenModel, setModel] = useState('')
-  const model = chosenModel || settings.model
+    // Continuing keeps the conversation's own model; a new question reuses the last pick. A model
+    // missing from the configured list (removed since) is skipped rather than sent.
+    [chosenModel, setModel] = useState(
+      () =>
+        [recentTurn?.model, localStorage.getItem(lastModelKey)].find(
+          (m): m is string =>
+            !!m &&
+            !!modelSettings &&
+            (!modelSettings.models.length || modelSettings.models.includes(m) || m === modelSettings.model)
+        ) ?? ''
+    ),
+    // Remembered across questions and PCs; '' sends no reasoning_effort.
+    [effort, setEffort] = useState<ReasoningEffort | ''>(() => {
+      const saved = localStorage.getItem(effortKey)
+      return EFFORTS.find((e) => e.value === saved)?.value ?? ''
+    })
+  const model = chosenModel || modelSettings?.model || ''
   const [image, setImage] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [actualModel, setActualModel] = useState('')
+    [actualModel, setActualModel] = useState(''),
+    // Model the running answer was requested with; empty when a linked PC picks it.
+    [sentModel, setSentModel] = useState('')
   const [live, setLiveState] = useState<LiveAnswer>(
     recentTurn
       ? { turnId: recentTurn.id, answer: recentTurn.answer, revision: recentTurn.revision }
@@ -329,7 +368,7 @@ export default function Composer({
     request.current = input.requestId
     setBusy(true)
     setError('')
-    if (!turn.current) setRunning(!input.saveOnly)
+    if (!turn.current) setRunning(true)
     let result: { questionId: string; turnId: string }
     try {
       result = await api.ask(input)
@@ -365,29 +404,23 @@ export default function Composer({
     if (liveRef.current.turnId !== turnId) setLive({ turnId, answer: '', revision: 0 })
     identify(qid, turnId)
     notify(() => callbacks.current.onSaved?.(qid))
-    if (input.saveOnly) {
-      finished.current = turnId
-      setRunning(false)
-      setRaw('')
-      setRefined('')
-      setImage('')
-      setDocuments([])
-      notify(() => callbacks.current.onCompleted?.(qid, { turnId, status: 'saved' }))
-    }
     // A replayed request emits nothing, so always re-read the turn.
-    else void resync()
+    void resync()
   }
   const questionInput = useRef<HTMLTextAreaElement>(null)
   // Focus without scrolling so a reopened overlay panel keeps its scroll position.
   useEffect(() => {
     if (autoFocus) questionInput.current?.focus({ preventScroll: true })
   }, [])
-  const send = async (saveOnly = false): Promise<void> => {
+  const send = async (): Promise<void> => {
     if (!hasInput || locked) return
-    if (!saveOnly && settings.refine && !refined && canRefine) {
+    if (settings.refine && !refined && canRefine) {
       await refine()
       return
     }
+    const routed = modelSettings?.routing === 'auto'
+    if (modelSettings && !routed && model) localStorage.setItem(lastModelKey, model)
+    setSentModel(!modelSettings ? '' : routed ? autoModel : model)
     // Frozen before capture: later edits or a new questionId never alter this request.
     const base: Omit<AskInput, 'requestId'> = {
       profileId,
@@ -397,18 +430,18 @@ export default function Composer({
       refined,
       model,
       documents: [...documents],
-      saveOnly,
-      useMemory
+      useMemory,
+      ...(effort ? { reasoningEffort: effort } : {})
     }
     setBusy(true)
     setError('')
     setActualModel('')
     setLive({ turnId: '', answer: '', revision: 0 })
     turn.current = ''
-    setRunning(!saveOnly)
+    setRunning(true)
     let outgoingImage = image || undefined
     let annotated = false
-    if (!saveOnly && includeCapture && onCapture) {
+    if (includeCapture && onCapture) {
       setCapturing(true)
       try {
         outgoingImage = await onCapture()
@@ -434,9 +467,20 @@ export default function Composer({
   const replay = (): void => {
     if (pending.current && !busy) void submit(pending.current)
   }
-  const complex =
-    /증명|설계|디버깅|분석|비교|최적화|구현|derive|debug|design/i.test(raw) || raw.length > 500
-  const recommendation = (complex ? settings.deepModel : settings.fastModel) || settings.model
+  const routing = recommend(raw, !!image || (!!onCapture && includeCapture))
+  const autoModel = modelSettings ? routedModel(modelSettings, routing.complexity) : ''
+  const routingChips =
+    routing.complexity === 'complex' ? (
+      <span>{t('여러 단계의 추론')}</span>
+    ) : routing.complexity === 'unknown' ? (
+      <span>{t('이미지 난이도 미확정')}</span>
+    ) : (
+      <>
+        <span>{t('간단한 설명')}</span>
+        <span>{t('로컬 규칙')}</span>
+      </>
+    )
+  const autoModelName = autoModel ? <b>{autoModel}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>
   return (
     <div
       className="composer"
@@ -471,7 +515,10 @@ export default function Composer({
           <div className="answer-head">
             <span className="live-answer-label">
               {running ? (
-                t('답변 작성 중')
+                <>
+                  {t('답변 작성 중')}
+                  {sentModel && <b>{sentModel}</b>}
+                </>
               ) : (
                 <>
                   {t('이번 답변')}
@@ -575,27 +622,38 @@ export default function Composer({
           </button>
         </label>
       )}
-      {settings.routing !== 'manual' && (
+      {host && (
         <div className="recommendation">
-          <span>{settings.routing === 'auto' ? t('자동 선택') : t('추천 모델')}</span>
-          {recommendation ? <b>{recommendation}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>}
-          {image || includeCapture ? (
-            <span>{t('이미지 난이도 미확정')}</span>
-          ) : complex ? (
-            <span>{t('여러 단계의 추론')}</span>
-          ) : (
-            <>
-              <span>{t('간단한 설명')}</span>
-              <span>{t('로컬 규칙')}</span>
-            </>
-          )}
-          {settings.routing === 'recommend' && recommendation && (
-            <button disabled={locked} onClick={() => setModel(recommendation)}>
-              {t('사용')}
-            </button>
-          )}
+          <span>
+            {modelSettings
+              ? t('{{name}} PC의 모델로 답변합니다', { name: host.name })
+              : t('{{name}} PC의 모델 설정으로 답변합니다', { name: host.name })}
+          </span>
         </div>
       )}
+      {modelSettings?.routing === 'auto' ? (
+        <div className="recommendation">
+          <span>{t('자동 선택')}</span>
+          {autoModelName}
+          {routingChips}
+          <span>{t('이 모델로 답변합니다')}</span>
+        </div>
+      ) : modelSettings?.routing === 'recommend' ? (
+        <div className="recommendation">
+          <span>{t('추천 모델')}</span>
+          {autoModelName}
+          {routingChips}
+          {autoModel === model ? (
+            <span className="chip">{t('적용됨')}</span>
+          ) : (
+            autoModel && (
+              <button disabled={locked} onClick={() => setModel(autoModel)}>
+                {t('사용')}
+              </button>
+            )
+          )}
+        </div>
+      ) : null}
       <div className="composer-actions">
         {mediaActions?.length ? (
           <div className="attach-menu-anchor" ref={attachMenu}>
@@ -670,20 +728,47 @@ export default function Composer({
           <Icon name="refine" />
           {t('질문 다듬기')}
         </button>
-        <select
-          aria-label={t('사용 모델')}
-          value={model}
-          disabled={locked || settings.routing === 'auto'}
-          onChange={(e) => setModel(e.target.value)}
-        >
-          <option value="">{t('모델 선택')}</option>
-          {[...new Set([...settings.models, settings.model, model].filter(Boolean))].map((m) => (
-            <option key={m}>{m}</option>
-          ))}
-        </select>
-        <button disabled={locked || !canRefine} onClick={() => void send(true)}>
-          {t('저장만')}
-        </button>
+        {modelSettings && (
+          <label className="model-select answer-model">
+            <span>{t('답변 모델')}</span>
+            {modelSettings.routing === 'auto' ? (
+              <select value={autoModel} disabled>
+                <option value="">{t('모델 선택')}</option>
+                {[
+                  ...new Set([...modelSettings.models, modelSettings.model, model, autoModel].filter(Boolean))
+                ].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <select value={model} disabled={locked} onChange={(e) => setModel(e.target.value)}>
+                <option value="">{t('모델 선택')}</option>
+                {[...new Set([...modelSettings.models, modelSettings.model, model].filter(Boolean))].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            )}
+          </label>
+        )}
+        <label className="model-select effort-select">
+          <span>{t('추론 강도')}</span>
+          <select
+            value={effort}
+            disabled={locked}
+            onChange={(e) => {
+              const next = EFFORTS.find((x) => x.value === e.target.value)?.value ?? ''
+              setEffort(next)
+              localStorage.setItem(effortKey, next)
+            }}
+          >
+            <option value="">{t('모델 기본값')}</option>
+            {EFFORTS.map((e) => (
+              <option key={e.value} value={e.value}>
+                {t(e.label)}
+              </option>
+            ))}
+          </select>
+        </label>
         {running ? (
           <button
             className="danger"
@@ -718,9 +803,7 @@ export default function Composer({
       <small className="composer-hint">
         {onCapture && includeCapture && (
           <span className="composer-hint-capture">
-            {t(
-              '질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 저장만, 다듬기에서는 캡처하지 않습니다.'
-            )}
+            {t('질문하기를 누르면 현재 화면의 설정 영역을 캡처해 전송합니다. 다듬기에서는 캡처하지 않습니다.')}
           </span>
         )}
         <span className="composer-hint-keys">

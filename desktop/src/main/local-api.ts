@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from '../preload/personal'
 import { t } from '../shared/i18n'
 
 export function normalizeEndpoint(value: string): string {
@@ -60,6 +61,7 @@ export async function streamChat(
   model: string,
   messages: WireMessage[],
   signal: AbortSignal,
+  options: { reasoningEffort?: ReasoningEffort },
   delta: (text: string, actualModel?: string) => void
 ): Promise<void> {
   if (!model.trim()) throw new Error('설정에서 사용할 모델을 선택해 주세요.')
@@ -73,7 +75,12 @@ export async function streamChat(
         'Content-Type': 'application/json',
         ...(key ? { Authorization: `Bearer ${key}` } : {})
       },
-      body: JSON.stringify({ model, messages, stream: true })
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {})
+      })
     })
   } catch (e) {
     if (signal.aborted) throw new Error('요청을 취소했습니다.')
@@ -142,28 +149,4 @@ export async function streamChat(
     reader.releaseLock()
   }
   if (!completed) throw new Error('완료 신호 없이 연결이 끊겼습니다. 부분 답변을 저장했습니다.')
-}
-export function recommend(
-  raw: string,
-  hasImage: boolean
-): { complexity: 'simple' | 'complex' | 'unknown'; reason: string } {
-  if (!raw.trim())
-    return {
-      complexity: 'unknown',
-      reason: '이미지의 내용을 확인하기 전에는 복잡도를 판단하기 어렵습니다.'
-    }
-  if (
-    /증명|설계|디버깅|분석|비교|최적화|구현|derive|debug|design|analy[sz]e/i.test(raw) ||
-    raw.length > 500
-  )
-    return {
-      complexity: 'complex',
-      reason: '분석·설계 또는 여러 단계의 설명이 필요한 요청입니다. (로컬 규칙)'
-    }
-  return {
-    complexity: hasImage ? 'unknown' : 'simple',
-    reason: hasImage
-      ? '이미지 난이도는 로컬 규칙으로 판단하지 않습니다.'
-      : '짧은 설명·확인 요청으로 추정했습니다. (로컬 규칙)'
-  }
 }

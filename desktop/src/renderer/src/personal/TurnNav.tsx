@@ -45,6 +45,8 @@ export default function TurnNav({
   const [farFromBottom, setFarFromBottom] = useState(false)
   const [corner, setCorner] = useState({ right: 12, bottom: 12 })
   const [top, setTop] = useState({ right: 12, top: 12 })
+  // Last controls top, read by the mouse corner reveal so hovering at the controls still shows them.
+  const controlsTopRef = useRef(12)
   const [scrolledPast, setScrolledPast] = useState(false)
   const [nearTop, setNearTop] = useState(false)
   const [topHover, setTopHover] = useState(false)
@@ -63,7 +65,12 @@ export default function TurnNav({
         right: Math.max(0, innerWidth - r.right) + 12,
         bottom: Math.max(0, innerHeight - r.bottom) + 12
       })
-      setTop({ right: Math.max(0, innerWidth - r.right) + 12, top: Math.max(0, r.top) + 12 })
+      const visibleTop = Math.max(0, r.top)
+      // A pinned note action bar owns the scroller's top edge; the controls float just below it.
+      const bar = anchor.current.closest('.question-detail')?.querySelector('.detail-action-row.sticky')
+      const controlsTop = (bar ? Math.max(visibleTop, bar.getBoundingClientRect().bottom) : visibleTop) + 12
+      controlsTopRef.current = controlsTop
+      setTop({ right: Math.max(0, innerWidth - r.right) + 12, top: controlsTop })
       setScrolledPast(el.scrollTop > HEADER_PX)
       setFarFromBottom(el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight)
       setVisible(true)
@@ -84,7 +91,15 @@ export default function TurnNav({
       if (!el) return
       const r = el.getBoundingClientRect()
       const t = Math.max(0, r.top)
-      setNearTop(e.clientX <= r.right && e.clientX >= r.right - CORNER_W && e.clientY >= t && e.clientY <= t + CORNER_H)
+      // A folded overlay reference stays laid out but invisible; its corner must not reveal anything.
+      const invisible = anchor.current?.checkVisibility?.({ visibilityProperty: true }) === false
+      setNearTop(
+        !invisible &&
+          e.clientX <= r.right &&
+          e.clientX >= r.right - CORNER_W &&
+          e.clientY >= t &&
+          e.clientY <= controlsTopRef.current + CORNER_H - 12
+      )
     }
     document.addEventListener('pointermove', move)
     return () => document.removeEventListener('pointermove', move)

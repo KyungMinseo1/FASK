@@ -24,14 +24,8 @@ import { KnowledgeExtractor, recallMemory } from './knowledge-extract'
 import { prompt } from './prompts'
 import { buildExport } from './knowledge-export'
 import { questionShortcutInfo, registerQuestionShortcut } from './personal-shortcuts'
-import {
-  localModels,
-  normalizeEndpoint,
-  recommend,
-  streamChat,
-  type WireMessage
-} from './local-api'
-import { cleanTitle, questionImages } from '../shared/questions'
+import { localModels, normalizeEndpoint, streamChat, type WireMessage } from './local-api'
+import { cleanTitle, questionImages, recommend, routedModel } from '../shared/questions'
 import { i18n, t } from '../shared/i18n'
 import type {
   AskInput,
@@ -347,6 +341,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         }
       ],
       signal,
+      {},
       (t) => {
         result += t
       }
@@ -380,6 +375,13 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   handle('clear-recent', (id: string) => {
     anyProject(id)
     recentQuestions.delete(id)
+    changed()
+  })
+  handle('continue-question', (id: string, questionId: string) => {
+    anyProject(id)
+    if (anyQuestion(questionId).projectId !== id) throw new Error('프로젝트가 다른 질문입니다.')
+    recentQuestions.set(id, questionId)
+    lastProjectId = id
     changed()
   })
   handle('remove', (kind: string, id: string) => {
@@ -630,14 +632,16 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       documents.reduce((sum, d) => sum + d.text.length, 0) > 100000
     )
       throw new Error('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.')
+    if (input.model !== undefined && (typeof input.model !== 'string' || input.model.length > 200))
+      throw new Error('모델 이름이 잘못되었습니다.')
+    const effort = input.reasoningEffort
+    if (effort !== undefined && !['low', 'medium', 'high'].includes(effort))
+      throw new Error('추론 강도가 잘못되었습니다.')
     const profile = store.active,
       settings = store.settings(profile),
       routing = recommend(input.raw, !!input.image)
     const model =
-      settings.routing === 'auto'
-        ? (routing.complexity === 'complex' ? settings.deepModel : settings.fastModel) ||
-          settings.model
-        : input.model || settings.model
+      settings.routing === 'auto' ? routedModel(settings, routing.complexity) : input.model || settings.model
     const saveOnly = !!input.saveOnly
     const annotated = input.annotated === true && !!input.image
     const requestHash = createHash('sha256')
@@ -652,7 +656,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           documents,
           saveOnly,
           annotated,
-          input.useMemory ?? null
+          input.useMemory ?? null,
+          effort ?? ''
         ])
       )
       .digest('hex')
@@ -795,6 +800,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           model,
           messages,
           controller.signal,
+          { reasoningEffort: effort },
           (delta, actualModel) => {
             state.answer += delta
             state.revision += 1

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AskInput, KnowledgeApi, StreamEvent, TurnState } from '@desktop/preload/personal'
 import { ApiContext } from '@desktop/renderer/src/personal/api'
 import Composer from '@desktop/renderer/src/personal/Composer'
@@ -169,19 +169,6 @@ describe('Composer submission', () => {
     expect(box.value).toBe('초안')
   })
 
-  it('calls the latest completion handler and reports saved separately from completed', async () => {
-    const hub = fakeHub()
-    const first = vi.fn(),
-      latest = vi.fn()
-    const { update } = mount(hub, { onCompleted: first })
-    update({ onCompleted: latest })
-    type('저장할 질문')
-    await act(async () => fireEvent.click(screen.getByText('저장만')))
-    await flush()
-    expect(first).not.toHaveBeenCalled()
-    expect(latest).toHaveBeenCalledWith('q1', { turnId: 't1', status: 'saved' })
-  })
-
   it('does not misreport an accepted ask when a consumer callback throws', async () => {
     const hub = fakeHub()
     mount(hub, {
@@ -196,5 +183,156 @@ describe('Composer submission', () => {
     expect(screen.queryByText('같은 요청 다시 확인')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(hub.asks).toHaveLength(1)
+  })
+})
+
+describe('Composer model choice', () => {
+  const models = { model: 'a', models: ['a', 'b', 'c'], routing: 'manual', refine: false, fastModel: '', deepModel: '' }
+  const lastKey = 'fask:last-model:u'
+  const conversation = (model: string) =>
+    ({
+      id: 'q0',
+      projectId: 'p',
+      createdAt: '',
+      turns: [
+        {
+          id: 't0', createdAt: '', raw: '앞 질문', refined: '', sent: '앞 질문', answer: '앞 답변', model,
+          actualModel: model, status: 'completed', complexity: 'simple', routingReason: '', attachment: null,
+          documents: [], error: '', revision: 1
+        }
+      ],
+      conceptIds: [],
+      suggestions: [],
+      memo: '',
+      important: false
+    }) as never
+  const select = () => document.querySelector('.answer-model select') as HTMLSelectElement | null
+  const label = () => document.querySelector('.live-answer-label')?.textContent
+  beforeEach(() => localStorage.clear())
+
+  it("continues a conversation with that conversation's model, not the last pick elsewhere", async () => {
+    localStorage.setItem(lastKey, 'b')
+    const hub = fakeHub()
+    mount(hub, { settings: models as never, questionId: 'q0', recentQuestion: conversation('c') })
+    expect(select()?.value).toBe('c')
+    type('이어서')
+    await send()
+    expect(hub.asks[0].model).toBe('c')
+    expect(label()).toBe('답변 작성 중c')
+  })
+
+  it('starts a new question from the last pick and remembers a new pick on send', async () => {
+    localStorage.setItem(lastKey, 'b')
+    const hub = fakeHub()
+    mount(hub, { settings: models as never })
+    expect(select()?.value).toBe('b')
+    fireEvent.change(select()!, { target: { value: 'c' } })
+    expect(localStorage.getItem(lastKey)).toBe('b')
+    type('새 질문')
+    await send()
+    expect(hub.asks[0].model).toBe('c')
+    expect(localStorage.getItem(lastKey)).toBe('c')
+    cleanup()
+    mount(fakeHub(), { settings: models as never })
+    expect(select()?.value).toBe('c')
+  })
+
+  it('skips remembered and conversation models that are no longer configured', async () => {
+    localStorage.setItem(lastKey, 'removed-pick')
+    const hub = fakeHub()
+    mount(hub, { settings: models as never, questionId: 'q0', recentQuestion: conversation('removed-model') })
+    expect(select()?.value).toBe('a')
+    type('질문')
+    await send()
+    expect(hub.asks[0].model).toBe('a')
+  })
+
+  it('keeps any remembered model when the configured list is empty', () => {
+    localStorage.setItem(lastKey, 'typed-model')
+    mount(fakeHub(), { settings: { ...models, models: [] } as never })
+    expect(select()?.value).toBe('typed-model')
+  })
+
+  it('auto routing shows the routed model in a disabled select and does not overwrite the last pick', async () => {
+    localStorage.setItem(lastKey, 'a')
+    const hub = fakeHub()
+    mount(hub, { settings: { ...models, routing: 'auto', fastModel: 'b', deepModel: 'c' } as never })
+    type('이 설계를 분석해 줘')
+    expect(select()?.disabled).toBe(true)
+    expect(select()?.value).toBe('c')
+    expect(screen.getByText('이 모델로 답변합니다')).toBeTruthy()
+    await send()
+    expect(label()).toBe('답변 작성 중c')
+    expect(localStorage.getItem(lastKey)).toBe('a')
+  })
+
+  it('recommend mode marks an applied recommendation and applies one with 사용', () => {
+    mount(fakeHub(), { settings: { ...models, routing: 'recommend', fastModel: 'b', deepModel: 'c' } as never })
+    type('짧은 질문')
+    expect(screen.queryByText('적용됨')).toBeNull()
+    fireEvent.click(screen.getByText('사용'))
+    expect(select()?.value).toBe('b')
+    expect(screen.getByText('적용됨')).toBeTruthy()
+  })
+
+  it('a linked PC on an older build hides the picker, names the host, and never remembers a model', async () => {
+    localStorage.setItem(lastKey, 'b')
+    const hub = fakeHub()
+    mount(hub, { settings: models as never, host: { peerId: 'pa', name: 'PC A', status: 'online' } })
+    expect(select()).toBeNull()
+    expect(screen.getByText('PC A PC의 모델 설정으로 답변합니다')).toBeTruthy()
+    type('원격 질문')
+    await send()
+    expect(label()).toBe('답변 작성 중')
+    expect(localStorage.getItem(lastKey)).toBe('b')
+  })
+
+  it("a linked PC's shared models are offered and remembered apart from this PC's pick", async () => {
+    localStorage.setItem(lastKey, 'b')
+    const host = {
+      peerId: 'pa',
+      name: 'PC A',
+      status: 'online' as const,
+      models: { model: 'h1', models: ['h1', 'h2'], routing: 'manual' as const, fastModel: '', deepModel: '' }
+    }
+    const hub = fakeHub()
+    mount(hub, { settings: models as never, host })
+    expect(screen.getByText('PC A PC의 모델로 답변합니다')).toBeTruthy()
+    // This PC's last pick 'b' is not on the host, so the host default is used.
+    expect(select()?.value).toBe('h1')
+    expect([...select()!.options].map((o) => o.value)).toEqual(['', 'h1', 'h2'])
+    fireEvent.change(select()!, { target: { value: 'h2' } })
+    type('원격 질문')
+    await send()
+    expect(hub.asks[0].model).toBe('h2')
+    expect(label()).toBe('답변 작성 중h2')
+    expect(localStorage.getItem(lastKey)).toBe('b')
+    cleanup()
+    mount(fakeHub(), { settings: models as never, host })
+    expect(select()?.value).toBe('h2')
+  })
+})
+
+describe('Composer reasoning effort', () => {
+  beforeEach(() => localStorage.clear())
+  const effort = () => document.querySelector('.effort-select select') as HTMLSelectElement
+
+  it('sends no effort by default, then sends and remembers a picked one', async () => {
+    const hub = fakeHub()
+    mount(hub)
+    expect(effort().value).toBe('')
+    type('기본')
+    await send()
+    expect('reasoningEffort' in hub.asks[0]).toBe(false)
+    cleanup()
+    const next = fakeHub()
+    mount(next)
+    fireEvent.change(effort(), { target: { value: 'high' } })
+    type('깊게')
+    await send()
+    expect(next.asks[0].reasoningEffort).toBe('high')
+    cleanup()
+    mount(fakeHub())
+    expect(effort().value).toBe('high')
   })
 })

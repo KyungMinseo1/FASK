@@ -24,7 +24,9 @@ export default function QuestionDetail({
   onContinue,
   focusConceptId,
   onReference,
-  earlierOnly = false
+  earlierOnly = false,
+  expanded = false,
+  onToggleExpand
 }: {
   question: Question
   /**
@@ -48,6 +50,9 @@ export default function QuestionDetail({
    * and leaves the jump controls to the panel's own TurnNav.
    */
   earlierOnly?: boolean
+  /** Desktop dashboard: the note fills the whole area and the question list is hidden. */
+  expanded?: boolean
+  onToggleExpand?: () => void
 }): React.JSX.Element {
   const t = useT()
   const api = useApi()
@@ -96,6 +101,24 @@ export default function QuestionDetail({
     setSearch('')
     void run(() => api.updateQuestion(q.id, { conceptIds: [...q.conceptIds, id] }))
   }
+  // Concepts and memo fold behind the action bar so the note's turns start right under it.
+  const [section, setSection] = useState<'concepts' | 'memo' | null>(null)
+  const sectionRef = useRef<HTMLDivElement>(null),
+    barRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = sectionRef.current
+    if (!el) return
+    // The pinned bar wraps to two rows in a narrow note; the opened section must land below it.
+    el.style.scrollMarginTop = `${(barRef.current?.offsetHeight ?? 0) + 8}px`
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [section])
+  const toggleSection = (s: 'concepts' | 'memo'): void => {
+    if (section === 'concepts') {
+      setPicking(false)
+      setSearch('')
+    }
+    setSection(section === s ? null : s)
+  }
   const saveMemo = async (): Promise<void> => {
     clearTimeout(memoTimer.current)
     setMemoState('saving')
@@ -140,12 +163,25 @@ export default function QuestionDetail({
     <aside className="question-detail">
       <header>
         <span>{t('질문 노트')}</span>
-        {onClose && (
-          <button onClick={onClose}>
-            <Icon name="close" size={14} />
-            {t('닫기')}
-          </button>
-        )}
+        <span className="detail-header-actions">
+          {onToggleExpand && (
+            <button
+              className="detail-expand"
+              aria-label={expanded ? t('질문 노트 원래 크기로') : t('질문 노트 확장')}
+              aria-pressed={expanded}
+              onClick={onToggleExpand}
+            >
+              <Icon name={expanded ? 'restore' : 'maximize'} size={14} />
+              {expanded ? t('원래 크기') : t('확장')}
+            </button>
+          )}
+          {onClose && (
+            <button onClick={onClose}>
+              <Icon name="close" size={14} />
+              {t('닫기')}
+            </button>
+          )}
+        </span>
       </header>
       <div className="detail-title">
         <h2>{questionHeading(q)}</h2>
@@ -162,6 +198,133 @@ export default function QuestionDetail({
         <span>{dateLabel(q.createdAt)}</span>
         <span>{t('대화 {{count}}개', { count: q.turns.length })}</span>
       </p>
+      <div ref={barRef} className={`detail-action-row${earlierOnly ? '' : ' sticky'}`}>
+        {onContinue && (
+          <button className="primary reply-button" onClick={onContinue}>
+            <Icon name="reply" />
+            {t('이 대화에 이어서 질문')}
+          </button>
+        )}
+        <button
+          className={section === 'concepts' ? 'active' : ''}
+          aria-expanded={section === 'concepts'}
+          onClick={() => toggleSection('concepts')}
+        >
+          {t('개념 {{count}}', { count: linked.length + support.length })}
+          {q.suggestions.length > 0 && (
+            <span className="detail-badge">{t('추천 {{count}}', { count: q.suggestions.length })}</span>
+          )}
+        </button>
+        <button
+          className={section === 'memo' ? 'active' : ''}
+          aria-expanded={section === 'memo'}
+          onClick={() => toggleSection('memo')}
+        >
+          <Icon name="note" size={14} />
+          {t('메모')}
+          {(q.memo.trim() !== '' || memoDirty) && <span className="detail-dot" aria-hidden="true" />}
+        </button>
+      </div>
+      {section && (
+        <div className="detail-section" ref={sectionRef}>
+          {section === 'concepts' ? (
+            <>
+              <div className="concept-chips">
+                {linked.map(chip)}
+                {!linked.length && !support.length && (
+                  <span className="concept-empty">{t('연결된 개념이 없습니다.')}</span>
+                )}
+                <button
+                  className="concept-link-add"
+                  aria-expanded={picking}
+                  onClick={() => {
+                    setPicking((p) => !p)
+                    setSearch('')
+                  }}
+                >
+                  <Icon name="plus" size={14} />
+                  {t('개념 연결')}
+                </button>
+              </div>
+              {picking && (
+                <div className="concept-picker">
+                  <input
+                    autoFocus
+                    value={search}
+                    placeholder={t('개념 이름이나 동의어로 찾기')}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setPicking(false)
+                      else if (e.key === 'Enter' && matches[0]) link(matches[0].id)
+                    }}
+                  />
+                  {matches.length ? (
+                    <ul>
+                      {matches.map((c) => (
+                        <li key={c.id}>
+                          <button onClick={() => link(c.id)}>
+                            {c.name}
+                            {shared?.has(c.id) && <span className="shared-badge">{t('공유')}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="concept-empty">{t('맞는 개념이 없습니다.')}</p>
+                  )}
+                </div>
+              )}
+              {support.length > 0 && (
+                <div className="concept-chips support" role="group" aria-label={t('관련 개념')}>
+                  <small>{t('관련 개념')}</small>
+                  {support.map(chip)}
+                </div>
+              )}
+              {q.suggestions.length > 0 && (
+                <div className="suggestions">
+                  <small>{t('다른 질문에서 다시 나오면 개념이 됩니다. 누르면 바로 연결됩니다.')}</small>
+                  {q.suggestions.map((s) => (
+                    <button key={s} onClick={() => void run(() => onCreateConcept(s))}>
+                      <Icon name="plus" size={14} />
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <label className="memo-label">
+                <span className="memo-label-head">
+                  {t('나의 메모')}
+                  {memoDirty && <small className="memo-dirty">{t('저장되지 않은 변경')}</small>}
+                </span>
+                <textarea
+                  value={memo}
+                  onChange={(e) => setMemo(e.target.value)}
+                  placeholder={t('확인한 사실, 결정, 다음 할 일…')}
+                />
+              </label>
+              <button
+                className={memoState === 'saved' && !memoDirty ? 'memo-saved' : ''}
+                disabled={!memoDirty || memoState === 'saving'}
+                onClick={() => void saveMemo()}
+              >
+                {memoState === 'saving' ? (
+                  t('저장 중…')
+                ) : !memoDirty && memoState === 'saved' ? (
+                  <>
+                    <Icon name="check" size={14} />
+                    {t('메모 저장됨')}
+                  </>
+                ) : (
+                  t('메모 저장')
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {focusTurnId && (
         <div className="concept-turn-nav" role="status">
           {focusConcept && <b>{focusConcept.name}</b>}
@@ -195,102 +358,6 @@ export default function QuestionDetail({
           />
         ))}
       </div>
-      <h3>{t('연결된 개념')}</h3>
-      <div className="concept-chips">
-        {linked.map(chip)}
-        {!linked.length && !support.length && (
-          <span className="concept-empty">{t('연결된 개념이 없습니다.')}</span>
-        )}
-        <button
-          className="concept-link-add"
-          aria-expanded={picking}
-          onClick={() => {
-            setPicking((p) => !p)
-            setSearch('')
-          }}
-        >
-          <Icon name="plus" size={14} />
-          {t('개념 연결')}
-        </button>
-      </div>
-      {picking && (
-        <div className="concept-picker">
-          <input
-            autoFocus
-            value={search}
-            placeholder={t('개념 이름이나 동의어로 찾기')}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setPicking(false)
-              else if (e.key === 'Enter' && matches[0]) link(matches[0].id)
-            }}
-          />
-          {matches.length ? (
-            <ul>
-              {matches.map((c) => (
-                <li key={c.id}>
-                  <button onClick={() => link(c.id)}>
-                    {c.name}
-                    {shared?.has(c.id) && <span className="shared-badge">{t('공유')}</span>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="concept-empty">{t('맞는 개념이 없습니다.')}</p>
-          )}
-        </div>
-      )}
-      {support.length > 0 && (
-        <div className="concept-chips support" role="group" aria-label={t('관련 개념')}>
-          <small>{t('관련 개념')}</small>
-          {support.map(chip)}
-        </div>
-      )}
-      {q.suggestions.length > 0 && (
-        <div className="suggestions">
-          <small>{t('다른 질문에서 다시 나오면 개념이 됩니다. 누르면 바로 연결됩니다.')}</small>
-          {q.suggestions.map((s) => (
-            <button key={s} onClick={() => void run(() => onCreateConcept(s))}>
-              <Icon name="plus" size={14} />
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-      <label className="memo-label">
-        <span className="memo-label-head">
-          {t('나의 메모')}
-          {memoDirty && <small className="memo-dirty">{t('저장되지 않은 변경')}</small>}
-        </span>
-        <textarea
-          value={memo}
-          onChange={(e) => setMemo(e.target.value)}
-          placeholder={t('확인한 사실, 결정, 다음 할 일…')}
-        />
-      </label>
-      <button
-        className={memoState === 'saved' && !memoDirty ? 'memo-saved' : ''}
-        disabled={!memoDirty || memoState === 'saving'}
-        onClick={() => void saveMemo()}
-      >
-        {memoState === 'saving' ? (
-          t('저장 중…')
-        ) : !memoDirty && memoState === 'saved' ? (
-          <>
-            <Icon name="check" size={14} />
-            {t('메모 저장됨')}
-          </>
-        ) : (
-          t('메모 저장')
-        )}
-      </button>
-      {onContinue && (
-        <button className="reply-button" onClick={onContinue}>
-          <Icon name="reply" />
-          {t('이 대화에 이어서 질문')}
-        </button>
-      )}
       {!earlierOnly && (
         <TurnNav
           turns={q.turns}
@@ -424,6 +491,18 @@ function TurnView({
       <div className="detail-answer">
         {t.answer && (
           <div className="answer-head">
+            {(t.actualModel || t.model) && (
+              <span
+                className="turn-model"
+                title={
+                  t.actualModel && t.model && t.actualModel !== t.model
+                    ? tr('요청한 모델: {{model}}', { model: t.model })
+                    : undefined
+                }
+              >
+                {t.actualModel || t.model}
+              </span>
+            )}
             <CopyButton text={() => t.answer} label={tr('답변 복사')} />
           </div>
         )}
@@ -436,7 +515,6 @@ function TurnView({
       )}
       <details>
         <summary>{tr('모델 추천 근거')}</summary>
-        <p>{t.actualModel || t.model || tr('모델 미지정')}</p>
         <p>{t.routingReason}</p>
       </details>
     </section>

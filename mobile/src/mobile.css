@@ -259,10 +259,18 @@
   background: transparent;
   border-color: var(--primary-border);
 }
-@media (max-width: 899px) {
+@media (max-width: 899px), (orientation: portrait) {
   .fask-mobile .mobile-detail .question-detail > header {
     display: none;
   }
+}
+/* The pinned note bar meets its scroller's visible top: .mobile-body (16px padding) on phones,
+   the padding-less .mobile-detail column in the wide split. */
+.fask-mobile .mobile-body:not(.project-split) > .mobile-detail .detail-action-row.sticky {
+  top: -16px;
+}
+.fask-mobile .project-split > .mobile-detail .detail-action-row.sticky {
+  top: 0;
 }
 /* Touch sizes for the shared composer (phone app and the screen-question overlay). */
 .fask-mobile .composer textarea,
@@ -277,12 +285,17 @@
   gap: 8px;
 }
 .fask-mobile .composer-actions > button,
-.fask-mobile .composer-actions > select,
+.fask-mobile .composer-actions .model-select select,
 .fask-mobile .composer-actions > .capture-toggle,
 .fask-mobile .composer-actions > .attach-menu-anchor > button,
 .screen-q-panel .composer-actions > button,
-.screen-q-panel .composer-actions > select,
+.screen-q-panel .composer-actions .model-select select,
 .screen-q-panel .composer-actions > .capture-toggle {
+  min-height: 44px;
+  font-size: 15px;
+}
+.fask-mobile .detail-action-row button,
+.screen-q-panel .detail-action-row button {
   min-height: 44px;
   font-size: 15px;
 }

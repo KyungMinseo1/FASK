@@ -59,6 +59,10 @@ export interface LocalSettings {
   regions: CaptureRegion[]
   displayId?: number
 }
+/** The settings that pick an answer model; a linked PC shares its own with this PC. */
+export type ModelSettings = Pick<LocalSettings, 'model' | 'fastModel' | 'deepModel' | 'models' | 'routing'>
+/** OpenAI-compatible `reasoning_effort`; undefined leaves it to the model's default. */
+export type ReasoningEffort = 'low' | 'medium' | 'high'
 export interface Profile {
   id: string
   name: string
@@ -68,7 +72,13 @@ export interface Workspace {
   profileId: string
   name: string
   /** Set when the workspace lives on a linked PC (read through this PC). */
-  remote?: { peerId: string; name: string; status: PeerStatus }
+  remote?: {
+    peerId: string
+    name: string
+    status: PeerStatus
+    /** That PC's answer-model settings, which its answers use; absent when it runs an older build. */
+    models?: ModelSettings
+  }
   /**
    * Normalized candidate names a tidy offered for promotion and the user left as candidates;
    * tidy does not offer them again.
@@ -259,11 +269,14 @@ export interface AskInput {
   refined?: string
   model: string
   image?: string
+  /** Records the question without asking the model; sent by mobile builds and test scripts, no desktop UI. */
   saveOnly?: boolean
   /** The image is a screen capture with the user's pen marks drawn on it. */
   annotated?: boolean
   /** Per-question knowledge override; undefined follows settings.memoryScope. */
   useMemory?: boolean
+  /** Sent as `reasoning_effort`; omitted uses the model's default. */
+  reasoningEffort?: ReasoningEffort
 }
 export interface StreamEvent {
   requestId: string
@@ -498,6 +511,8 @@ export interface HubStatus {
 export interface PersonalApi extends KnowledgeApi {
   activateProject(id: string): Promise<void>
   clearRecent(projectId: string): Promise<void>
+  /** The overlay question panel continues this question without reopening the overlay. */
+  continueQuestion(projectId: string, questionId: string): Promise<void>
   editOverlayRegion(): Promise<CaptureResult<void>>
   overlayRegions(drawing: boolean, regions: CaptureRect[], panelOpen: boolean): Promise<void>
   shortcutInfo(): Promise<ShortcutInfo>

@@ -114,6 +114,8 @@ const PATHS = {
     </>
   ),
   resize: <path d="M20 10L10 20M20 15l-5 5" />,
+  maximize: <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />,
+  restore: <path d="M20 4l-6 6M14 5v5h5M4 20l6-6M5 14h5v5" />,
   refine: (
     <path d="M4 20l9-9M14 4v3M14 11v3M10.5 7.5h-3M20.5 7.5h-3M17 4.5l-1.5 1.5M17 10.5L15.5 9" />
   ),

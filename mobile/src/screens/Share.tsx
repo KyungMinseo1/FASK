@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import Composer from '@desktop/renderer/src/personal/Composer'
+import { projectHost } from '@desktop/renderer/src/personal/questionTree'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
 import { Icon } from '../icons'
@@ -47,6 +48,7 @@ export default function Share(): React.JSX.Element {
             submitOnEnter={false}
             key={`${share?.id ?? 'empty'}:${projectId}`}
             projectId={projectId}
+            host={projectHost(data, projectId)}
             profileId={data.activeProfileId}
             settings={data.settings}
             initialRaw={share?.raw}
