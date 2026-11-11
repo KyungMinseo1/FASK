@@ -5,7 +5,9 @@
   height: calc(100dvh / var(--ui-zoom, 1));
   overflow: hidden;
   font-size: 15px;
-  padding-top: env(safe-area-inset-top);
+  /* Insets are px but .fask-app is zoomed by --ui-zoom; dividing keeps the padding equal to the system bar. */
+  padding: calc(env(safe-area-inset-top, 0px) / var(--ui-zoom, 1)) calc(env(safe-area-inset-right, 0px) / var(--ui-zoom, 1))
+    calc(env(safe-area-inset-bottom, 0px) / var(--ui-zoom, 1)) calc(env(safe-area-inset-left, 0px) / var(--ui-zoom, 1));
   box-sizing: border-box;
   /* The single gradient of the system: the accent fades out over the top 260px. */
   background: linear-gradient(180deg, color-mix(in srgb, var(--grad) var(--grad-a), transparent) 0, transparent 260px)
@@ -54,6 +56,11 @@
   gap: 16px;
   overflow: hidden;
   align-items: stretch;
+  grid-template-rows: minmax(0, 1fr);
+}
+/* Wide, no question open: the list column takes the full width but keeps its own bounded scroller. */
+.fask-mobile .mobile-body.project-split.list-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 .fask-mobile .project-split > .mobile-list-column,
 .fask-mobile .project-split > .mobile-detail {
@@ -177,6 +184,12 @@
   width: 100%;
   text-align: left;
 }
+/* Cards are direct children here (desktop wraps them in divs), so the list owns the spacing. */
+.fask-mobile .question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 /* 320px screens: meta items wrap as whole units instead of breaking mid-label. */
 .fask-mobile .question-card .question-meta {
   flex-wrap: wrap;
@@ -266,11 +279,24 @@
 .fask-mobile .composer-actions > button,
 .fask-mobile .composer-actions > select,
 .fask-mobile .composer-actions > .capture-toggle,
+.fask-mobile .composer-actions > .attach-menu-anchor > button,
 .screen-q-panel .composer-actions > button,
 .screen-q-panel .composer-actions > select,
 .screen-q-panel .composer-actions > .capture-toggle {
   min-height: 44px;
   font-size: 15px;
+}
+.fask-mobile .attach-menu > button {
+  min-height: 48px;
+  font-size: 15px;
+}
+/* The whole label is the touch target; the 44px input minimum would make it taller than its neighbours. */
+.fask-mobile .capture-toggle input {
+  min-height: 0;
+}
+/* The composer ends the conversation pane; no trailing margin so it lines up with the 새 질문 button. */
+.fask-mobile .mobile-detail > .composer {
+  margin-bottom: 0;
 }
 .fask-mobile .detail-title h2 {
   font-size: 20px;
@@ -283,7 +309,7 @@
   position: static;
   flex: none;
   z-index: 20;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px 16px;
   background: var(--canvas);
   border-top: 1px solid var(--hairline);
 }
