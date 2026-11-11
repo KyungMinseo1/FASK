@@ -270,6 +270,7 @@ export default function ProjectScreen(): React.JSX.Element {
             onPage={(p) => {
               setPage(p)
               listRef.current?.scrollIntoView({ block: 'start' })
+              listRef.current?.scrollTo({ top: 0 })
             }}
           />
         </>
@@ -308,7 +309,7 @@ export default function ProjectScreen(): React.JSX.Element {
         {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} />}
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
-      <main className={wide && questionId ? 'mobile-body project-split' : 'mobile-body'}>
+      <main className={wide ? `mobile-body project-split${questionId ? '' : ' list-only'}` : 'mobile-body'}>
         {wide ? (
           <>
             {/* The button lives in the list column so the detail pane reaches its bottom edge. */}

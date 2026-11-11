@@ -13,10 +13,13 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 - The question note keeps "Follow up in this conversation", Concepts and Notes in a bar pinned to the top while scrolling; concepts and notes open from it instead of sitting below the last turn.
 - The composer labels the answer model, says which model answers in Auto and Recommend modes, reuses the last model you picked, and shows the model while it writes. Each saved answer shows the model that actually answered. "Save only" was removed.
 - Linked-PC projects say the other PC answers with its own model settings instead of showing a model picker.
+- Mobile: the composer's 파일 첨부, 촬영 and 사진 buttons are now one "파일·사진 첨부" button that opens a menu to take a photo, choose an image or choose a file.
 
 ### Fixed
 - A new question asked on a linked PC's project, from this PC or from the phone, no longer fails with "현재 프로필에서 항목을 찾을 수 없습니다."
 - Dashboard search and filter stay visible when the project header is collapsed.
+- Mobile: screens no longer run under the Android navigation bar, so the "새 질문" button and the conversation scroll controls stay tappable instead of triggering Back.
+- Mobile (wide layout): the question list scrolls with no question open, question cards have spacing between them, and the list and conversation columns end on the same line.
 
 ## [1.1.8] - 2026-11-10
 

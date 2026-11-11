@@ -1,5 +1,6 @@
 import { Camera, MediaTypeSelection } from '@capacitor/camera'
 import { t } from '@desktop/shared/i18n'
+import type { IconName } from '@desktop/renderer/src/personal/ToolbarIcons'
 
 const MAX_EDGE = 2048
 
@@ -49,7 +50,7 @@ export const choosePhoto = (): Promise<File[]> =>
     return fromWebPath(results[0]?.webPath, 'photo.jpg')
   })
 /** Labels are translated at call time so they follow the current UI language. */
-export const mediaActions = (): { label: string; pick: () => Promise<File[]> }[] => [
-  { label: t('촬영'), pick: takePhoto },
-  { label: t('사진'), pick: choosePhoto }
+export const mediaActions = (): { label: string; icon: IconName; pick: () => Promise<File[]> }[] => [
+  { label: t('사진 촬영'), icon: 'camera', pick: takePhoto },
+  { label: t('이미지 선택'), icon: 'image', pick: choosePhoto }
 ]

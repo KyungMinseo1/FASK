@@ -132,6 +132,12 @@ const PATHS = {
       <path d="M20 16l-5-5-7 8" />
     </>
   ),
+  camera: (
+    <>
+      <path d="M4 8h3.5L9 5.5h6L16.5 8H20v11H4z" />
+      <circle cx="12" cy="13" r="3.2" />
+    </>
+  ),
   file: (
     <>
       <path d="M6 4h9l4 4v12H6z" />

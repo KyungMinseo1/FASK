@@ -121,6 +121,8 @@
   "화면 캡처 포함": "Include screen capture",
   "확인한 사실, 결정, 다음 할 일…": "Facts confirmed, decisions, next steps…",
   "파일 첨부": "Attach file",
+  "파일·사진 첨부": "Attach file or photo",
+  "파일 선택": "Choose file",
   "대화 {{count}}개#one": "{{count}} turn",
   "이전 대화 {{count}}개#one": "{{count}} earlier turn",
   "질문 {{count}}개#one": "{{count}} question",
