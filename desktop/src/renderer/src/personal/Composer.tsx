@@ -18,7 +18,7 @@ import { errorText } from './common'
 import MarkdownAnswer from './MarkdownAnswer'
 import CopyButton from './CopyButton'
 import ReferenceChips from './ReferenceChips'
-import { Icon } from './ToolbarIcons'
+import { Icon, type IconName } from './ToolbarIcons'
 import { useApi } from './api'
 import { useT } from '../../../shared/i18n/react'
 
@@ -55,8 +55,8 @@ interface Props {
   initialRaw?: string
   /** Files attached once on mount (e.g. shared from another app). */
   initialFiles?: File[]
-  /** Extra pickers such as camera or gallery, rendered after the file button. */
-  mediaActions?: { label: string; pick: () => Promise<File[]> }[]
+  /** Extra pickers such as camera or gallery; when given, attaching opens a menu of them plus files. */
+  mediaActions?: { label: string; icon: IconName; pick: () => Promise<File[]> }[]
   /** When false the draft is never read from or written to localStorage. */
   persistDraft?: boolean
   /** Enter sends and Shift+Enter breaks the line; when false, Ctrl/Cmd+Enter sends (soft keyboards). */
@@ -144,6 +144,29 @@ export default function Composer({
     } finally {
       setBusy(false)
     }
+  }
+  const [attachOpen, setAttachOpen] = useState(false)
+  const attachMenu = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!attachOpen) return
+    const close = (e: PointerEvent): void => {
+      if (!attachMenu.current?.contains(e.target as Node)) setAttachOpen(false)
+    }
+    const escape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setAttachOpen(false)
+    }
+    document.addEventListener('pointerdown', close, true)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', close, true)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [attachOpen])
+  const pickMedia = (pick: () => Promise<File[]>): void => {
+    setAttachOpen(false)
+    void pick()
+      .then((files) => (files.length ? attach(files) : undefined))
+      .catch((e) => setError(errorText(e)))
   }
   const request = useRef('')
   const question = useRef(recentQuestion?.id ?? '')
@@ -574,24 +597,44 @@ export default function Composer({
         </div>
       )}
       <div className="composer-actions">
-        <button disabled={locked} onClick={() => fileInput.current?.click()}>
-          <Icon name="clip" />
-          {t('파일 첨부')}
-        </button>
-        {mediaActions?.map((action) => (
-          <button
-            key={action.label}
-            disabled={locked}
-            onClick={() =>
-              void action
-                .pick()
-                .then((files) => (files.length ? attach(files) : undefined))
-                .catch((e) => setError(errorText(e)))
-            }
-          >
-            {action.label}
+        {mediaActions?.length ? (
+          <div className="attach-menu-anchor" ref={attachMenu}>
+            <button
+              disabled={locked}
+              aria-haspopup="menu"
+              aria-expanded={attachOpen}
+              onClick={() => setAttachOpen((open) => !open)}
+            >
+              <Icon name="clip" />
+              {t('파일·사진 첨부')}
+            </button>
+            {attachOpen && (
+              <div className="attach-menu" role="menu" aria-label={t('파일·사진 첨부')}>
+                {mediaActions.map((action) => (
+                  <button key={action.label} role="menuitem" onClick={() => pickMedia(action.pick)}>
+                    <Icon name={action.icon} size={18} />
+                    {action.label}
+                  </button>
+                ))}
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAttachOpen(false)
+                    fileInput.current?.click()
+                  }}
+                >
+                  <Icon name="file" size={18} />
+                  {t('파일 선택')}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <button disabled={locked} onClick={() => fileInput.current?.click()}>
+            <Icon name="clip" />
+            {t('파일 첨부')}
           </button>
-        ))}
+        )}
         {onCapture && (
           <label className={`capture-toggle ${includeCapture ? 'checked' : ''}`}>
             <input
