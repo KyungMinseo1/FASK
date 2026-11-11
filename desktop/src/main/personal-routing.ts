@@ -131,6 +131,7 @@ const ROUTE_KEY: Record<string, (args: unknown[]) => unknown> = {
   ask: (a) => (a[0] as Partial<AskInput> | null)?.questionId ?? (a[0] as Partial<AskInput> | null)?.projectId,
   'active-project': (a) => a[0],
   'clear-recent': (a) => a[0],
+  'continue-question': (a) => a[0],
   'open-overlay': (a) => a[0],
   export: (a) => a[0]
 }
@@ -143,6 +144,8 @@ export class RemoteRouter {
   private warned = new Set<string>()
   /** requestId/turnId of forwarded asks → owning peer, for `cancel`. */
   private runs = new Map<string, string>()
+  /** Questions created through forwarded asks or seen in a peer stream → owning peer, until that peer's snapshot lists them. */
+  private created = new Map<string, string>()
 
   constructor(
     private peers: () => Iterable<RemotePeer>,
@@ -186,6 +189,8 @@ export class RemoteRouter {
     }
     this.owners = owners
     this.parts = parts
+    const linked = new Set([...this.peers()].map((p) => p.link.id))
+    for (const [id, peerId] of this.created) if (owners.has(id) || !linked.has(peerId)) this.created.delete(id)
   }
 
   merge(local: Snapshot): Snapshot {
@@ -207,7 +212,7 @@ export class RemoteRouter {
   }
 
   ownerOf(id: unknown): string | undefined {
-    return typeof id === 'string' ? this.owners.get(id) : undefined
+    return typeof id === 'string' ? (this.owners.get(id) ?? this.created.get(id)) : undefined
   }
 
   /**
@@ -233,6 +238,8 @@ export class RemoteRouter {
   }
 
   noteStream(peerId: string, event: StreamEvent): void {
+    // Stream events can arrive before the forwarded ask's reply names the new question.
+    if (!this.owners.has(event.questionId) && !this.localHas(event.questionId)) this.created.set(event.questionId, peerId)
     if (event.done) {
       this.runs.delete(event.requestId)
       this.runs.delete(event.turnId)
@@ -262,7 +269,13 @@ export class RemoteRouter {
       throw new Error(CROSS_BOUNDARY)
     if (!owner) return this.local(name, args)
     // The overlay window and its recent-conversation state live on this PC, even for linked-PC projects.
-    if (name === 'active-project' || name === 'clear-recent' || name === 'open-overlay') return this.local(name, args)
+    if (
+      name === 'active-project' ||
+      name === 'clear-recent' ||
+      name === 'continue-question' ||
+      name === 'open-overlay'
+    )
+      return this.local(name, args)
     if (name === 'export') throw new Error(REMOTE_UNSUPPORTED)
     const peer = this.peer(owner)
     if (name === 'ask') {
@@ -271,7 +284,11 @@ export class RemoteRouter {
       this.runs.set(input.requestId, owner)
       const result = (await peer.rpc('ask', [input], { retry: true })) as AskResult
       if (result?.turnId) this.runs.set(result.turnId, owner)
-      if (result?.questionId) this.onAsked(input.projectId, result.questionId)
+      if (result?.questionId) {
+        // Registered before onAsked: it triggers the renderer resync that calls turn-state on this id.
+        this.created.set(result.questionId, owner)
+        this.onAsked(input.projectId, result.questionId)
+      }
       return result
     }
     return peer.rpc(name, args, { retry: RETRY.has(name) })

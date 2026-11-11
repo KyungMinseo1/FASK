@@ -14,5 +14,5 @@ FASK는 화면 위에 펜으로 표시하고 AI에게 질문한 뒤, 답변을 �
 
 ## 실행·검증
 
-- 데스크톱: `cd desktop && npm run dev`, 타입체크 `npm run typecheck`, 단위 테스트 `npm test`
+- 데스크톱: `cd desktop && npm run dev`, 타입체크 `npm run typecheck`, 단위 테스트 `npm test`, 질문 노트·오버레이 레이아웃 E2E `npm run test:ui`
 - 모바일: `cd mobile && npm run typecheck`, 테스트 `npm test`, 디버그 APK `npm run apk`

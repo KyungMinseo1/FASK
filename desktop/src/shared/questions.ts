@@ -1,6 +1,7 @@
 // Pure question-model helpers shared by main, renderer, and mobile. No Node or DOM APIs.
 import type {
   ConceptRole,
+  LocalSettings,
   Question,
   TagSource,
   TextAttachment,
@@ -72,6 +73,37 @@ export function questionSearchText(q: Question): string {
 }
 export function questionImages(q: Question): string[] {
   return q.turns.flatMap((t) => (t.attachment ? [t.attachment] : []))
+}
+export function recommend(
+  raw: string,
+  hasImage: boolean
+): { complexity: 'simple' | 'complex' | 'unknown'; reason: string } {
+  if (!raw.trim())
+    return {
+      complexity: 'unknown',
+      reason: '이미지의 내용을 확인하기 전에는 복잡도를 판단하기 어렵습니다.'
+    }
+  if (
+    /증명|설계|디버깅|분석|비교|최적화|구현|derive|debug|design|analy[sz]e/i.test(raw) ||
+    raw.length > 500
+  )
+    return {
+      complexity: 'complex',
+      reason: '분석·설계 또는 여러 단계의 설명이 필요한 요청입니다. (로컬 규칙)'
+    }
+  return {
+    complexity: hasImage ? 'unknown' : 'simple',
+    reason: hasImage
+      ? '이미지 난이도는 로컬 규칙으로 판단하지 않습니다.'
+      : '짧은 설명·확인 요청으로 추정했습니다. (로컬 규칙)'
+  }
+}
+/** The model `ask` sends when settings.routing is 'auto'. */
+export function routedModel(
+  settings: Pick<LocalSettings, 'model' | 'fastModel' | 'deepModel'>,
+  complexity: 'simple' | 'complex' | 'unknown'
+): string {
+  return (complexity === 'complex' ? settings.deepModel : settings.fastModel) || settings.model
 }
 export function filterQuestions(questions: Question[], filter: string, query: string): Question[] {
   const needle = query.toLocaleLowerCase()

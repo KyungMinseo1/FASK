@@ -24,14 +24,8 @@ import { KnowledgeExtractor, recallMemory } from './knowledge-extract'
 import { prompt } from './prompts'
 import { buildExport } from './knowledge-export'
 import { questionShortcutInfo, registerQuestionShortcut } from './personal-shortcuts'
-import {
-  localModels,
-  normalizeEndpoint,
-  recommend,
-  streamChat,
-  type WireMessage
-} from './local-api'
-import { cleanTitle, questionImages } from '../shared/questions'
+import { localModels, normalizeEndpoint, streamChat, type WireMessage } from './local-api'
+import { cleanTitle, questionImages, recommend, routedModel } from '../shared/questions'
 import { i18n, t } from '../shared/i18n'
 import type {
   AskInput,
@@ -382,6 +376,13 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     recentQuestions.delete(id)
     changed()
   })
+  handle('continue-question', (id: string, questionId: string) => {
+    anyProject(id)
+    if (anyQuestion(questionId).projectId !== id) throw new Error('프로젝트가 다른 질문입니다.')
+    recentQuestions.set(id, questionId)
+    lastProjectId = id
+    changed()
+  })
   handle('remove', (kind: string, id: string) => {
     if (controllers.size) throw new Error('진행 중인 답변을 마치거나 중지한 뒤 삭제해 주세요.')
     if (capture.overlay || capture.editor)
@@ -634,10 +635,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       settings = store.settings(profile),
       routing = recommend(input.raw, !!input.image)
     const model =
-      settings.routing === 'auto'
-        ? (routing.complexity === 'complex' ? settings.deepModel : settings.fastModel) ||
-          settings.model
-        : input.model || settings.model
+      settings.routing === 'auto' ? routedModel(settings, routing.complexity) : input.model || settings.model
     const saveOnly = !!input.saveOnly
     const annotated = input.annotated === true && !!input.image
     const requestHash = createHash('sha256')

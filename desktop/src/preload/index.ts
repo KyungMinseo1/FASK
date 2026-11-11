@@ -15,6 +15,7 @@ const fask: PersonalApi = {
   rename: (kind, id, name) => ipcRenderer.invoke('personal:rename', kind, id, name),
   remove: (kind, id) => ipcRenderer.invoke('personal:remove', kind, id),
   clearRecent: (id) => ipcRenderer.invoke('personal:clear-recent', id),
+  continueQuestion: (id, questionId) => ipcRenderer.invoke('personal:continue-question', id, questionId),
   editOverlayRegion: () => ipcRenderer.invoke('personal:edit-overlay-region'),
   overlayRegions: (drawing, regions, panelOpen) =>
     ipcRenderer.invoke('personal:overlay-regions', drawing, regions, panelOpen),

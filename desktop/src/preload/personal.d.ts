@@ -259,6 +259,7 @@ export interface AskInput {
   refined?: string
   model: string
   image?: string
+  /** Records the question without asking the model; sent by mobile builds and test scripts, no desktop UI. */
   saveOnly?: boolean
   /** The image is a screen capture with the user's pen marks drawn on it. */
   annotated?: boolean
@@ -498,6 +499,8 @@ export interface HubStatus {
 export interface PersonalApi extends KnowledgeApi {
   activateProject(id: string): Promise<void>
   clearRecent(projectId: string): Promise<void>
+  /** The overlay question panel continues this question without reopening the overlay. */
+  continueQuestion(projectId: string, questionId: string): Promise<void>
   editOverlayRegion(): Promise<CaptureResult<void>>
   overlayRegions(drawing: boolean, regions: CaptureRect[], panelOpen: boolean): Promise<void>
   shortcutInfo(): Promise<ShortcutInfo>

@@ -140,6 +140,21 @@ export default function Dashboard(): React.JSX.Element {
     localStorage.setItem('fask:library-header-collapsed', headerCollapsed ? '1' : '0')
   }, [headerCollapsed])
   const collapsedHeader = scope === 'project' && headerCollapsed
+  // The question note beside the list: a draggable width (0 = default split) and a full-width mode.
+  const areaRef = useRef<HTMLDivElement>(null)
+  const [detailWidth, setDetailWidth] = useState(() => Number(localStorage.getItem('fask:detail-width')) || 0)
+  useEffect(() => {
+    if (detailWidth) localStorage.setItem('fask:detail-width', String(detailWidth))
+    else localStorage.removeItem('fask:detail-width')
+  }, [detailWidth])
+  const [detailExpanded, setDetailExpanded] = useState(() => localStorage.getItem('fask:detail-expanded') === '1')
+  useEffect(() => {
+    localStorage.setItem('fask:detail-expanded', detailExpanded ? '1' : '0')
+  }, [detailExpanded])
+  const resizingDetail = useRef(false)
+  /** Keeps the list at least 300px (plus the 24px handle) and the note at least 340px. */
+  const clampDetail = (width: number): number =>
+    Math.round(Math.max(340, Math.min((areaRef.current?.clientWidth ?? 0) - 324, width)))
   const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
   useEffect(() => setPage(1), [project?.id])
   const graphRoot = useMemo(
@@ -640,6 +655,7 @@ export default function Dashboard(): React.JSX.Element {
                   projectId={project.id}
                   profileId={data.activeProfileId}
                   settings={data.settings}
+                  hostName={workspace?.remote?.name}
                   onSaved={(id) => {
                     setSelectedId(id)
                     void refresh()
@@ -647,8 +663,7 @@ export default function Dashboard(): React.JSX.Element {
                 />
               </div>
             )}
-            {(!headerCollapsed || query !== '' || filter !== 'all') && (
-            <div className="filter-row">
+            <div className={`filter-row${collapsedHeader ? ' compact' : ''}`}>
               <label className="search-field">
                 <Icon name="search" />
                 <input
@@ -679,8 +694,11 @@ export default function Dashboard(): React.JSX.Element {
               </select>
               <span>{t('{{n}}개 기록', { n: filtered.length })}</span>
             </div>
-            )}
-            <div className={`knowledge-area ${selected || openConcept ? 'has-detail' : ''}`}>
+            <div
+              ref={areaRef}
+              className={`knowledge-area ${selected || openConcept ? 'has-detail' : ''}${selected && detailExpanded ? ' detail-expanded' : ''}`}
+              style={detailWidth ? ({ '--detail-w': `${detailWidth}px` } as React.CSSProperties) : undefined}
+            >
               <section className="records-panel">
                 {view === 'graph' && project && graphRoot ? (
                   <div className="graph-stage">
@@ -861,6 +879,35 @@ export default function Dashboard(): React.JSX.Element {
                   </div>
                 )}
               </section>
+              {(selected || openConcept) && !(selected && detailExpanded) && (
+                <div
+                  className="detail-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t('질문 노트 너비 조절')}
+                  title={t('드래그해서 너비 조절, 두 번 눌러 기본값')}
+                  tabIndex={0}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    e.currentTarget.setPointerCapture(e.pointerId)
+                    resizingDetail.current = true
+                  }}
+                  onPointerMove={(e) => {
+                    const area = areaRef.current
+                    if (resizingDetail.current && area)
+                      setDetailWidth(clampDetail(area.getBoundingClientRect().right - e.clientX - 12))
+                  }}
+                  onPointerUp={() => (resizingDetail.current = false)}
+                  onPointerCancel={() => (resizingDetail.current = false)}
+                  onDoubleClick={() => setDetailWidth(0)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+                    e.preventDefault()
+                    const current = areaRef.current?.lastElementChild?.getBoundingClientRect().width ?? 0
+                    setDetailWidth(clampDetail(current + (e.key === 'ArrowLeft' ? 32 : -32)))
+                  }}
+                />
+              )}
               {selected && project ? (
                 <QuestionDetail
                   key={selected.id}
@@ -886,6 +933,8 @@ export default function Dashboard(): React.JSX.Element {
                   onContinue={() =>
                     void openScreenQuestion(selected.projectId, selected.id)
                   }
+                  expanded={detailExpanded}
+                  onToggleExpand={() => setDetailExpanded((x) => !x)}
                 />
               ) : (
                 openConcept &&

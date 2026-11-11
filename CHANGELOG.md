@@ -4,6 +4,20 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+### Added
+- **Expandable question panel**: the overlay question panel can expand to fill the screen and shows the whole recent question; Restore returns to its previous size and position.
+- **Referenced-question panels**: clicking a referenced question in the overlay opens it read-only beside the question panel (up to three) instead of rebuilding the overlay, so pen marks and the current conversation stay. "Follow up in this conversation" switches the panel to it in place.
+- **Resizable question note**: drag the handle between the question list and the note to resize it (double-click resets), or expand the note to the full width; both are remembered.
+
+### Changed
+- The question note keeps "Follow up in this conversation", Concepts and Notes in a bar pinned to the top while scrolling; concepts and notes open from it instead of sitting below the last turn.
+- The composer labels the answer model, says which model answers in Auto and Recommend modes, reuses the last model you picked, and shows the model while it writes. Each saved answer shows the model that actually answered. "Save only" was removed.
+- Linked-PC projects say the other PC answers with its own model settings instead of showing a model picker.
+
+### Fixed
+- A new question asked on a linked PC's project, from this PC or from the phone, no longer fails with "현재 프로필에서 항목을 찾을 수 없습니다."
+- Dashboard search and filter stay visible when the project header is collapsed.
+
 ## [1.1.8] - 2026-11-10
 
 FASK 1.1.8 lets you choose Korean or English AI prompts, moves settings into a categorized page, and fixes screen questions capturing the wrong monitor.
