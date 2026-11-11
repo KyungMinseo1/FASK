@@ -151,5 +151,7 @@
   "질문 노트 확장": "Expand question note",
   "질문 노트 원래 크기로": "Restore question note size",
   "질문 노트 너비 조절": "Resize question note",
-  "드래그해서 너비 조절, 두 번 눌러 기본값": "Drag to resize, double-click to reset"
+  "드래그해서 너비 조절, 두 번 눌러 기본값": "Drag to resize, double-click to reset",
+  "참고 질문 크기 조절": "Resize referenced question",
+  "드래그해서 참고 질문 크기 조절": "Drag to resize the referenced question"
 }

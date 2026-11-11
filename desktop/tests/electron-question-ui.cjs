@@ -641,6 +641,77 @@ app.whenReady().then(async () => {
     assertSticky(await ov(STICKY('.overlay-ref-panel .overlay-panel-content')), 'reference panel')
     await shot('overlay-reference', overlay)
 
+    // The reference resizes from its corner, within the screen and above a minimum size.
+    const resizeRef = async (dx, dy) => {
+      const handle = center(
+        await ov("rect('.overlay-ref-panel:last-of-type .panel-resize-handle')")
+      )
+      overlay.webContents.sendInputEvent({ type: 'mouseMove', x: handle.x, y: handle.y })
+      overlay.webContents.sendInputEvent({
+        type: 'mouseDown',
+        x: handle.x,
+        y: handle.y,
+        button: 'left',
+        clickCount: 1
+      })
+      for (const f of [0.5, 1])
+        overlay.webContents.sendInputEvent({
+          type: 'mouseMove',
+          x: Math.round(handle.x + dx * f),
+          y: Math.round(handle.y + dy * f),
+          button: 'left'
+        })
+      overlay.webContents.sendInputEvent({
+        type: 'mouseUp',
+        x: handle.x + dx,
+        y: handle.y + dy,
+        button: 'left',
+        clickCount: 1
+      })
+      await pause(250)
+      return ov("rect('.overlay-ref-panel:last-of-type')")
+    }
+    const startRef = await ov("rect('.overlay-ref-panel')")
+    const grown = await resizeRef(150, 100)
+    assert.ok(
+      near(grown.width, startRef.width + 150, 2) && near(grown.height, startRef.height + 100, 2),
+      `corner drag resized ${startRef.width}×${startRef.height} to ${grown.width}×${grown.height}`
+    )
+    assert.ok(
+      near(grown.left, startRef.left) && near(grown.top, startRef.top),
+      'resizing moved the panel'
+    )
+    const screenSize = await ov('({w:innerWidth,h:innerHeight})')
+    const capped = await resizeRef(5000, 5000)
+    assert.ok(
+      capped.right <= screenSize.w - 7 && capped.bottom <= screenSize.h - 7,
+      'the reference grew off the screen'
+    )
+    const tiny = await resizeRef(-5000, -5000)
+    assert.ok(
+      near(tiny.width, 320, 1) && near(tiny.height, 260, 1),
+      `minimum size is ${tiny.width}×${tiny.height}`
+    )
+    assertSticky(
+      await ov(STICKY('.overlay-ref-panel .overlay-panel-content')),
+      'reference panel at its minimum size'
+    )
+    pass('a reference resizes from its corner, capped by the screen and a 320×260 minimum')
+    const sized = await resizeRef(140, 260)
+    await wait(
+      () =>
+        personal.capture.regions.some(
+          (r) => near(r.width, sized.width, 1) && near(r.height, sized.height, 1)
+        ),
+      'the resized reference is a hit region of its new size'
+    )
+    await ov("document.querySelector('.overlay-ref-panel header button').click()")
+    await chip('참고 대상 A')
+    await wait(async () => {
+      const r = await ov("rect('.overlay-ref-panel')")
+      return !!r && near(r.width, sized.width, 1) && near(r.height, sized.height, 1)
+    }, 'the next reference opens at the last resized size')
+
     for (const name of ['참고 대상 C', '참고 대상 D', '참고 대상 E']) await chip(name)
     await wait(
       async () => (await refTitles()) === '["참고 대상 C","참고 대상 D","참고 대상 E"]',

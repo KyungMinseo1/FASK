@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
 import QuestionDetail from './QuestionDetail'
-import ReferencePanel, { REF_W } from './ReferencePanel'
+import ReferencePanel, { REF_H, REF_W } from './ReferencePanel'
 import Settings from './Settings'
 import TurnNav from './TurnNav'
 import ProjectPicker from './ProjectPicker'
@@ -149,7 +149,9 @@ export default function Overlay(): React.JSX.Element {
     [data, projectId]
   )
   // Referenced questions open read-only beside the panel, so its conversation and the ink stay put.
-  const [refs, setRefs] = useState<{ id: string; x: number; y: number }[]>([])
+  const [refs, setRefs] = useState<{ id: string; x: number; y: number; w: number; h: number }[]>([])
+  // The size the last resized reference ended at; the next one opens with it (this overlay only).
+  const [refSize, setRefSize] = useState({ w: REF_W, h: REF_H })
   const panelHeader = useRef<HTMLElement>(null)
   const refToFront = (id: string): void =>
     setRefs((list) =>
@@ -160,7 +162,7 @@ export default function Overlay(): React.JSX.Element {
       refToFront(id)
       return
     }
-    const w = Math.min(REF_W, innerWidth - 16),
+    const w = Math.min(refSize.w, innerWidth - 16),
       n = refs.length
     const base = maximized ? { x: 8, y: 8 } : visiblePosition
     const width = maximized ? innerWidth - 16 : panelSize.width
@@ -180,7 +182,7 @@ export default function Overlay(): React.JSX.Element {
       : beside === null
         ? { x: base.x + 24 * (n + 1), y: below + 28 * n }
         : { x: beside, y: base.y + 28 * n }
-    setRefs((list) => [...list, { id, ...next }].slice(-MAX_REFS))
+    setRefs((list) => [...list, { id, ...next, ...refSize }].slice(-MAX_REFS))
   }
   // The panel has no graph: a concept opens the dashboard, a question opens a reference panel.
   const openReference = (ref: Reference): void => {
@@ -1010,8 +1012,14 @@ export default function Overlay(): React.JSX.Element {
                 question={q}
                 x={r.x}
                 y={r.y}
+                width={r.w}
+                height={r.h}
                 run={run}
                 onMove={(x, y) => setRefs((list) => list.map((e) => (e.id === r.id ? { ...e, x, y } : e)))}
+                onResize={(w, h) => {
+                  setRefs((list) => list.map((e) => (e.id === r.id ? { ...e, w, h } : e)))
+                  setRefSize({ w, h })
+                }}
                 onInteraction={setPanelInteraction}
                 onFront={() => refToFront(r.id)}
                 onClose={() => setRefs((list) => list.filter((e) => e.id !== r.id))}
