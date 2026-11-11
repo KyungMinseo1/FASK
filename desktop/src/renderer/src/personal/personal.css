@@ -1012,6 +1012,18 @@ button.danger {
 .detail-resizer:focus-visible {
   outline: none;
 }
+/* Narrow or portrait windows (e.g. snapped to half the screen with Win+←/→) show one pane at a time:
+   the list, or the open note/concept filling the area. Closing it brings the list back. */
+@media (max-width: 1100px), (orientation: portrait) {
+  .knowledge-area.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .knowledge-area.has-detail > .records-panel,
+  .knowledge-area > .detail-resizer,
+  .fask-app .question-detail .detail-expand {
+    display: none;
+  }
+}
 .records-panel {
   min-width: 0;
 }
@@ -3038,12 +3050,6 @@ button.memo-saved:disabled {
   }
   .fask-main {
     padding: 20px 24px;
-  }
-  .knowledge-area.has-detail {
-    grid-template-columns: 1fr;
-  }
-  .detail-resizer {
-    display: none;
   }
   .question-detail {
     position: static;

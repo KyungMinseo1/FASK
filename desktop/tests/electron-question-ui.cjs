@@ -1,7 +1,8 @@
 // Electron E2E for the question note and overlay layout: the sticky note action bar (dashboard,
-// narrow window, expanded note, reference panel), the resizable/expandable note, and overlay
-// reference panels next to a normal or expanded question panel. Run through tests/ui.cjs.
-const { app, BrowserWindow } = require('electron')
+// expanded note, single-pane narrow/snapped/portrait windows, reference panel), the resizable and
+// expandable note, and overlay reference panels next to a normal or expanded question panel.
+// Run through tests/ui.cjs.
+const { app, BrowserWindow, screen } = require('electron')
 const { mkdtempSync, mkdirSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { tmpdir } = require('node:os')
@@ -456,24 +457,94 @@ app.whenReady().then(async () => {
       'the next note opens expanded (remembered)'
     )
     await js("document.querySelector('.detail-expand').click()")
+    await js(
+      "[...document.querySelectorAll('.question-detail header button')].find(b=>b.textContent.includes('닫기')).click()"
+    )
+    await wait(
+      () => js("!document.querySelector('.question-detail')"),
+      'note closes before the window checks'
+    )
 
-    // Below 1100px the list and note stack; the note must still scroll with a pinned bar.
+    // Narrow, snapped-to-half and portrait windows show the list or the note, never both.
+    const fullBounds = win.getBounds()
+    const singlePane = async (label) => {
+      const size = await js('({w:innerWidth,h:innerHeight})')
+      assert.equal(
+        await js(
+          "getComputedStyle(document.querySelector('.records-panel')).display!=='none' && !document.querySelector('.question-detail')"
+        ),
+        true,
+        `${label}: the list is not shown on its own`
+      )
+      await js("document.querySelector('.records-scroll').scrollTop=240")
+      const listScroll = await js("document.querySelector('.records-scroll').scrollTop")
+      await openNote('현재 대화 질문 B')
+      const m = await js(
+        "({list:getComputedStyle(document.querySelector('.records-panel')).display,resizer:(()=>{const r=document.querySelector('.detail-resizer');return !r||getComputedStyle(r).display==='none'})(),expand:getComputedStyle(document.querySelector('.detail-expand')).display,note:rect('.question-detail').width,area:rect('.knowledge-area').width})"
+      )
+      assert.equal(m.list, 'none', `${label}: the list still shows beside the note`)
+      assert.equal(m.resizer, true, `${label}: the resize handle still shows`)
+      assert.equal(m.expand, 'none', `${label}: the expand button still shows`)
+      assert.ok(
+        near(m.note, m.area, 1),
+        `${label}: the note does not fill the area (${m.note} of ${m.area})`
+      )
+      assertSticky(await js(STICKY('.question-detail')), `${label} ${size.w}×${size.h}`)
+      await shot(`dashboard-${label.replace(/\s+/g, '-')}`)
+      await js(
+        "[...document.querySelectorAll('.question-detail header button')].find(b=>b.textContent.includes('닫기')).click()"
+      )
+      await wait(
+        () =>
+          js(
+            `!document.querySelector('.question-detail') && getComputedStyle(document.querySelector('.records-panel')).display!=='none' && Math.abs(document.querySelector('.records-scroll').scrollTop-${listScroll})<=1`
+          ),
+        `${label}: closing the note returns to the list at the same scroll position`
+      )
+      pass(`${label} (${size.w}×${size.h}): one pane at a time`)
+    }
     win.setContentSize(1000, 760)
     await pause(400)
-    await openNote('현재 대화 질문 B')
+    await singlePane('narrow window')
+    // Win+← snaps the window to the left half of the work area.
+    const work = screen.getDisplayMatching(fullBounds).workArea
+    win.setBounds({ x: work.x, y: work.y, width: Math.floor(work.width / 2), height: work.height })
+    await pause(400)
+    await singlePane('snapped to half')
+    // A portrait window wider than 1100px (half of a large monitor). The OS may cap the window to
+    // the screen, so the viewport is emulated when the real window cannot be taller than wide.
+    win.setBounds({ ...fullBounds, width: 1200, height: 1400 })
+    await pause(400)
+    const real = await js('innerHeight>innerWidth && innerWidth>1100')
+    if (!real)
+      win.webContents.enableDeviceEmulation({
+        screenPosition: 'desktop',
+        screenSize: { width: 1200, height: 1400 },
+        viewPosition: { x: 0, y: 0 },
+        deviceScaleFactor: 0,
+        viewSize: { width: 1200, height: 1400 },
+        scale: 1
+      })
+    await pause(400)
+    report.portrait = real ? 'real window' : 'emulated viewport'
     assert.equal(
-      await js(
-        "getComputedStyle(document.querySelector('.detail-resizer')||document.body).display==='none'||!document.querySelector('.detail-resizer')"
-      ),
-      true
+      await js('innerHeight>innerWidth && innerWidth>1100'),
+      true,
+      'portrait viewport not reached'
     )
-    assertSticky(await js(STICKY('.question-detail')), 'narrow window')
-    report.narrow = await js(
-      "({list:rect('.records-panel'),note:rect('.question-detail'),area:rect('.knowledge-area'),cards:document.querySelectorAll('.question-card').length})"
+    await singlePane('portrait')
+    win.webContents.disableDeviceEmulation()
+    // Wide landscape again: list and note side by side with the handle.
+    win.setBounds(fullBounds)
+    await pause(400)
+    await openNote('현재 대화 질문 B')
+    await wait(
+      () =>
+        js(
+          "getComputedStyle(document.querySelector('.records-panel')).display!=='none' && !!document.querySelector('.detail-resizer') && getComputedStyle(document.querySelector('.detail-resizer')).display!=='none'"
+        ),
+      'a wide landscape window splits list | handle | note again'
     )
-    await shot('dashboard-narrow')
-    win.setContentSize(1380, 940)
-    await pause(300)
 
     // ---------- overlay: reference panels next to a normal and an expanded panel ----------
     assert.equal(
