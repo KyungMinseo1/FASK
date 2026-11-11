@@ -12,7 +12,7 @@ import ProjectPicker from './ProjectPicker'
 import { Icon } from './ToolbarIcons'
 import { MarkF } from './Wordmark'
 import { errorText, useSnapshot } from './common'
-import { linkableConcepts, projectConcepts } from './questionTree'
+import { linkableConcepts, projectConcepts, projectHostName } from './questionTree'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
 import { answerJustCompleted, questionHeading } from '../../../shared/questions'
@@ -473,7 +473,7 @@ export default function Overlay(): React.JSX.Element {
   }
   const project = data?.projects.find((p) => p.id === projectId)
   const projectName = project?.name ?? ''
-  const remoteName = project ? data?.workspaces.find((w) => w.id === project.workspaceId)?.remote?.name : undefined
+  const remoteName = data ? projectHostName(data, projectId) : undefined
   const heading = recent ? questionHeading(recent).replace(/\s+/g, ' ').trim() : ''
   const headingChars = [...heading]
   const threadName =

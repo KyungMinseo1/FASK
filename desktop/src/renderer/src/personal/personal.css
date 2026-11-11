@@ -1571,14 +1571,14 @@ button.memo-saved:disabled {
 .detail-action-row button {
   white-space: nowrap;
 }
-/* -22px is .question-detail's top padding, so the bar meets the scroller edge; the right padding
-   leaves room for the floating .turn-nav-top (↑ ☆ ✕), like .concept-turn-nav. */
+/* -22px is .question-detail's top padding, so the bar meets the scroller edge; the floating ↑☆✕
+   (TurnNav) sit just below the bar. */
 .detail-action-row.sticky {
   position: sticky;
   top: -22px;
   z-index: 2;
   background: var(--surface-1);
-  padding: 8px 128px 8px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--hairline);
 }
 .detail-action-row button.active {
@@ -2481,11 +2481,9 @@ button.memo-saved:disabled {
   margin: 0;
   padding: 14px;
 }
-/* Here the scroller is .overlay-panel-content (no padding), not the note itself, so the bar pins at 0.
-   A reference panel's TurnNav has no close button, so ↑ ☆ need less room. */
+/* Here the scroller is .overlay-panel-content (no padding), not the note itself, so the bar pins at 0. */
 .overlay-ref-panel .detail-action-row.sticky {
   top: 0;
-  padding-right: 88px;
 }
 .overlay-panel .composer {
   margin: 8px;

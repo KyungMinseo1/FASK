@@ -88,6 +88,36 @@
   padding: 0 12px;
   font-size: 13px;
 }
+/* Read-only referenced question: its head stays put and the note bar pins right under it. */
+.screen-q-ref-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 16px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--hairline);
+}
+.screen-q-ref-head button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.screen-q-ref-head small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+.screen-q-ref .detail-action-row.sticky {
+  top: 52px;
+}
 /* Phone overlay: no keyboard shortcuts or file drag. */
 .screen-q-panel .composer-hint-keys {
   display: none;

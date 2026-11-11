@@ -59,7 +59,8 @@ const FILTERS = [
 const lastPage = new Map<string, number>()
 
 function useWide(): boolean {
-  const query = '(min-width: 900px)'
+  // A portrait tablet uses the phone layout: one pane at a time.
+  const query = '(min-width: 900px) and (orientation: landscape)'
   const [wide, setWide] = useState(() => matchMedia(query).matches)
   useEffect(() => {
     const list = matchMedia(query)
@@ -78,6 +79,7 @@ export default function ProjectScreen(): React.JSX.Element {
   const navigate = useNavigate()
   const t = useT()
   const wide = useWide()
+  const screen = useScreenQuestion(projectId)
   const project = data.projects.find((p) => p.id === projectId)
   const [query, setQuery] = useState(''),
     [filter, setFilter] = useState('all'),
@@ -288,7 +290,9 @@ export default function ProjectScreen(): React.JSX.Element {
       questionId={questionId}
       concepts={linkable}
       shared={shared}
+      hostName={workspace?.remote?.name}
       onReference={onReference}
+      onContinue={isAndroidOverlay() ? () => void screen.continueQuestion(questionId, projectId) : undefined}
     />
   ) : null
   const fab = (
@@ -306,7 +310,14 @@ export default function ProjectScreen(): React.JSX.Element {
           <Icon name="back" />
         </button>
         <h1>{project.name}</h1>
-        {isAndroidOverlay() && <ScreenQuestionControl projectId={projectId} />}
+        {isAndroidOverlay() && (
+          <ScreenQuestionControl
+            status={screen.status}
+            busy={screen.busy}
+            message={screen.message}
+            onToggle={() => void screen.toggle()}
+          />
+        )}
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className={wide ? `mobile-body project-split${questionId ? '' : ' list-only'}` : 'mobile-body'}>
@@ -367,7 +378,15 @@ export default function ProjectScreen(): React.JSX.Element {
   )
 }
 
-function ScreenQuestionControl({ projectId }: { projectId: string }): React.JSX.Element {
+function useScreenQuestion(projectId: string): {
+  status: OverlayStatus | null
+  busy: boolean
+  message: string
+  /** Header button: stops a running session, else starts a new conversation on projectId. */
+  toggle: () => Promise<void>
+  /** Starts a session continuing questionId in its own project; a running session is stopped first. */
+  continueQuestion: (questionId: string, questionProjectId: string) => Promise<void>
+} {
   const mobile = useMobile()
   const t = useT()
   const current = useRef({ mobile, projectId })
@@ -380,6 +399,7 @@ function ScreenQuestionControl({ projectId }: { projectId: string }): React.JSX.
 
   useEffect(() => {
     mounted.current = true
+    if (!isAndroidOverlay()) return () => void (mounted.current = false)
     const refresh = (): void => {
       void overlayControl.status().then(
         (value) => { if (mounted.current) setStatus(value) },
@@ -394,83 +414,14 @@ function ScreenQuestionControl({ projectId }: { projectId: string }): React.JSX.
     }
   }, [])
 
-  const act = async (): Promise<void> => {
+  /** One action at a time; errors land in the header message, a rejected pairing unpairs. */
+  const exclusive = async (body: () => Promise<void>): Promise<void> => {
     if (pending.current) return
     pending.current = true
     setBusy(true)
     setMessage('')
     try {
-      const state = await overlayControl.status()
-      if (!mounted.current) return
-      setStatus(state)
-      if (state.running) {
-        await overlayControl.stop()
-        if (mounted.current) setStatus(await overlayControl.status())
-        return
-      }
-      const initial = current.current
-      // The demo hub has no PC to stream to; show the native toolbar preview instead.
-      if (initial.mobile.demo) {
-        await previewOverlay()
-        return
-      }
-      if (initial.mobile.conn.state !== 'online')
-        throw new Error(t('PC에 연결된 상태에서 화면 질문을 시작해 주세요.'))
-      if (!initial.mobile.data.projects.some((item) => item.id === projectId))
-        throw new Error(t('프로젝트를 찾을 수 없습니다.'))
-      if (!window.confirm(
-        t(
-          '다른 앱 위에 FASK 토글을 표시하고 이번 세션 동안 전체 디스플레이를 공유합니다. 전역 펜 좌표를 맞추려면 전체 화면 공유가 필요합니다. 전체 화면을 자동 전송하지 않으며, 질문 전송 시 선택한 영역만 첨부합니다. 보호된 화면은 캡처되지 않거나 검게 보일 수 있습니다. 계속할까요?'
-        )
-      )) return
-      if (!state.overlayAllowed) {
-        await overlayControl.requestOverlayPermission()
-        if (mounted.current) {
-          setStatus(await overlayControl.status())
-          setMessage(t('다른 앱 위에 표시 권한을 허용한 뒤 화면 위에서 질문 버튼을 다시 눌러 주세요.'))
-        }
-        return
-      }
-      const pairing = await loadPairing()
-      const expected = initial.mobile.pairing
-      if (!pairing || pairing.fingerprint !== expected.fingerprint ||
-          pairing.token !== expected.token || pairing.port !== expected.port ||
-          JSON.stringify(pairing.addresses) !== JSON.stringify(expected.addresses) ||
-          JSON.stringify(pairing.relay ?? null) !== JSON.stringify(expected.relay ?? null))
-        throw new Error(t('페어링이 변경되었습니다. 연결 상태를 확인해 주세요.'))
-      // A cached snapshot must not authorize a new screen-sharing session.
-      const response = await nativeTransport.request(
-        pairing, initial.mobile.client.address(), 'POST', '/rpc/snapshot', '{"args":[]}', 15_000
-      )
-      if (response.status < 200 || response.status >= 300)
-        throw new Error(t('PC의 최신 프로젝트 정보를 확인할 수 없습니다.'))
-      const envelope: unknown = JSON.parse(response.body)
-      if (!envelope || typeof envelope !== 'object' || !('result' in envelope))
-        throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
-      const latest = envelope.result
-      if (!latest || typeof latest !== 'object' ||
-          !('activeProfileId' in latest) || typeof latest.activeProfileId !== 'string' ||
-          !('profiles' in latest) || !Array.isArray(latest.profiles) ||
-          !('projects' in latest) || !Array.isArray(latest.projects) ||
-          !('workspaces' in latest) || !Array.isArray(latest.workspaces) ||
-          !('questions' in latest) || !Array.isArray(latest.questions))
-        throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
-      const now = current.current
-      if (!mounted.current) return
-      if (now.mobile.client !== initial.mobile.client || now.projectId !== initial.projectId ||
-          now.mobile.conn.state !== 'online' ||
-          now.mobile.data.activeProfileId !== initial.mobile.data.activeProfileId)
-        throw new Error(t('현재 화면이나 연결이 변경되었습니다. 다시 시작해 주세요.'))
-      const profileId = latest.activeProfileId
-      const project = latest.projects.find((item) => item.id === projectId)
-      if (profileId !== initial.mobile.data.activeProfileId ||
-          !latest.profiles.some((item) => item.id === profileId) ||
-          !project || !latest.workspaces.some(
-            (item) => item.id === project.workspaceId && item.profileId === profileId
-          ))
-        throw new Error(t('현재 프로필에 프로젝트가 없습니다. 프로젝트를 다시 열어 주세요.'))
-      await overlayControl.start({ pairing, profileId, projectId })
-      if (mounted.current) setStatus(await overlayControl.status())
+      await body()
     } catch (error) {
       if (error instanceof HubError && error.code === 'UNAUTHORIZED')
         await current.current.mobile.unpair(error.message)
@@ -481,9 +432,122 @@ function ScreenQuestionControl({ projectId }: { projectId: string }): React.JSX.
     }
   }
 
+  const freshStatus = async (): Promise<OverlayStatus | null> => {
+    const state = await overlayControl.status()
+    if (!mounted.current) return null
+    setStatus(state)
+    return state
+  }
+
+  /** Starts a session on targetProjectId (continuing questionId when given); a running one is restarted. */
+  const start = async (state: OverlayStatus, targetProjectId: string, questionId?: string): Promise<void> => {
+    const initial = current.current
+    // The demo hub has no PC to stream to; show the native toolbar preview instead.
+    if (initial.mobile.demo) {
+      await previewOverlay()
+      return
+    }
+    if (initial.mobile.conn.state !== 'online')
+      throw new Error(t('PC에 연결된 상태에서 화면 질문을 시작해 주세요.'))
+    if (!initial.mobile.data.projects.some((item) => item.id === targetProjectId))
+      throw new Error(t('프로젝트를 찾을 수 없습니다.'))
+    if (!window.confirm(
+      t(
+        '다른 앱 위에 FASK 토글을 표시하고 이번 세션 동안 전체 디스플레이를 공유합니다. 전역 펜 좌표를 맞추려면 전체 화면 공유가 필요합니다. 전체 화면을 자동 전송하지 않으며, 질문 전송 시 선택한 영역만 첨부합니다. 보호된 화면은 캡처되지 않거나 검게 보일 수 있습니다. 계속할까요?'
+      )
+    )) return
+    if (!state.overlayAllowed) {
+      await overlayControl.requestOverlayPermission()
+      if (mounted.current) {
+        setStatus(await overlayControl.status())
+        setMessage(t('다른 앱 위에 표시 권한을 허용한 뒤 화면 위에서 질문 버튼을 다시 눌러 주세요.'))
+      }
+      return
+    }
+    const pairing = await loadPairing()
+    const expected = initial.mobile.pairing
+    if (!pairing || pairing.fingerprint !== expected.fingerprint ||
+        pairing.token !== expected.token || pairing.port !== expected.port ||
+        JSON.stringify(pairing.addresses) !== JSON.stringify(expected.addresses) ||
+        JSON.stringify(pairing.relay ?? null) !== JSON.stringify(expected.relay ?? null))
+      throw new Error(t('페어링이 변경되었습니다. 연결 상태를 확인해 주세요.'))
+    // A cached snapshot must not authorize a new screen-sharing session.
+    const response = await nativeTransport.request(
+      pairing, initial.mobile.client.address(), 'POST', '/rpc/snapshot', '{"args":[]}', 15_000
+    )
+    if (response.status < 200 || response.status >= 300)
+      throw new Error(t('PC의 최신 프로젝트 정보를 확인할 수 없습니다.'))
+    const envelope: unknown = JSON.parse(response.body)
+    if (!envelope || typeof envelope !== 'object' || !('result' in envelope))
+      throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
+    const latest = envelope.result
+    if (!latest || typeof latest !== 'object' ||
+        !('activeProfileId' in latest) || typeof latest.activeProfileId !== 'string' ||
+        !('profiles' in latest) || !Array.isArray(latest.profiles) ||
+        !('projects' in latest) || !Array.isArray(latest.projects) ||
+        !('workspaces' in latest) || !Array.isArray(latest.workspaces) ||
+        !('questions' in latest) || !Array.isArray(latest.questions))
+      throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
+    const now = current.current
+    if (!mounted.current) return
+    if (now.mobile.client !== initial.mobile.client || now.projectId !== initial.projectId ||
+        now.mobile.conn.state !== 'online' ||
+        now.mobile.data.activeProfileId !== initial.mobile.data.activeProfileId)
+      throw new Error(t('현재 화면이나 연결이 변경되었습니다. 다시 시작해 주세요.'))
+    const profileId = latest.activeProfileId
+    const project = latest.projects.find((item) => item.id === targetProjectId)
+    if (profileId !== initial.mobile.data.activeProfileId ||
+        !latest.profiles.some((item) => item.id === profileId) ||
+        !project || !latest.workspaces.some(
+          (item) => item.id === project.workspaceId && item.profileId === profileId
+        ))
+      throw new Error(t('현재 프로필에 프로젝트가 없습니다. 프로젝트를 다시 열어 주세요.'))
+    // Stopped only once every check passed, so a cancelled restart keeps the running session.
+    // Native stop resolves after the session is cleared, so start does not see it as BUSY.
+    if (state.running) {
+      await overlayControl.stop()
+      if (!(await freshStatus())) return
+    }
+    await overlayControl.start({ pairing, profileId, projectId: targetProjectId, ...(questionId ? { questionId } : {}) })
+    if (mounted.current) setStatus(await overlayControl.status())
+  }
+
+  const toggle = (): Promise<void> =>
+    exclusive(async () => {
+      const state = await freshStatus()
+      if (!state) return
+      if (state.running) {
+        await overlayControl.stop()
+        await freshStatus()
+        return
+      }
+      await start(state, projectId)
+    })
+
+  const continueQuestion = (questionId: string, questionProjectId: string): Promise<void> =>
+    exclusive(async () => {
+      const state = await freshStatus()
+      if (state) await start(state, questionProjectId, questionId)
+    })
+
+  return { status, busy, message, toggle, continueQuestion }
+}
+
+function ScreenQuestionControl({
+  status,
+  busy,
+  message,
+  onToggle
+}: {
+  status: OverlayStatus | null
+  busy: boolean
+  message: string
+  onToggle: () => void
+}): React.JSX.Element {
+  const t = useT()
   return (
     <>
-      <button disabled={busy || !status} onClick={() => void act()}>
+      <button disabled={busy || !status} onClick={onToggle}>
         {busy ? t('처리 중…') : status?.running ? t('화면 질문 실행 중 / 종료') : t('화면 위에서 질문')}
       </button>
       {message && <p role="status" className="mobile-header-message">{message}</p>}
@@ -740,13 +804,19 @@ function Detail({
   questionId,
   concepts,
   shared,
-  onReference
+  hostName,
+  onReference,
+  onContinue
 }: {
   projectId: string
   questionId: string
   concepts: Concept[]
   shared: Set<string>
+  /** Linked PC that answers this project's questions; undefined for the hub PC's own projects. */
+  hostName?: string
   onReference: (ref: Reference) => void
+  /** Android: continues this question in the screen-question overlay. */
+  onContinue?: () => void
 }): React.JSX.Element {
   const { data, refresh } = useMobile()
   const api = useApi()
@@ -791,6 +861,7 @@ function Detail({
         shared={shared}
         focusConceptId={params.get('concept')}
         onReference={onReference}
+        onContinue={onContinue}
         run={run}
         onClose={() => navigate(`/p/${projectId}`, { replace: true })}
         onCreateConcept={async (name) => {
@@ -805,6 +876,7 @@ function Detail({
         submitOnEnter={false}
         autoFocus={false}
         projectId={projectId}
+        hostName={hostName}
         profileId={data.activeProfileId}
         settings={data.settings}
         questionId={question.id}

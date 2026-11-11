@@ -59,6 +59,7 @@ function assertSticky(m, label) {
   )
   assert.ok(m.bar.bottom <= m.scroller.bottom, `${label}: bar runs past the scroller`)
   assert.ok(m.nav.length > 0, `${label}: the floating ↑☆ controls did not show`)
+  for (const n of m.nav) assert.ok(n.top >= m.bar.bottom - 0.5, `${label}: the floating ↑☆ controls overlap the bar`)
   for (const b of m.buttons) {
     assert.ok(
       b.left >= m.scroller.left - 0.5 && b.right <= m.scroller.right + 0.5,

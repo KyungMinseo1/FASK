@@ -72,6 +72,12 @@ export function linkableConcepts(data: Snapshot, projectId: string): Concept[] {
   return [...concepts, ...rest]
 }
 
+/** Name of the linked PC that owns `projectId`'s workspace; undefined for this PC's projects. */
+export function projectHostName(data: Snapshot, projectId: string): string | undefined {
+  const workspaceId = data.projects.find((p) => p.id === projectId)?.workspaceId
+  return data.workspaces.find((w) => w.id === workspaceId)?.remote?.name
+}
+
 /** Tag chips a question card shows before the rest collapses into '+N'. */
 export const TAG_CHIPS = 3
 
