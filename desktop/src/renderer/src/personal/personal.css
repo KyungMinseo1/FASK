@@ -1555,6 +1555,10 @@ button.memo-saved:disabled {
   align-items: center;
   margin: 12px 0;
 }
+/* At the note's 340px minimum a label would otherwise break mid-word; the row wraps whole buttons. */
+.detail-action-row button {
+  white-space: nowrap;
+}
 /* -22px is .question-detail's top padding, so the bar meets the scroller edge; the right padding
    leaves room for the floating .turn-nav-top (↑ ☆ ✕), like .concept-turn-nav. */
 .detail-action-row.sticky {

@@ -1785,10 +1785,12 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
   await router.route('open-overlay', ['rp', 'rq'])
   await router.route('active-project', ['rp'])
   await router.route('clear-recent', ['rp'])
+  await router.route('continue-question', ['rp', 'rq'])
   assert.deepEqual(local.slice(1), [
     ['open-overlay', 'rp', 'rq'],
     ['active-project', 'rp'],
-    ['clear-recent', 'rp']
+    ['clear-recent', 'rp'],
+    ['continue-question', 'rp', 'rq']
   ])
   assert.equal(router.remoteProject('rp')?.id, 'rp')
   assert.equal(router.remoteQuestion('rq')?.projectId, 'rp')
@@ -1803,6 +1805,49 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
   router.rebuild()
   assert.equal(router.remoteProject('rp'), undefined)
   assert.equal(router.remoteQuestion('rq'), undefined)
+})
+
+test('linked PC routing: a question created by a forwarded ask routes to its owner before the next snapshot', async () => {
+  const calls: unknown[][] = []
+  const remote: Snapshot = {
+    profiles: [],
+    activeProfileId: 'host-profile',
+    workspaces: [{ id: 'rw', profileId: 'host-profile', name: 'Remote' }],
+    projects: [{ id: 'rp', workspaceId: 'rw', name: 'P', description: '' }],
+    concepts: [],
+    relations: [],
+    questions: [question('rq', 'rp', [turn()])],
+    settings: {} as Snapshot['settings'],
+    storageBytes: 0
+  }
+  const peer = {
+    link: { id: 'peer-a', name: 'PC A' },
+    status: 'online' as PeerStatus,
+    snapshot: remote,
+    rpc: async (name: string, args: unknown[]) => {
+      calls.push([name, ...args])
+      return name === 'ask' ? { questionId: 'new-q', turnId: 't9' } : null
+    }
+  }
+  const local: unknown[][] = []
+  let linkedPeers = [peer]
+  const router = new RemoteRouter(
+    () => linkedPeers,
+    () => false,
+    (name, args) => local.push([name, ...args])
+  )
+  router.rebuild()
+  await router.route('ask', [{ requestId: 'r9', profileId: 'mine', projectId: 'rp', raw: 'q', model: '' }])
+  await router.route('turn-state', ['new-q', 't9'])
+  assert.deepEqual(calls.at(-1), ['turn-state', 'new-q', 't9'])
+  // Stream events can name a new question before the ask reply arrives.
+  router.noteStream('peer-a', { requestId: 'r10', questionId: 'stream-q', turnId: 't10', revision: 1, delta: 'x' })
+  await router.route('turn-state', ['stream-q', 't10'])
+  assert.deepEqual(calls.at(-1), ['turn-state', 'stream-q', 't10'])
+  assert.deepEqual(local, [])
+  linkedPeers = []
+  router.rebuild()
+  assert.equal(router.ownerOf('new-q'), undefined)
 })
 
 test('linked PC: concurrent renames from two PCs converge on both', async () => {
