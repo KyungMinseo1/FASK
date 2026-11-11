@@ -4,6 +4,13 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+### Changed
+- Mobile: the composer's 파일 첨부, 촬영 and 사진 buttons are now one "파일·사진 첨부" button that opens a menu to take a photo, choose an image or choose a file.
+
+### Fixed
+- Mobile: screens no longer run under the Android navigation bar, so the "새 질문" button and the conversation scroll controls stay tappable instead of triggering Back.
+- Mobile (wide layout): the question list scrolls with no question open, question cards have spacing between them, and the list and conversation columns end on the same line.
+
 ## [1.1.8] - 2026-11-10
 
 FASK 1.1.8 lets you choose Korean or English AI prompts, moves settings into a categorized page, and fixes screen questions capturing the wrong monitor.
