@@ -655,7 +655,7 @@ export default function Dashboard(): React.JSX.Element {
                   projectId={project.id}
                   profileId={data.activeProfileId}
                   settings={data.settings}
-                  hostName={workspace?.remote?.name}
+                  host={workspace?.remote}
                   onSaved={(id) => {
                     setSelectedId(id)
                     void refresh()

@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from '../preload/personal'
 import { t } from '../shared/i18n'
 
 export function normalizeEndpoint(value: string): string {
@@ -60,6 +61,7 @@ export async function streamChat(
   model: string,
   messages: WireMessage[],
   signal: AbortSignal,
+  options: { reasoningEffort?: ReasoningEffort },
   delta: (text: string, actualModel?: string) => void
 ): Promise<void> {
   if (!model.trim()) throw new Error('설정에서 사용할 모델을 선택해 주세요.')
@@ -73,7 +75,12 @@ export async function streamChat(
         'Content-Type': 'application/json',
         ...(key ? { Authorization: `Bearer ${key}` } : {})
       },
-      body: JSON.stringify({ model, messages, stream: true })
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {})
+      })
     })
   } catch (e) {
     if (signal.aborted) throw new Error('요청을 취소했습니다.')

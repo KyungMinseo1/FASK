@@ -6,7 +6,8 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ### Added
 - **Expandable question panel**: the overlay question panel can expand to fill the screen and shows the whole recent question; Restore returns to its previous size and position.
-- **Referenced-question panels**: clicking a referenced question in the overlay opens it read-only beside the question panel (up to three) instead of rebuilding the overlay, so pen marks and the current conversation stay. Drag the corner to resize one; the next opens at that size. "Follow up in this conversation" switches the panel to it in place.
+- **Referenced-question panels**: clicking a referenced question in the overlay opens it read-only beside the question panel (up to three) instead of rebuilding the overlay, so pen marks and the current conversation stay. Drag the corner to resize one; the next opens at that size. "Follow up in this conversation" switches the panel to it in place. They hide and return with the question panel (outside click, the question shortcut or the toolbar's 질문 button) at the same place, size and scroll position.
+- **Reasoning effort**: the composer has a 추론 강도 picker (모델 기본값, 낮음, 보통, 높음), sent to the local API as `reasoning_effort` and remembered for the next question.
 - **Resizable question note**: drag the handle between the question list and the note to resize it (double-click resets), or expand the note to the full width; both are remembered. Narrow or portrait windows, such as one snapped to half the screen with Win+←/→, show the list or the open note one at a time.
 - Mobile: "이 대화에 이어서 질문" on a question starts the screen-question overlay on that conversation; a running overlay session restarts on it.
 - Mobile: referenced questions in the screen-question overlay open read-only inside the panel; "대화로 돌아가기" returns to the same spot, and "이 대화에 이어서 질문" switches the panel to that question with pen marks kept.
@@ -16,8 +17,7 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 - The floating ↑☆✕ controls of a question note now sit just below the pinned bar, which takes the full width.
 - Mobile: tablets in portrait show the question list or the open question one at a time.
 - The composer labels the answer model, says which model answers in Auto and Recommend modes, reuses the last model you picked, and shows the model while it writes. Each saved answer shows the model that actually answered. "Save only" was removed.
-- Linked-PC projects say the other PC answers with its own model settings instead of showing a model picker.
-- Mobile: linked-PC projects show that PC's model notice in every composer, including new questions, shared content and the screen-question overlay.
+- Linked-PC projects offer that PC's answer models in the composer (following its Auto and Recommend modes) and remember the pick per PC. A linked PC on an older build still answers with its own model settings.
 - Mobile: the composer's 파일 첨부, 촬영 and 사진 buttons are now one "파일·사진 첨부" button that opens a menu to take a photo, choose an image or choose a file.
 
 ### Fixed

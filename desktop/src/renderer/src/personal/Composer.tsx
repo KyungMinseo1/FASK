@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AskInput,
   LocalSettings,
+  ModelSettings,
+  ReasoningEffort,
   Reference,
   Question,
   TextAttachment,
-  TurnState
+  TurnState,
+  Workspace
 } from '../../../preload/personal'
 import {
   applyDelta,
@@ -32,7 +35,14 @@ const REJECTED = [
   '질문이나 첨부를 추가해 주세요.',
   '질문은 50,000자 이내로 입력해 주세요.',
   '텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.',
-  '같은 요청 ID로 다른 내용을 보낼 수 없습니다.'
+  '같은 요청 ID로 다른 내용을 보낼 수 없습니다.',
+  '모델 이름이 잘못되었습니다.',
+  '추론 강도가 잘못되었습니다.'
+]
+const EFFORTS: { value: ReasoningEffort; label: string }[] = [
+  { value: 'low', label: '낮음' },
+  { value: 'medium', label: '보통' },
+  { value: 'high', label: '높음' }
 ]
 
 interface Props {
@@ -65,8 +75,11 @@ interface Props {
   submitOnEnter?: boolean
   /** Opens a "참고한 지식" chip of the shown answer; chips are hidden when omitted. */
   onReference?: (ref: Reference) => void
-  /** Linked-PC project: that PC answers with its own model settings, so no model picker is shown. */
-  hostName?: string
+  /**
+   * Linked-PC project: that PC answers, so models come from its shared settings. A PC on an older
+   * build shares none; it then picks the model itself and no picker is shown.
+   */
+  host?: Workspace['remote']
 }
 export default function Composer({
   projectId,
@@ -87,13 +100,16 @@ export default function Composer({
   submitOnEnter = true,
   persistDraft = true,
   onReference,
-  hostName
+  host
 }: Props): React.JSX.Element {
   const t = useT()
   const api = useApi()
   const draftKey = `fask:draft:${profileId}:${projectId}`
   const recentTurn = recentQuestion ? lastTurn(recentQuestion) : undefined
-  const lastModelKey = `fask:last-model:${profileId}`
+  // The settings that pick the answer model: the answering PC's own; undefined when it shares none.
+  const modelSettings: ModelSettings | undefined = host ? host.models : settings
+  const lastModelKey = host ? `fask:last-model:${profileId}:peer:${host.peerId}` : `fask:last-model:${profileId}`
+  const effortKey = `fask:reasoning-effort:${profileId}`
   const [raw, setRaw] = useState(
       () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
     ),
@@ -104,10 +120,17 @@ export default function Composer({
       () =>
         [recentTurn?.model, localStorage.getItem(lastModelKey)].find(
           (m): m is string =>
-            !!m && (!settings.models.length || settings.models.includes(m) || m === settings.model)
+            !!m &&
+            !!modelSettings &&
+            (!modelSettings.models.length || modelSettings.models.includes(m) || m === modelSettings.model)
         ) ?? ''
-    )
-  const model = chosenModel || settings.model
+    ),
+    // Remembered across questions and PCs; '' sends no reasoning_effort.
+    [effort, setEffort] = useState<ReasoningEffort | ''>(() => {
+      const saved = localStorage.getItem(effortKey)
+      return EFFORTS.find((e) => e.value === saved)?.value ?? ''
+    })
+  const model = chosenModel || modelSettings?.model || ''
   const [image, setImage] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -395,8 +418,9 @@ export default function Composer({
       await refine()
       return
     }
-    if (!hostName && settings.routing !== 'auto' && model) localStorage.setItem(lastModelKey, model)
-    setSentModel(hostName ? '' : settings.routing === 'auto' ? autoModel : model)
+    const routed = modelSettings?.routing === 'auto'
+    if (modelSettings && !routed && model) localStorage.setItem(lastModelKey, model)
+    setSentModel(!modelSettings ? '' : routed ? autoModel : model)
     // Frozen before capture: later edits or a new questionId never alter this request.
     const base: Omit<AskInput, 'requestId'> = {
       profileId,
@@ -406,7 +430,8 @@ export default function Composer({
       refined,
       model,
       documents: [...documents],
-      useMemory
+      useMemory,
+      ...(effort ? { reasoningEffort: effort } : {})
     }
     setBusy(true)
     setError('')
@@ -443,7 +468,7 @@ export default function Composer({
     if (pending.current && !busy) void submit(pending.current)
   }
   const routing = recommend(raw, !!image || (!!onCapture && includeCapture))
-  const autoModel = routedModel(settings, routing.complexity)
+  const autoModel = modelSettings ? routedModel(modelSettings, routing.complexity) : ''
   const routingChips =
     routing.complexity === 'complex' ? (
       <span>{t('여러 단계의 추론')}</span>
@@ -597,18 +622,23 @@ export default function Composer({
           </button>
         </label>
       )}
-      {hostName ? (
+      {host && (
         <div className="recommendation">
-          <span>{t('{{name}} PC의 모델 설정으로 답변합니다', { name: hostName })}</span>
+          <span>
+            {modelSettings
+              ? t('{{name}} PC의 모델로 답변합니다', { name: host.name })
+              : t('{{name}} PC의 모델 설정으로 답변합니다', { name: host.name })}
+          </span>
         </div>
-      ) : settings.routing === 'auto' ? (
+      )}
+      {modelSettings?.routing === 'auto' ? (
         <div className="recommendation">
           <span>{t('자동 선택')}</span>
           {autoModelName}
           {routingChips}
           <span>{t('이 모델로 답변합니다')}</span>
         </div>
-      ) : settings.routing === 'recommend' ? (
+      ) : modelSettings?.routing === 'recommend' ? (
         <div className="recommendation">
           <span>{t('추천 모델')}</span>
           {autoModelName}
@@ -698,28 +728,47 @@ export default function Composer({
           <Icon name="refine" />
           {t('질문 다듬기')}
         </button>
-        {!hostName && (
-          <label className="model-select">
+        {modelSettings && (
+          <label className="model-select answer-model">
             <span>{t('답변 모델')}</span>
-            {settings.routing === 'auto' ? (
+            {modelSettings.routing === 'auto' ? (
               <select value={autoModel} disabled>
                 <option value="">{t('모델 선택')}</option>
-                {[...new Set([...settings.models, settings.model, model, autoModel].filter(Boolean))].map(
-                  (m) => (
-                    <option key={m}>{m}</option>
-                  )
-                )}
+                {[
+                  ...new Set([...modelSettings.models, modelSettings.model, model, autoModel].filter(Boolean))
+                ].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
               </select>
             ) : (
               <select value={model} disabled={locked} onChange={(e) => setModel(e.target.value)}>
                 <option value="">{t('모델 선택')}</option>
-                {[...new Set([...settings.models, settings.model, model].filter(Boolean))].map((m) => (
+                {[...new Set([...modelSettings.models, modelSettings.model, model].filter(Boolean))].map((m) => (
                   <option key={m}>{m}</option>
                 ))}
               </select>
             )}
           </label>
         )}
+        <label className="model-select effort-select">
+          <span>{t('추론 강도')}</span>
+          <select
+            value={effort}
+            disabled={locked}
+            onChange={(e) => {
+              const next = EFFORTS.find((x) => x.value === e.target.value)?.value ?? ''
+              setEffort(next)
+              localStorage.setItem(effortKey, next)
+            }}
+          >
+            <option value="">{t('모델 기본값')}</option>
+            {EFFORTS.map((e) => (
+              <option key={e.value} value={e.value}>
+                {t(e.label)}
+              </option>
+            ))}
+          </select>
+        </label>
         {running ? (
           <button
             className="danger"

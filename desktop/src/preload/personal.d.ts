@@ -59,6 +59,10 @@ export interface LocalSettings {
   regions: CaptureRegion[]
   displayId?: number
 }
+/** The settings that pick an answer model; a linked PC shares its own with this PC. */
+export type ModelSettings = Pick<LocalSettings, 'model' | 'fastModel' | 'deepModel' | 'models' | 'routing'>
+/** OpenAI-compatible `reasoning_effort`; undefined leaves it to the model's default. */
+export type ReasoningEffort = 'low' | 'medium' | 'high'
 export interface Profile {
   id: string
   name: string
@@ -68,7 +72,13 @@ export interface Workspace {
   profileId: string
   name: string
   /** Set when the workspace lives on a linked PC (read through this PC). */
-  remote?: { peerId: string; name: string; status: PeerStatus }
+  remote?: {
+    peerId: string
+    name: string
+    status: PeerStatus
+    /** That PC's answer-model settings, which its answers use; absent when it runs an older build. */
+    models?: ModelSettings
+  }
   /**
    * Normalized candidate names a tidy offered for promotion and the user left as candidates;
    * tidy does not offer them again.
@@ -265,6 +275,8 @@ export interface AskInput {
   annotated?: boolean
   /** Per-question knowledge override; undefined follows settings.memoryScope. */
   useMemory?: boolean
+  /** Sent as `reasoning_effort`; omitted uses the model's default. */
+  reasoningEffort?: ReasoningEffort
 }
 export interface StreamEvent {
   requestId: string

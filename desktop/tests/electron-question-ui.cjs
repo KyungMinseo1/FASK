@@ -798,23 +798,29 @@ app.whenReady().then(async () => {
       'restore returns the panel to its old geometry'
     )
 
-    // Closing the question panel keeps references open and focusable.
-    await ov("document.querySelector('.panel-close').click()")
+    // Closing the question panel folds its references; reopening brings both back in place.
+    const refBefore = JSON.stringify(await ov("rect('.overlay-ref-panel')"))
+    // The global question shortcut's path (Ctrl+Shift+Space).
+    personal.capture.toggleQuestionPanel()
     await wait(
       () =>
-        ov(`!document.querySelector('${main}') && !!document.querySelector('.overlay-ref-panel')`),
-      'references stay when the question panel folds'
+        ov(
+          `!document.querySelector('${main}') && !!document.querySelector('.overlay-ref-panel.folded') && getComputedStyle(document.querySelector('.overlay-ref-panel')).visibility === 'hidden'`
+        ),
+      'references fold with the question panel'
     )
     await wait(
-      () => personal.capture.panelOpen === true,
-      'an open reference keeps panel focus for typing'
+      () => personal.capture.panelOpen === false,
+      'folded references leave the overlay click-through'
     )
     await ov(
       "[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes('질문')).click()"
     )
     await wait(
-      () => ov(`!!document.querySelector('${main}')`),
-      'question panel reopens next to the reference'
+      async () =>
+        (await ov(`!!document.querySelector('${main}') && !document.querySelector('.overlay-ref-panel.folded')`)) &&
+        JSON.stringify(await ov("rect('.overlay-ref-panel')")) === refBefore,
+      'question panel reopens with its reference in the same place'
     )
 
     // Continue from a reference while the main conversation is still streaming.

@@ -206,7 +206,7 @@ describe('Composer model choice', () => {
       memo: '',
       important: false
     }) as never
-  const select = () => document.querySelector('.model-select select') as HTMLSelectElement | null
+  const select = () => document.querySelector('.answer-model select') as HTMLSelectElement | null
   const label = () => document.querySelector('.live-answer-label')?.textContent
   beforeEach(() => localStorage.clear())
 
@@ -275,15 +275,64 @@ describe('Composer model choice', () => {
     expect(screen.getByText('적용됨')).toBeTruthy()
   })
 
-  it('a linked-PC project hides the picker, names the host, and never remembers a model', async () => {
+  it('a linked PC on an older build hides the picker, names the host, and never remembers a model', async () => {
     localStorage.setItem(lastKey, 'b')
     const hub = fakeHub()
-    mount(hub, { settings: models as never, hostName: 'PC A' })
+    mount(hub, { settings: models as never, host: { peerId: 'pa', name: 'PC A', status: 'online' } })
     expect(select()).toBeNull()
     expect(screen.getByText('PC A PC의 모델 설정으로 답변합니다')).toBeTruthy()
     type('원격 질문')
     await send()
     expect(label()).toBe('답변 작성 중')
     expect(localStorage.getItem(lastKey)).toBe('b')
+  })
+
+  it("a linked PC's shared models are offered and remembered apart from this PC's pick", async () => {
+    localStorage.setItem(lastKey, 'b')
+    const host = {
+      peerId: 'pa',
+      name: 'PC A',
+      status: 'online' as const,
+      models: { model: 'h1', models: ['h1', 'h2'], routing: 'manual' as const, fastModel: '', deepModel: '' }
+    }
+    const hub = fakeHub()
+    mount(hub, { settings: models as never, host })
+    expect(screen.getByText('PC A PC의 모델로 답변합니다')).toBeTruthy()
+    // This PC's last pick 'b' is not on the host, so the host default is used.
+    expect(select()?.value).toBe('h1')
+    expect([...select()!.options].map((o) => o.value)).toEqual(['', 'h1', 'h2'])
+    fireEvent.change(select()!, { target: { value: 'h2' } })
+    type('원격 질문')
+    await send()
+    expect(hub.asks[0].model).toBe('h2')
+    expect(label()).toBe('답변 작성 중h2')
+    expect(localStorage.getItem(lastKey)).toBe('b')
+    cleanup()
+    mount(fakeHub(), { settings: models as never, host })
+    expect(select()?.value).toBe('h2')
+  })
+})
+
+describe('Composer reasoning effort', () => {
+  beforeEach(() => localStorage.clear())
+  const effort = () => document.querySelector('.effort-select select') as HTMLSelectElement
+
+  it('sends no effort by default, then sends and remembers a picked one', async () => {
+    const hub = fakeHub()
+    mount(hub)
+    expect(effort().value).toBe('')
+    type('기본')
+    await send()
+    expect('reasoningEffort' in hub.asks[0]).toBe(false)
+    cleanup()
+    const next = fakeHub()
+    mount(next)
+    fireEvent.change(effort(), { target: { value: 'high' } })
+    type('깊게')
+    await send()
+    expect(next.asks[0].reasoningEffort).toBe('high')
+    cleanup()
+    mount(fakeHub())
+    expect(effort().value).toBe('high')
   })
 })

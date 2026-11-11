@@ -15,7 +15,8 @@ const MIN_W = 320,
 
 /**
  * A question the answer referenced, opened beside the overlay question panel instead of replacing
- * its conversation. Position and size are not persisted; the overlay drops these panels when it closes.
+ * its conversation. It hides and returns with the question panel, keeping position, size and scroll;
+ * nothing is persisted, so the overlay drops these panels when it closes.
  */
 export default function ReferencePanel({
   data,
@@ -31,7 +32,8 @@ export default function ReferencePanel({
   onFront,
   onClose,
   onContinue,
-  onReference
+  onReference,
+  folded
 }: {
   data: Snapshot
   question: Question
@@ -48,6 +50,8 @@ export default function ReferencePanel({
   onClose: () => void
   onContinue?: () => void
   onReference: (ref: Reference) => void
+  /** The question panel is folded: stay mounted and laid out (scroll, drafts) but invisible and unclickable. */
+  folded: boolean
 }): React.JSX.Element {
   const t = useT()
   const w = Math.min(width, innerWidth - 16),
@@ -84,7 +88,8 @@ export default function ReferencePanel({
   }
   return (
     <section
-      className="overlay-panel overlay-ref-panel"
+      className={`overlay-panel overlay-ref-panel${folded ? ' folded' : ''}`}
+      aria-hidden={folded || undefined}
       aria-label={t('참고한 질문')}
       style={{ left, top, width: w, height: h }}
       onPointerDownCapture={onFront}

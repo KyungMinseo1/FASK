@@ -12,7 +12,7 @@ import ProjectPicker from './ProjectPicker'
 import { Icon } from './ToolbarIcons'
 import { MarkF } from './Wordmark'
 import { errorText, useSnapshot } from './common'
-import { linkableConcepts, projectConcepts, projectHostName } from './questionTree'
+import { linkableConcepts, projectConcepts, projectHost } from './questionTree'
 import './personal.css'
 import { useT } from '../../../shared/i18n/react'
 import { answerJustCompleted, questionHeading } from '../../../shared/questions'
@@ -373,16 +373,19 @@ export default function Overlay(): React.JSX.Element {
   }, [])
   useLayoutEffect(() => {
     const update = (): void => {
-      const regions = [...document.querySelectorAll(HIT_SELECTOR)].map((el) => {
-        const r = el.getBoundingClientRect()
-        return { x: r.x, y: r.y, width: r.width, height: r.height }
-      })
+      // Folded references keep their layout (and scroll) but must not catch clicks.
+      const regions = [...document.querySelectorAll(HIT_SELECTOR)]
+        .filter((el) => !el.classList.contains('folded'))
+        .map((el) => {
+          const r = el.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        })
       // The popover holds focus like the panel, so a background click blurs and closes it.
       void window.fask
         .overlayRegions(
           mode !== 'idle' || panelInteraction,
           regions,
-          panel || refs.length > 0 || !!picker || captureSettingsOpen
+          panel || !!picker || captureSettingsOpen
         )
         .catch(() => {})
     }
@@ -473,7 +476,7 @@ export default function Overlay(): React.JSX.Element {
   }
   const project = data?.projects.find((p) => p.id === projectId)
   const projectName = project?.name ?? ''
-  const remoteName = data ? projectHostName(data, projectId) : undefined
+  const host = data ? projectHost(data, projectId) : undefined
   const heading = recent ? questionHeading(recent).replace(/\s+/g, ' ').trim() : ''
   const headingChars = [...heading]
   const threadName =
@@ -788,7 +791,7 @@ export default function Overlay(): React.JSX.Element {
             <div>
               <small>
                 {projectName || t('화면 질문')}
-                {remoteName && <Icon name="globe" size={12} />}
+                {host && <Icon name="globe" size={12} />}
               </small>
               {project && (
                 <b className="overlay-panel-thread" title={heading || undefined}>
@@ -893,7 +896,7 @@ export default function Overlay(): React.JSX.Element {
                 projectId={projectId}
                 profileId={profileId}
                 settings={data.settings}
-                hostName={remoteName}
+                host={host}
                 questionId={questionId}
                 recentQuestion={recent}
                 onReference={openReference}
@@ -1025,6 +1028,7 @@ export default function Overlay(): React.JSX.Element {
                 onClose={() => setRefs((list) => list.filter((e) => e.id !== r.id))}
                 onContinue={q.id === questionId ? undefined : () => continueConversation(q)}
                 onReference={openReference}
+                folded={!panel}
               />
             )
           )

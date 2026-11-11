@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { App } from '@capacitor/app'
-import type { Concept, Question, Reference } from '@desktop/preload/personal'
+import type { Concept, Question, Reference, Workspace } from '@desktop/preload/personal'
 import {
   filterQuestions,
   lastTurn,
@@ -290,7 +290,7 @@ export default function ProjectScreen(): React.JSX.Element {
       questionId={questionId}
       concepts={linkable}
       shared={shared}
-      hostName={workspace?.remote?.name}
+      host={workspace?.remote}
       onReference={onReference}
       onContinue={isAndroidOverlay() ? () => void screen.continueQuestion(questionId, projectId) : undefined}
     />
@@ -804,7 +804,7 @@ function Detail({
   questionId,
   concepts,
   shared,
-  hostName,
+  host,
   onReference,
   onContinue
 }: {
@@ -813,7 +813,7 @@ function Detail({
   concepts: Concept[]
   shared: Set<string>
   /** Linked PC that answers this project's questions; undefined for the hub PC's own projects. */
-  hostName?: string
+  host?: Workspace['remote']
   onReference: (ref: Reference) => void
   /** Android: continues this question in the screen-question overlay. */
   onContinue?: () => void
@@ -876,7 +876,7 @@ function Detail({
         submitOnEnter={false}
         autoFocus={false}
         projectId={projectId}
-        hostName={hostName}
+        host={host}
         profileId={data.activeProfileId}
         settings={data.settings}
         questionId={question.id}

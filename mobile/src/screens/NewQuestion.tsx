@@ -1,6 +1,6 @@
 import { useNavigate, useParams } from 'react-router'
 import Composer from '@desktop/renderer/src/personal/Composer'
-import { projectHostName } from '@desktop/renderer/src/personal/questionTree'
+import { projectHost } from '@desktop/renderer/src/personal/questionTree'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
 import { Icon } from '../icons'
@@ -25,7 +25,7 @@ export default function NewQuestion(): React.JSX.Element {
         <Composer
           submitOnEnter={false}
           projectId={projectId}
-          hostName={projectHostName(data, projectId)}
+          host={projectHost(data, projectId)}
           profileId={data.activeProfileId}
           settings={data.settings}
           mediaActions={mediaActions()}

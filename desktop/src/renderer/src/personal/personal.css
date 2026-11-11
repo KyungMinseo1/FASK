@@ -2481,6 +2481,11 @@ button.memo-saved:disabled {
   margin: 0;
   padding: 14px;
 }
+/* A folded question panel takes its references along. Laid out but invisible, so each keeps its
+   scroll position; the overlay leaves it out of its click regions. */
+.overlay-ref-panel.folded {
+  visibility: hidden;
+}
 /* Here the scroller is .overlay-panel-content (no padding), not the note itself, so the bar pins at 0. */
 .overlay-ref-panel .detail-action-row.sticky {
   top: 0;

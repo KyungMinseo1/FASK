@@ -3,7 +3,8 @@ import type {
   ConceptLevel,
   Question,
   RelationType,
-  Snapshot
+  Snapshot,
+  Workspace
 } from '../../../preload/personal'
 import { questionHeading } from '../../../shared/questions'
 import type { MindNode } from '../lib/trees'
@@ -72,10 +73,10 @@ export function linkableConcepts(data: Snapshot, projectId: string): Concept[] {
   return [...concepts, ...rest]
 }
 
-/** Name of the linked PC that owns `projectId`'s workspace; undefined for this PC's projects. */
-export function projectHostName(data: Snapshot, projectId: string): string | undefined {
+/** The linked PC that owns `projectId`'s workspace and answers its questions; undefined for this PC's projects. */
+export function projectHost(data: Snapshot, projectId: string): Workspace['remote'] {
   const workspaceId = data.projects.find((p) => p.id === projectId)?.workspaceId
-  return data.workspaces.find((w) => w.id === workspaceId)?.remote?.name
+  return data.workspaces.find((w) => w.id === workspaceId)?.remote
 }
 
 /** Tag chips a question card shows before the rest collapses into '+N'. */

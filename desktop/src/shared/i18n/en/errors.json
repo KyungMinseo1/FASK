@@ -105,6 +105,8 @@
   "질문이나 첨부를 추가해 주세요.": "Add a question or an attachment.",
   "질문은 50,000자 이내로 입력해 주세요.": "Questions must be 50,000 characters or fewer.",
   "텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.": "Up to 5 text attachments, 100,000 characters in total.",
+  "모델 이름이 잘못되었습니다.": "Invalid model name.",
+  "추론 강도가 잘못되었습니다.": "Invalid reasoning effort.",
   "편집 미리보기가 없습니다.": "No editor preview.",
   "오버레이를 먼저 열어 주세요.": "Open the overlay first.",
   "프로젝트가 다른 질문입니다.": "That question belongs to another project.",

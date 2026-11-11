@@ -5,6 +5,7 @@ import type {
   AskInput,
   AskResult,
   ManagerState,
+  ModelSettings,
   Project,
   Question,
   Snapshot,
@@ -105,6 +106,27 @@ export interface RemotePeer {
   rpc(name: string, args: unknown[], options?: { retry?: boolean }): Promise<unknown>
 }
 
+/** A linked PC's answer-model settings from its snapshot; undefined when malformed. */
+function hostModels(s: Snapshot): ModelSettings | undefined {
+  const v = s.settings as Partial<ModelSettings> | undefined
+  if (
+    !v ||
+    typeof v.model !== 'string' ||
+    typeof v.fastModel !== 'string' ||
+    typeof v.deepModel !== 'string' ||
+    !Array.isArray(v.models) ||
+    !['manual', 'recommend', 'auto'].includes(v.routing as string)
+  )
+    return undefined
+  return {
+    model: v.model,
+    fastModel: v.fastModel,
+    deepModel: v.deepModel,
+    models: v.models.filter((m): m is string => typeof m === 'string'),
+    routing: v.routing as ModelSettings['routing']
+  }
+}
+
 type Part = Pick<Snapshot, 'workspaces' | 'projects' | 'concepts' | 'relations' | 'questions'> & { peer: RemotePeer }
 
 // Which argument names the record a call acts on.
@@ -202,7 +224,8 @@ export class RemoteRouter {
     out.questions = [...local.questions]
     for (const part of this.parts) {
       const remote = { peerId: part.peer.link.id, name: part.peer.link.name, status: part.peer.status }
-      out.workspaces.push(...part.workspaces.map((w) => ({ ...w, remote })))
+      const models = part.peer.snapshot ? hostModels(part.peer.snapshot) : undefined
+      out.workspaces.push(...part.workspaces.map((w) => ({ ...w, remote: models ? { ...remote, models } : remote })))
       out.projects.push(...part.projects)
       out.concepts.push(...part.concepts)
       out.relations.push(...part.relations)
@@ -279,8 +302,8 @@ export class RemoteRouter {
     if (name === 'export') throw new Error(REMOTE_UNSUPPORTED)
     const peer = this.peer(owner)
     if (name === 'ask') {
-      // The host answers with its own AI settings and active profile.
-      const input = { ...(args[0] as AskInput), profileId: peer.snapshot?.activeProfileId ?? '', model: '' }
+      // The host answers with its own endpoint and active profile; the model is picked from its list.
+      const input = { ...(args[0] as AskInput), profileId: peer.snapshot?.activeProfileId ?? '' }
       this.runs.set(input.requestId, owner)
       const result = (await peer.rpc('ask', [input], { retry: true })) as AskResult
       if (result?.turnId) this.runs.set(result.turnId, owner)

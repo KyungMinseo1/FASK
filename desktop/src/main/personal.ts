@@ -341,6 +341,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         }
       ],
       signal,
+      {},
       (t) => {
         result += t
       }
@@ -631,6 +632,11 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       documents.reduce((sum, d) => sum + d.text.length, 0) > 100000
     )
       throw new Error('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.')
+    if (input.model !== undefined && (typeof input.model !== 'string' || input.model.length > 200))
+      throw new Error('모델 이름이 잘못되었습니다.')
+    const effort = input.reasoningEffort
+    if (effort !== undefined && !['low', 'medium', 'high'].includes(effort))
+      throw new Error('추론 강도가 잘못되었습니다.')
     const profile = store.active,
       settings = store.settings(profile),
       routing = recommend(input.raw, !!input.image)
@@ -650,7 +656,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           documents,
           saveOnly,
           annotated,
-          input.useMemory ?? null
+          input.useMemory ?? null,
+          effort ?? ''
         ])
       )
       .digest('hex')
@@ -793,6 +800,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           model,
           messages,
           controller.signal,
+          { reasoningEffort: effort },
           (delta, actualModel) => {
             state.answer += delta
             state.revision += 1

@@ -9,7 +9,7 @@ import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import {
   linkableConcepts,
   projectConcepts,
-  projectHostName
+  projectHost
 } from '@desktop/renderer/src/personal/questionTree'
 import TurnNav from '@desktop/renderer/src/personal/TurnNav'
 import { t } from '@desktop/shared/i18n'
@@ -435,7 +435,7 @@ export default function OverlayPanel({
               submitOnEnter={false}
               key={composerKey}
               projectId={projectId}
-              hostName={projectHostName(data, projectId)}
+              host={projectHost(data, projectId)}
               profileId={boot.profileId}
               settings={data.settings}
               questionId={questionId}

@@ -91,8 +91,11 @@ export default function TurnNav({
       if (!el) return
       const r = el.getBoundingClientRect()
       const t = Math.max(0, r.top)
+      // A folded overlay reference stays laid out but invisible; its corner must not reveal anything.
+      const invisible = anchor.current?.checkVisibility?.({ visibilityProperty: true }) === false
       setNearTop(
-        e.clientX <= r.right &&
+        !invisible &&
+          e.clientX <= r.right &&
           e.clientX >= r.right - CORNER_W &&
           e.clientY >= t &&
           e.clientY <= controlsTopRef.current + CORNER_H - 12
