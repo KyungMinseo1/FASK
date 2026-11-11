@@ -6,7 +6,7 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ### Added
 - **Expandable question panel**: the overlay question panel can expand to fill the screen and shows the whole recent question; Restore returns to its previous size and position.
-- **Referenced-question panels**: clicking a referenced question in the overlay opens it read-only beside the question panel (up to three) instead of rebuilding the overlay, so pen marks and the current conversation stay. "Follow up in this conversation" switches the panel to it in place.
+- **Referenced-question panels**: clicking a referenced question in the overlay opens it read-only beside the question panel (up to three) instead of rebuilding the overlay, so pen marks and the current conversation stay. Drag the corner to resize one; the next opens at that size. "Follow up in this conversation" switches the panel to it in place.
 - **Resizable question note**: drag the handle between the question list and the note to resize it (double-click resets), or expand the note to the full width; both are remembered. Narrow or portrait windows, such as one snapped to half the screen with Win+←/→, show the list or the open note one at a time.
 
 ### Changed
