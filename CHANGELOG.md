@@ -4,6 +4,8 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-11-12
+
 ### Added
 - **Expandable question panel**: the overlay question panel can expand to fill the screen and shows the whole recent question; Restore returns to its previous size and position.
 - **Referenced-question panels**: clicking a referenced question in the overlay opens it read-only beside the question panel (up to three) instead of rebuilding the overlay, so pen marks and the current conversation stay. Drag the corner to resize one; the next opens at that size. "Follow up in this conversation" switches the panel to it in place. They hide and return with the question panel (outside click, the question shortcut or the toolbar's 질문 button) at the same place, size and scroll position.
