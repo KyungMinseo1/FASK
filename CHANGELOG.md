@@ -11,6 +11,11 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 - **Resizable question note**: drag the handle between the question list and the note to resize it (double-click resets), or expand the note to the full width; both are remembered. Narrow or portrait windows, such as one snapped to half the screen with Win+←/→, show the list or the open note one at a time.
 - Mobile: "이 대화에 이어서 질문" on a question starts the screen-question overlay on that conversation; a running overlay session restarts on it.
 - Mobile: referenced questions in the screen-question overlay open read-only inside the panel; "대화로 돌아가기" returns to the same spot, and "이 대화에 이어서 질문" switches the panel to that question with pen marks kept.
+- **Notification history**: handled notifications fade out of the list and are kept per device under "지난 내역" (accepted, rejected, applied, reviewed, dismissed, with tidy result counts). The bell opens straight to history when nothing is new, and the popover closes itself after the last new item is handled.
+- **Resizable, collapsible sidebar**: drag the desktop sidebar's right edge to resize it (200–360px, double-click resets), or collapse it from the button beside the logo; both are remembered. While collapsed, the expand button and the notification bell sit at the start of the breadcrumb.
+- **Copy LaTeX**: block math in answers has a copy button that copies its TeX source.
+- Long-pressing a movable graph node shows a ring that fills until the node can be dragged.
+- Mobile: the notification center, with a bell on the home and project screens that opens a bottom sheet. Tidy jobs started on the phone now notify too.
 
 ### Changed
 - The question note keeps "Follow up in this conversation", Concepts and Notes in a bar pinned to the top while scrolling; concepts and notes open from it instead of sitting below the last turn.
@@ -19,6 +24,9 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 - The composer labels the answer model, says which model answers in Auto and Recommend modes, reuses the last model you picked, and shows the model while it writes. Each saved answer shows the model that actually answered. "Save only" was removed.
 - Linked-PC projects offer that PC's answer models in the composer (following its Auto and Recommend modes) and remember the pick per PC. A linked PC on an older build still answers with its own model settings.
 - Mobile: the composer's 파일 첨부, 촬영 and 사진 buttons are now one "파일·사진 첨부" button that opens a menu to take a photo, choose an image or choose a file.
+- Question lists show 10 questions per page instead of 20.
+- A tidy plan with nothing to change shows a single "확인" in its notification instead of opening an empty review dialog.
+- The notification popover was redesigned with icons, tabs and a close button.
 
 ### Fixed
 - A new question asked on a linked PC's project, from this PC or from the phone, no longer fails with "현재 프로필에서 항목을 찾을 수 없습니다."
@@ -26,6 +34,8 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 - Mobile: screens no longer run under the Android navigation bar, so the "새 질문" button and the conversation scroll controls stay tappable instead of triggering Back.
 - Mobile (wide layout): the question list scrolls with no question open, question cards have spacing between them, and the list and conversation columns end on the same line.
 - Mobile: the pinned note bar no longer slips under the top edge, and the model picker and note bar buttons are full touch size again.
+- Copying selected text that contains math pastes each formula once as `$…$` TeX, instead of twice as plain and italic text.
+- Long-pressing the root or "미분류" graph node no longer shows the drag hint.
 
 ## [1.1.8] - 2026-11-10
 
