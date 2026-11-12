@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { CapacitorShareTarget } from '@capgo/capacitor-share-target'
 import { ApiContext } from '@desktop/renderer/src/personal/api'
+import { NotificationsProvider } from '@desktop/renderer/src/personal/notifications'
 import { dateLabel, useSnapshot } from '@desktop/renderer/src/personal/common'
 import { MobileContext, type PendingShare } from './context'
 import { createHubClient, type HubClient, type HubConn } from './hub'
@@ -146,22 +147,23 @@ export default function MobileApp(): React.JSX.Element {
     )
   return (
     <ApiContext.Provider value={client}>
-      <Shell
-        // Remount on demo switch so no screen state or profile tracking crosses hubs.
-        key={demo ? 'demo' : 'hub'}
-        client={client}
-        pairing={demo ? DEMO_PAIRING : pairing!}
-        demo={demo}
-        enterDemo={() => {
-          setDemo(true)
-          navigate('/', { replace: true })
-        }}
-        conn={conn}
-        share={share}
-        notice={notice}
-        setNotice={setNotice}
-        unpair={unpair}
-      />
+      {/* Remount on demo switch so no screen state, profile tracking or polling crosses hubs. */}
+      <NotificationsProvider key={demo ? 'demo' : 'hub'} sheet>
+        <Shell
+          client={client}
+          pairing={demo ? DEMO_PAIRING : pairing!}
+          demo={demo}
+          enterDemo={() => {
+            setDemo(true)
+            navigate('/', { replace: true })
+          }}
+          conn={conn}
+          share={share}
+          notice={notice}
+          setNotice={setNotice}
+          unpair={unpair}
+        />
+      </NotificationsProvider>
     </ApiContext.Provider>
   )
 }

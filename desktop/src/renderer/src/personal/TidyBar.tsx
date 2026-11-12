@@ -3,23 +3,9 @@ import { useApi } from './api'
 import { errorText } from './common'
 import { useNotifications } from './notifications'
 import { Icon } from './ToolbarIcons'
-import TidyDialog from './TidyDialog'
+import TidyDialog, { RESULT_PARTS } from './TidyDialog'
 import { useT } from '../../../shared/i18n/react'
 import type { TidyEstimate, TidyResult, TidyStatus } from '../../../preload/personal'
-
-/** Result counters in display order with their Korean source labels. */
-const RESULT_PARTS: [keyof Omit<TidyResult, 'skipped'>, string][] = [
-  ['merged', '병합 {{n}}'],
-  ['folded', '흡수 {{n}}'],
-  ['demoted', '후보로 되돌림 {{n}}'],
-  ['renamed', '이름 정리 {{n}}'],
-  ['promoted', '후보 승격 {{n}}'],
-  ['parents', '상위 개념 {{n}}'],
-  ['moved', '이동 {{n}}'],
-  ['unrelated', '관계 정리 {{n}}'],
-  ['retagged', '태그 재판정 {{n}}'],
-  ['movedQuestions', '질문 이동 {{n}}']
-]
 
 /**
  * The workspace tidy at a glance: with no job, '정리 제안 n건 · 태그 재판정 질문 r개 · 입력 약 k

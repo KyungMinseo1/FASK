@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import type { PeerStatus } from '@desktop/preload/personal'
 import { useT } from '@desktop/shared/i18n/react'
 import { Wordmark } from '@desktop/renderer/src/personal/Wordmark'
+import { NotificationBell } from '@desktop/renderer/src/personal/notifications'
 import { useMobile } from '../context'
 import { Icon } from '../icons'
 
@@ -22,6 +23,7 @@ export default function Home(): React.JSX.Element {
         <h1>
           <Wordmark />
         </h1>
+        <NotificationBell compact />
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className="mobile-body">

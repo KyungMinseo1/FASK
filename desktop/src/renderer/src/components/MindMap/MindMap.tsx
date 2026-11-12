@@ -74,23 +74,34 @@ const LONG_PRESS_MS = 380
 const HOVER_EXPAND_MS = 650
 const MOVE_SLOP = 6
 
+/** Where a pending long press is held, in ReactFlow-root coordinates; drives the hold gauge. */
+type Pressing = { id: string; x: number; y: number; touch: boolean; seq: number }
+
 /**
  * Long press arms a node for moving: hold still for LONG_PRESS_MS, then drag.
  * A drag that starts earlier is ignored, so quick drags never move anything by accident.
+ * Only ids in `movable` arm; other nodes never start a press.
  */
-function useLongPress(enabled: boolean): {
+function useLongPress(
+  enabled: boolean,
+  movable: React.RefObject<Set<string>>
+): {
   armed: string | null
   /** Ctrl/Cmd was down when the press started. */
   ctrlAtPress: boolean
+  pressing: Pressing | null
   disarm: () => void
   onPointerDown: (e: ReactPointerEvent) => void
 } {
   const [armed, setArmed] = useState<string | null>(null)
   const [ctrlAtPress, setCtrlAtPress] = useState(false)
+  const [pressing, setPressing] = useState<Pressing | null>(null)
+  const seq = useRef(0)
   const press = useRef<{ timer: number; x: number; y: number } | null>(null)
   const cancel = useCallback(() => {
     if (press.current) clearTimeout(press.current.timer)
     press.current = null
+    setPressing(null)
   }, [])
   useEffect(() => {
     if (!enabled) return
@@ -118,22 +129,34 @@ function useLongPress(enabled: boolean): {
     (e: ReactPointerEvent) => {
       if (!enabled || e.button !== 0) return
       const id = (e.target as Element).closest('.react-flow__node')?.getAttribute('data-id')
-      if (!id) return
+      if (!id || !movable.current.has(id)) return
       cancel()
       setCtrlAtPress(e.ctrlKey || e.metaKey)
+      // The app root may be CSS-zoomed; convert client px to the box's layout px.
+      const box = e.currentTarget as HTMLElement
+      const rect = box.getBoundingClientRect()
+      const scale = box.offsetWidth / rect.width || 1
+      setPressing({
+        id,
+        x: (e.clientX - rect.left) * scale,
+        y: (e.clientY - rect.top) * scale,
+        touch: e.pointerType === 'touch',
+        seq: ++seq.current
+      })
       press.current = {
         x: e.clientX,
         y: e.clientY,
         timer: window.setTimeout(() => {
           press.current = null
+          setPressing(null)
           setArmed(id)
           navigator.vibrate?.(15)
         }, LONG_PRESS_MS)
       }
     },
-    [enabled, cancel]
+    [enabled, cancel, movable]
   )
-  return { armed, ctrlAtPress, disarm: () => setArmed(null), onPointerDown }
+  return { armed, ctrlAtPress, pressing, disarm: () => setArmed(null), onPointerDown }
 }
 
 function MindMapInner({
@@ -155,7 +178,8 @@ function MindMapInner({
   const nodesInitialized = useNodesInitialized()
   // Only the root and its direct children are visible initially (max-depth = 1).
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([root.id]))
-  const press = useLongPress(!!onMoveNode)
+  const movableRef = useRef<Set<string>>(new Set())
+  const press = useLongPress(!!onMoveNode, movableRef)
   const armed = press.armed
   // Live Ctrl state while a node is held, so the hint can say "copy" before the drop.
   const [ctrl, setCtrl] = useState(false)
@@ -234,6 +258,7 @@ function MindMapInner({
       })),
     [layout.nodes, onMoveNode, canMove, markQuestions, highlight, lit]
   )
+  movableRef.current = new Set(baseNodes.filter((n) => n.draggable).map((n) => n.id))
 
   // During a drag only the dragged node and the drop target get new objects; the rest keep
   // their identity so they don't re-render on every pointer move.
@@ -546,6 +571,27 @@ function MindMapInner({
           </button>
         </div>
       </div>
+      {press.pressing && (
+        <div
+          key={press.pressing.seq}
+          className={`graph-hold${press.pressing.touch ? ' touch' : ''}`}
+          style={
+            {
+              left: press.pressing.x,
+              top: press.pressing.y,
+              '--hold-ms': `${LONG_PRESS_MS}ms`
+            } as React.CSSProperties
+          }
+          aria-hidden="true"
+        >
+          <span className="graph-hold-half right">
+            <i />
+          </span>
+          <span className="graph-hold-half left">
+            <i />
+          </span>
+        </div>
+      )}
       {armed && (
         <div className={`graph-hint${copying ? ' copy' : ''}`}>
           {copying

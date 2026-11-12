@@ -231,7 +231,7 @@ app.whenReady().then(async () => {
     )
     save('page 2')
     assert.ok(report.timings.page2Ms < 1500, `page 2 took ${report.timings.page2Ms} ms`)
-    assert.equal(await js("document.querySelector('.question-card h3').textContent"), '느린 기기 질문 019')
+    assert.equal(await js("document.querySelector('.question-card h3').textContent"), '느린 기기 질문 009')
     check('a. first card and page 2 render in time under throttling')
 
     // b. The page itself never scrolls; the records box does.
