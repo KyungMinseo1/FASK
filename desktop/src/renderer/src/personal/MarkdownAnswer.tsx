@@ -1,11 +1,12 @@
 import { memo, useRef } from 'react'
 import CopyButton from './CopyButton'
 import { Icon } from './ToolbarIcons'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
+import 'katex/contrib/copy-tex'
 import { useT } from '../../../shared/i18n/react'
 import { previewSource } from './preview-source'
 
@@ -23,6 +24,43 @@ function normalizeMath(text: string): string {
     .join('')
 }
 
+type HastNode = {
+  type: string
+  tagName?: string
+  properties?: { className?: unknown }
+  children?: HastNode[]
+}
+
+/** rehype-katex turns `$$` blocks into `span.katex-display`; wrap each in a figure so it gets a copy button. */
+function rehypeMathBlock(): (tree: HastNode) => void {
+  const wrap = (node: HastNode): void => {
+    node.children?.forEach((child, i, siblings) => {
+      const className = child.properties?.className
+      if (
+        child.type === 'element' &&
+        child.tagName === 'span' &&
+        Array.isArray(className) &&
+        className.includes('katex-display')
+      ) {
+        siblings[i] = {
+          type: 'element',
+          tagName: 'figure',
+          properties: { className: ['markdown-math'] },
+          children: [child]
+        }
+      } else wrap(child)
+    })
+  }
+  return wrap
+}
+
+const KATEX: NonNullable<Options['rehypePlugins']>[number] = [
+  rehypeKatex,
+  { throwOnError: false, strict: 'ignore' }
+]
+const PREVIEW_REHYPE: Options['rehypePlugins'] = [KATEX]
+const FULL_REHYPE: Options['rehypePlugins'] = [KATEX, rehypeMathBlock]
+
 function CodeBlock({ children }: { children?: React.ReactNode }): React.JSX.Element {
   const t = useT()
   const ref = useRef<HTMLPreElement>(null)
@@ -31,6 +69,24 @@ function CodeBlock({ children }: { children?: React.ReactNode }): React.JSX.Elem
       <CopyButton text={() => ref.current?.textContent ?? ''} label={t('코드 복사')} />
       <pre ref={ref}>{children}</pre>
     </div>
+  )
+}
+
+function MathBlock({ children }: { children?: React.ReactNode }): React.JSX.Element {
+  const t = useT()
+  const ref = useRef<HTMLElement>(null)
+  return (
+    <figure className="markdown-math" ref={ref}>
+      <CopyButton
+        text={() =>
+          ref.current
+            ?.querySelector('annotation[encoding="application/x-tex"]')
+            ?.textContent?.trim() ?? ''
+        }
+        label={t('LaTeX 복사')}
+      />
+      {children}
+    </figure>
   )
 }
 
@@ -47,7 +103,7 @@ function MarkdownAnswer({
     <div className={preview ? 'markdown-answer markdown-answer-preview' : 'markdown-answer'}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}
+        rehypePlugins={preview ? PREVIEW_REHYPE : FULL_REHYPE}
         skipHtml
         components={{
           a: ({ href, children }) =>
@@ -76,7 +132,7 @@ function MarkdownAnswer({
                   </span>
                 )
               }
-            : { pre: CodeBlock })
+            : { pre: CodeBlock, figure: MathBlock })
         }}
       >
         {normalizeMath(preview ? previewSource(children) : children)}

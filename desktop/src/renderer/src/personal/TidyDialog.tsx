@@ -19,6 +19,19 @@ import type {
 } from '../../../preload/personal'
 
 type Kind = TidyChange['kind']
+/** Result counters in display order with their Korean source labels. */
+export const RESULT_PARTS: [keyof Omit<TidyResult, 'skipped'>, string][] = [
+  ['merged', '병합 {{n}}'],
+  ['folded', '흡수 {{n}}'],
+  ['demoted', '후보로 되돌림 {{n}}'],
+  ['renamed', '이름 정리 {{n}}'],
+  ['promoted', '후보 승격 {{n}}'],
+  ['parents', '상위 개념 {{n}}'],
+  ['moved', '이동 {{n}}'],
+  ['unrelated', '관계 정리 {{n}}'],
+  ['retagged', '태그 재판정 {{n}}'],
+  ['movedQuestions', '질문 이동 {{n}}']
+]
 /** Review order, group headings and the one-line explanation shown under a heading. */
 const GROUPS: [Kind, string, string?][] = [
   ['merge', '병합'],
@@ -87,7 +100,7 @@ export default function TidyDialog({
 }): React.JSX.Element {
   const t = useT()
   const api = useApi()
-  const { watchTidy, watchManager } = useNotifications()
+  const { watchTidy, watchManager, record } = useNotifications()
   const [busy, setBusy] = useState(false)
   const [applying, setApplying] = useState(false)
   // The job tidyStart returned, shown until the parent passes a newer status.
@@ -125,13 +138,16 @@ export default function TidyDialog({
     }
   }, [proposal])
 
+  // Escape closes; the empty view counts as reviewed (see `dismiss`). Read through a ref so the
+  // listener always sees the current view.
+  const dismissRef = useRef<() => void>(() => {})
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !applying) onClose()
+      if (e.key === 'Escape') dismissRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [applying, onClose])
+  }, [])
 
   const start = async (): Promise<void> => {
     setError('')
@@ -169,6 +185,22 @@ export default function TidyDialog({
         [...accepted].sort((a, b) => a - b),
         [...skip].sort((a, b) => a - b)
       )
+      const parts = RESULT_PARTS.filter(([k]) => result[k] > 0).map(([k, label]) => ({ label, n: result[k] }))
+      if (parts.length)
+        record({
+          icon: 'modelOrganize',
+          text: '{{name}} 정리안을 적용했습니다.',
+          vars: { name: workspaceName },
+          outcome: '적용함',
+          parts
+        })
+      else
+        record({
+          icon: 'modelOrganize',
+          text: '{{name}} 정리안 검토를 마쳤습니다. 바뀐 항목은 없습니다.',
+          vars: { name: workspaceName },
+          outcome: '검토 완료'
+        })
       onApplied(result)
       onClose()
     } catch (e) {
@@ -178,6 +210,13 @@ export default function TidyDialog({
       setApplying(false)
     }
   }
+  /** Escape or a backdrop click: on the empty view this finishes the review instead of leaving it pending. */
+  const dismiss = (): void => {
+    if (applying) return
+    if (view === 'empty' && !error) void apply(new Set(), new Set())
+    else onClose()
+  }
+  dismissRef.current = dismiss
 
   const level = (l: TidyPlacement['levelFrom']): string => t(LEVEL_LABELS[l])
   const placement = (p: TidyPlacement, to: string): string =>
@@ -302,7 +341,7 @@ export default function TidyDialog({
   const shownError = error || job?.error || ''
 
   return createPortal(
-    <div className={`modal-backdrop${sheet ? ' tidy-sheet' : ''}`} onClick={() => !applying && onClose()}>
+    <div className={`modal-backdrop${sheet ? ' tidy-sheet' : ''}`} onClick={dismiss}>
       <section
         className="create-modal tidy-dialog"
         role="dialog"

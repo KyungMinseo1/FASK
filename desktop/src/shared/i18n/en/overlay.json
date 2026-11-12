@@ -103,6 +103,7 @@
   "캡처 영역 설정": "Set capture area",
   "캡처 포함을 선택하면 질문 전송 시 촬영합니다.": "With capture on, a screenshot is taken when you send.",
   "코드 복사": "Copy code",
+  "LaTeX 복사": "Copy LaTeX",
   "클릭해서 펼치기, 끌어서 이동": "Click to expand, drag to move",
   "텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.": "Up to 5 text attachments, 100,000 characters in total.",
   "토글 접기/펼치기": "Collapse/expand toolbar",

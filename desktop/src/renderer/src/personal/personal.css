@@ -500,7 +500,7 @@ button.danger {
 
 /* ---------- sidebar ---------- */
 .fask-sidebar {
-  width: 240px;
+  width: var(--sidebar-w, 240px);
   flex-shrink: 0;
   border-right: 1px solid var(--nav-hairline);
   background: var(--nav-canvas);
@@ -529,6 +529,45 @@ button.danger {
   margin-left: auto;
   font-size: 12px;
   color: var(--nav-ink-subtle);
+}
+.fask-app .fask-sidebar .sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--nav-ink-subtle);
+}
+.fask-app .fask-sidebar .sidebar-toggle:hover {
+  background: var(--nav-surface-1);
+  color: var(--nav-ink);
+}
+/* Drag handle on the sidebar's right edge (the sticky aside is its containing block). */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after {
+  background: var(--nav-hairline);
 }
 .sidebar-label {
   font-size: 13px;
@@ -695,50 +734,243 @@ button.danger {
 }
 .notify-popover {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   left: 0;
   z-index: 50;
-  width: 320px;
-  max-height: 420px;
-  overflow-y: auto;
-  padding: 6px;
+  width: 360px;
+  max-height: min(480px, calc(80vh / var(--ui-zoom, 1)));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--surface-1);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--r-md);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-float);
   color: var(--ink);
+  transform-origin: bottom left;
+  animation: notify-open 140ms ease-out both;
 }
-.notify-popover ul {
-  list-style: none;
+/* Icon-only bell (collapsed sidebar): the popover opens below it. */
+.notify-wrap.compact .notify-popover {
+  top: calc(100% + 8px);
+  bottom: auto;
+  transform-origin: top left;
+}
+@keyframes notify-open {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+.notify-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 10px 8px 16px;
+}
+.notify-head h2 {
   margin: 0;
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.fask-app .notify-close {
+  width: 28px;
+  height: 28px;
   padding: 0;
-}
-.notify-popover li {
-  padding: 10px;
+  display: grid;
+  place-items: center;
+  border: 0;
   border-radius: var(--r-md);
-}
-.notify-popover li + li {
-  border-top: 1px solid var(--hairline);
-}
-.notify-popover li p,
-.notify-empty {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-}
-.notify-empty {
-  padding: 10px;
+  background: transparent;
   color: var(--ink-muted);
 }
-.notify-popover li span {
+.fask-app .notify-close:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.notify-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 12px 8px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+}
+.fask-app .notify-tabs button {
+  flex: 1;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.fask-app .notify-tabs button[aria-selected='true'] {
+  background: var(--surface-1);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+.notify-tabs small,
+.notify-bell small {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.notify-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 6px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.notify-item {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 10px;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.notify-item + .notify-item {
+  border-top: 1px solid var(--hairline);
+}
+.notify-item.leaving {
+  opacity: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+}
+.notify-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.notify-main p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.notify-main .notify-error {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+.notify-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.fask-app .notify-actions button {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.notify-parts {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.notify-parts li {
+  padding: 1px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.notify-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.notify-outcome {
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--ink);
+  font-weight: 600;
+}
+.notify-empty {
+  margin: 0;
+  padding: 28px 16px 32px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.notify-foot {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
-  margin-top: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--hairline);
 }
-.fask-app .notify-popover li button {
-  padding: 5px 12px;
+.fask-app .notify-foot button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
   font-size: 12.5px;
+  padding: 4px 8px;
+}
+.fask-app .notify-foot button:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+/* Phone only (see mobile.css): dims the page behind the bottom sheet. */
+.notify-scrim {
+  display: none;
+}
+.fask-app .notify-bell {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-muted);
+}
+.fask-app .notify-bell:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.notify-bell small {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .notify-popover {
+    animation: none;
+  }
+  .notify-item {
+    transition: none;
+  }
 }
 /* Needs attention: blinks three times (no infinite blinking), then stays accent until seen. */
 .fask-app .attention {
@@ -806,7 +1038,8 @@ button.danger {
   gap: 4px;
   min-height: 30px;
 }
-.fask-app .breadcrumb button {
+/* Direct children only: the collapsed-sidebar bell's popover lives inside the breadcrumb. */
+.fask-app .breadcrumb > button {
   border: 0;
   background: transparent;
   color: var(--ink-muted);
@@ -815,19 +1048,19 @@ button.danger {
   font-weight: 500;
   border-radius: var(--r-sm);
 }
-.fask-app .breadcrumb button:hover {
+.fask-app .breadcrumb > button:hover {
   background: var(--surface-3);
   color: var(--ink);
 }
-.fask-app .breadcrumb button:disabled {
+.fask-app .breadcrumb > button:disabled {
   background: transparent;
   color: var(--dis-ink);
 }
-.fask-app .breadcrumb button[aria-current] {
+.fask-app .breadcrumb > button[aria-current] {
   color: var(--ink);
   font-weight: 600;
 }
-.breadcrumb span {
+.breadcrumb > span {
   color: var(--hairline-strong);
 }
 .project-header {
@@ -3073,20 +3306,31 @@ button.memo-saved:disabled {
 .markdown-code {
   position: relative;
 }
-.markdown-code > .copy-button {
+.markdown-math {
+  position: relative;
+  margin: 12px 0;
+}
+.markdown-math > .katex-display {
+  margin: 0;
+  padding: 6px 36px;
+}
+:is(.markdown-code, .markdown-math) > .copy-button {
   position: absolute;
   top: 6px;
   right: 6px;
   opacity: 0.7;
 }
-.markdown-code > .copy-button:hover {
+.markdown-math > .copy-button {
+  top: 2px;
+}
+:is(.markdown-code, .markdown-math) > .copy-button:hover {
   opacity: 1;
 }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
   .fask-sidebar {
-    width: 208px;
+    width: var(--sidebar-w, 208px);
     padding: 20px 12px;
   }
   .fask-main {
@@ -3871,6 +4115,75 @@ button.memo-saved:disabled {
   font-size: 12px;
   font-weight: 600;
   pointer-events: none;
+}
+/* Long-press gauge: two half rings rotated with transform only; fills clockwise from 12 o'clock. */
+.graph-hold {
+  position: absolute;
+  z-index: 5;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 3px var(--graph-node-line);
+  /* Hidden for the first 90ms so a quick click never flashes the ring. */
+  animation: graph-hold-in 90ms linear 90ms both;
+}
+.graph-hold.touch {
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
+  box-shadow: inset 0 0 0 4px var(--graph-node-line);
+}
+.graph-hold-half {
+  position: absolute;
+  inset: 0;
+}
+.graph-hold-half.right {
+  clip-path: inset(0 0 0 50%);
+}
+.graph-hold-half.left {
+  clip-path: inset(0 50% 0 0);
+}
+.graph-hold-half > i {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 3px solid var(--primary);
+}
+.graph-hold.touch .graph-hold-half > i {
+  border-width: 4px;
+}
+.graph-hold-half.right > i {
+  clip-path: inset(0 50% 0 0);
+  animation: graph-hold-sweep calc(var(--hold-ms) / 2) linear both;
+}
+.graph-hold-half.left > i {
+  clip-path: inset(0 0 0 50%);
+  animation: graph-hold-sweep calc(var(--hold-ms) / 2) linear calc(var(--hold-ms) / 2) both;
+}
+@keyframes graph-hold-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(180deg);
+  }
+}
+@keyframes graph-hold-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The global rule drops the sweep; show the full ring while held. */
+  .graph-hold-half > i {
+    transform: rotate(180deg);
+  }
 }
 
 /* ---------- title chevron: hide/show project details ---------- */

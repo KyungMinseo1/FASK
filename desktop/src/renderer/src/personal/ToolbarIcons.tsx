@@ -30,6 +30,12 @@ const PATHS = {
       <path d="M4 10h16M10 10v10" />
     </>
   ),
+  sidebar: (
+    <>
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M10 5v14" />
+    </>
+  ),
   plus: <path d="M12 5v14M5 12h14" />,
   edit: (
     <>

@@ -22,6 +22,7 @@ import { dateLabel, errorText, statuses } from '@desktop/renderer/src/personal/c
 import Composer from '@desktop/renderer/src/personal/Composer'
 import ConceptPanel from '@desktop/renderer/src/personal/ConceptPanel'
 import MarkdownAnswer from '@desktop/renderer/src/personal/MarkdownAnswer'
+import { NotificationBell } from '@desktop/renderer/src/personal/notifications'
 import Pager from '@desktop/renderer/src/personal/Pager'
 import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import TidyBar from '@desktop/renderer/src/personal/TidyBar'
@@ -318,6 +319,7 @@ export default function ProjectScreen(): React.JSX.Element {
             onToggle={() => void screen.toggle()}
           />
         )}
+        <NotificationBell compact />
         <button onClick={() => navigate('/settings')}>{t('설정')}</button>
       </header>
       <main className={wide ? `mobile-body project-split${questionId ? '' : ' list-only'}` : 'mobile-body'}>

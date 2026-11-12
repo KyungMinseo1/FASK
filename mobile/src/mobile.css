@@ -999,3 +999,57 @@
   border-color: transparent;
   background: transparent;
 }
+.fask-mobile :is(.markdown-code, .markdown-math) > .copy-button {
+  opacity: 1;
+}
+.fask-mobile .markdown-math > .katex-display {
+  padding: 6px 40px;
+}
+/* Notification bell: 44px touch target; the popover becomes a bottom sheet over a scrim. */
+.fask-mobile .notify-bell {
+  width: 44px;
+  height: 44px;
+}
+.fask-mobile .notify-scrim {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: var(--scrim);
+}
+.fask-mobile .notify-wrap .notify-popover {
+  position: fixed;
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: auto;
+  max-height: calc(75dvh / var(--ui-zoom, 1));
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ui-zoom, 1));
+  transform-origin: bottom center;
+}
+.fask-mobile .notify-head h2 {
+  font-size: 17px;
+}
+.fask-mobile .notify-close {
+  width: 44px;
+  height: 44px;
+}
+.fask-mobile .notify-tabs button {
+  min-height: 44px;
+  font-size: 15px;
+}
+.fask-mobile .notify-main p {
+  font-size: 15px;
+}
+.fask-mobile .notify-actions button {
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 15px;
+}
+.fask-mobile .notify-foot button {
+  min-height: 44px;
+  font-size: 14px;
+}

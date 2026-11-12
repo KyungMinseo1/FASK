@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useApi } from './api'
-import { Icon } from './ToolbarIcons'
+import { Icon, type IconName } from './ToolbarIcons'
 import TidyDialog from './TidyDialog'
-import { errorText } from './common'
+import { dateLabel, errorText } from './common'
 import { useT } from '../../../shared/i18n/react'
 import type { PeerGrantInfo, TidyAccess, TidyEstimate, TidyStatus } from '../../../preload/personal'
 
@@ -13,8 +13,14 @@ export interface Notifications {
   watchTidy(workspaceId: string, jobId: string, name: string): void
   /** Follows a knowledge-manager request on a linked PC's workspace until it is answered. */
   watchManager(workspaceId: string, name: string): void
+  /** Adds a finished action (accepted, applied, dismissed…) to this device's notification history. */
+  record(entry: Omit<NotifyRecord, 'id' | 'at'>): void
 }
-const NotificationsContext = createContext<Notifications>({ watchTidy: () => {}, watchManager: () => {} })
+const NotificationsContext = createContext<Notifications>({
+  watchTidy: () => {},
+  watchManager: () => {},
+  record: () => {}
+})
 export function useNotifications(): Notifications {
   return useContext(NotificationsContext)
 }
@@ -22,9 +28,21 @@ export function useNotifications(): Notifications {
 /** One popover entry: a Korean source text with its values, translated when rendered. */
 export interface NotifyItem {
   id: string
+  icon: IconName
   text: string
   vars: Record<string, unknown>
-  actions: { label: string; primary?: boolean; run: () => void }[]
+  actions: { label: string; primary?: boolean; run: () => void | Promise<void> }[]
+}
+/** A handled notification, newest first in history; `outcome` and `parts` labels are Korean source text. */
+export interface NotifyRecord {
+  id: string
+  icon: IconName
+  text: string
+  vars: Record<string, unknown>
+  outcome: string
+  /** ISO time it was handled. */
+  at: string
+  parts?: { label: string; n: number }[]
 }
 interface Center {
   items: NotifyItem[]
@@ -32,6 +50,8 @@ interface Center {
   markSeen(ids: string[]): void
   /** The bell's window is the one that polls; overlay windows only record watches. */
   attach(): () => void
+  history: NotifyRecord[]
+  clearHistory(): void
 }
 const CenterContext = createContext<Center | null>(null)
 
@@ -42,8 +62,10 @@ interface Watches {
 const WATCH_KEY = 'fask:notify-watch'
 const SEEN_KEY = 'fask:notify-seen'
 const SEEN_MAX = 200
+const HISTORY_KEY = 'fask:notify-history'
+const HISTORY_MAX = 100
 
-const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const text = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0
 const access = (v: unknown): v is TidyAccess =>
   v === 'owner' || v === 'none' || v === 'pending' || v === 'granted' || v === 'rejected'
@@ -52,14 +74,14 @@ function readWatches(): Watches {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(WATCH_KEY) ?? '{}')
     if (
-      record(raw) &&
-      record(raw.tidy) &&
-      record(raw.manager) &&
+      isObject(raw) &&
+      isObject(raw.tidy) &&
+      isObject(raw.manager) &&
       Object.entries(raw.tidy).every(
-        ([ws, value]) => text(ws) && record(value) && text(value.jobId) && text(value.name)
+        ([ws, value]) => text(ws) && isObject(value) && text(value.jobId) && text(value.name)
       ) &&
       Object.entries(raw.manager).every(
-        ([ws, value]) => text(ws) && record(value) && text(value.name) && access(value.last)
+        ([ws, value]) => text(ws) && isObject(value) && text(value.name) && access(value.last)
       )
     ) return raw as unknown as Watches
   } catch {
@@ -81,20 +103,50 @@ function readSeen(): string[] {
   }
   return []
 }
+function readHistory(): NotifyRecord[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]')
+    if (Array.isArray(raw))
+      return raw.filter(
+        (r): r is NotifyRecord =>
+          isObject(r) &&
+          typeof r.id === 'string' &&
+          typeof r.icon === 'string' &&
+          typeof r.text === 'string' &&
+          typeof r.outcome === 'string' &&
+          typeof r.at === 'string' &&
+          isObject(r.vars)
+      )
+  } catch {
+    // Malformed: start empty.
+  }
+  return []
+}
+function pushHistory(entry: NotifyRecord): void {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify([entry, ...readHistory()].slice(0, HISTORY_MAX)))
+}
 
 /**
- * Desktop notification center: follows tidy jobs and knowledge-manager requests this device
- * started (persisted in localStorage, so a job that finished while the app was closed still
- * notifies), and lists linked PCs asking to become knowledge managers of this PC's workspaces.
- * Re-polls on mount and on every `onChanged`; `열기` shows a ready tidy in its own dialog.
+ * Notification center: follows tidy jobs and knowledge-manager requests this device started
+ * (persisted in localStorage, so a job that finished while the app was closed still notifies),
+ * and lists linked PCs asking to become knowledge managers of this PC's workspaces. Handled items
+ * leave the list and are kept in a per-device history. Re-polls on mount and on every
+ * `onChanged`; `열기` shows a ready tidy in its own dialog (a bottom sheet with `sheet`).
  */
-export function NotificationsProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
+export function NotificationsProvider({
+  children,
+  sheet = false
+}: {
+  children: React.ReactNode
+  sheet?: boolean
+}): React.JSX.Element {
   const api = useApi()
   const [attached, setAttached] = useState(0)
   // Items derived from watches; they outlive the watch (lost, answered) until dismissed.
   const [watched, setWatched] = useState<Map<string, NotifyItem>>(new Map())
   const [requests, setRequests] = useState<NotifyItem[]>([])
   const [seen, setSeen] = useState<Set<string>>(() => new Set(readSeen()))
+  const [history, setHistory] = useState<NotifyRecord[]>(readHistory)
   const [open, setOpen] = useState<{ workspaceId: string; name: string } | null>(null)
   const pollRef = useRef<() => void>(() => {})
   const watchVersion = useRef(0)
@@ -104,6 +156,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     const merged = [...new Set([...readSeen().filter((id) => !ids.includes(id)), ...ids])].slice(-SEEN_MAX)
     localStorage.setItem(SEEN_KEY, JSON.stringify(merged))
     setSeen(new Set(merged))
+  }, [])
+  const record = useCallback((entry: Omit<NotifyRecord, 'id' | 'at'>): void => {
+    pushHistory({
+      ...entry,
+      id: `${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      at: new Date().toISOString()
+    })
+    setHistory(readHistory())
+  }, [])
+  const clearHistory = useCallback((): void => {
+    localStorage.removeItem(HISTORY_KEY)
+    setHistory([])
   }, [])
   const drop = useCallback(
     (id: string): void => {
@@ -116,10 +180,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     },
     [markSeen]
   )
+  /** Records a handled item in history and removes it from the list. */
+  const settle = useCallback(
+    (item: Pick<NotifyItem, 'id' | 'icon' | 'text' | 'vars'>, outcome: string): void => {
+      record({ icon: item.icon, text: item.text, vars: item.vars, outcome })
+      drop(item.id)
+    },
+    [record, drop]
+  )
 
   useEffect(() => {
     const onStorage = (event: StorageEvent): void => {
       if (event.key === SEEN_KEY || event.key === null) setSeen(new Set(readSeen()))
+      if (event.key === HISTORY_KEY || event.key === null) setHistory(readHistory())
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
@@ -153,8 +226,37 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (job?.id === jobId && job.state === 'running') return
       if (job?.id === jobId && job.state === 'ready') {
         remove(`tidy-failed:${jobId}`)
+        const proposal = job.proposal
+        if (proposal && !proposal.changes.length) {
+          // Nothing to review: one tap finishes it, no dialog with an empty list.
+          remove(`tidy-ready:${jobId}`)
+          const proposalId = proposal.id
+          const item: NotifyItem = {
+            id: `tidy-empty:${jobId}`,
+            icon: 'modelOrganize',
+            text: '{{name}} 정리안을 만들었지만 정리할 항목이 없습니다.',
+            vars: { name },
+            actions: [
+              {
+                label: '확인',
+                primary: true,
+                run: () =>
+                  api.tidyApply(ws, proposalId, [], []).then(() => {
+                    updateWatches((w) => {
+                      if (w.tidy[ws]?.jobId === jobId) delete w.tidy[ws]
+                    })
+                    settle(item, '검토 완료')
+                  })
+              }
+            ]
+          }
+          put(item)
+          return
+        }
+        remove(`tidy-empty:${jobId}`)
         put({
           id: `tidy-ready:${jobId}`,
+          icon: 'modelOrganize',
           text: '{{name}} 정리안이 준비되었습니다. 확인이 필요합니다.',
           vars: { name },
           actions: [{ label: '열기', primary: true, run: () => setOpen({ workspaceId: ws, name }) }]
@@ -163,9 +265,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
       if (job?.id === jobId && job.state === 'failed') {
         remove(`tidy-ready:${jobId}`)
-        const id = `tidy-failed:${jobId}`
-        put({
-          id,
+        remove(`tidy-empty:${jobId}`)
+        const item: NotifyItem = {
+          id: `tidy-failed:${jobId}`,
+          icon: 'modelOrganize',
           text: '{{name}} 정리안을 만들지 못했습니다: {{error}}',
           vars: { name, error: job.error },
           actions: [
@@ -175,13 +278,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
                 updateWatches((w) => {
                   if (w.tidy[ws]?.jobId === jobId) delete w.tidy[ws]
                 })
-                drop(id)
+                settle(item, '닫음')
                 remove(`tidy-ready:${jobId}`)
                 void api.tidyClear(ws, jobId).catch(() => {})
               }
             }
           ]
-        })
+        }
+        put(item)
         return
       }
       updateWatches((w) => {
@@ -189,14 +293,16 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       })
       remove(`tidy-ready:${jobId}`)
       remove(`tidy-failed:${jobId}`)
+      remove(`tidy-empty:${jobId}`)
       if (!job && status.lastApplied === jobId) return // Applied here or on another device.
-      const id = `tidy-lost:${jobId}`
-      put({
-        id,
+      const item: NotifyItem = {
+        id: `tidy-lost:${jobId}`,
+        icon: 'modelOrganize',
         text: '{{name}} 정리안 작업이 중단되었습니다. 호스트 PC가 다시 시작되었을 수 있습니다. 다시 시도해 주세요.',
         vars: { name },
-        actions: [{ label: '닫기', run: () => drop(id) }]
-      })
+        actions: [{ label: '닫기', run: () => settle(item, '닫음') }]
+      }
+      put(item)
     }
     const pollManager = async (ws: string, name: string, last: TidyAccess, version: number): Promise<void> => {
       let access: TidyAccess
@@ -218,16 +324,17 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       updateWatches((w) => {
         delete w.manager[ws]
       })
-      const id = `manager:${ws}:${access}`
-      put({
-        id,
+      const item: NotifyItem = {
+        id: `manager:${ws}:${access}`,
+        icon: 'key',
         text:
           access === 'granted'
             ? '{{name}} 워크스페이스의 지식 관리자 요청이 수락되었습니다.'
             : '{{name}} 워크스페이스의 지식 관리자 요청이 거절되었습니다.',
         vars: { name },
-        actions: [{ label: '닫기', run: () => drop(id) }]
-      })
+        actions: [{ label: '닫기', run: () => settle(item, '확인함') }]
+      }
+      put(item)
     }
     const pollRequests = async (): Promise<void> => {
       if (typeof window.fask?.peerGrants !== 'function') return
@@ -238,23 +345,33 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         return
       }
       if (!live) return
-      const decide = (id: string, decision: 'grant' | 'reject') => (): void =>
-        void window.fask
-          .peerGrantManager(id, decision)
-          .catch(() => {})
-          .then(() => pollRef.current())
+      // Rejections reach the bell, which shows the failure and keeps the item.
+      const decide =
+        (text: string, vars: Record<string, unknown>, id: string, decision: 'grant' | 'reject') =>
+        (): Promise<void> =>
+          window.fask
+            .peerGrantManager(id, decision)
+            .then(() =>
+              record({ icon: 'devices', text, vars, outcome: decision === 'grant' ? '수락함' : '거절함' })
+            )
+            .finally(() => pollRef.current())
       setRequests(
         grants
           .filter((g) => g.manager === 'pending')
-          .map((g) => ({
-            id: `request:${g.id}:${g.managerAt ?? 0}`,
-            text: '{{name}} PC가 지식 관리자 등록을 요청했습니다.',
-            vars: { name: g.name },
-            actions: [
-              { label: '수락', primary: true, run: decide(g.id, 'grant') },
-              { label: '거절', run: decide(g.id, 'reject') }
-            ]
-          }))
+          .map((g) => {
+            const text = '{{name}} PC가 지식 관리자 등록을 요청했습니다.'
+            const vars = { name: g.name }
+            return {
+              id: `request:${g.id}:${g.managerAt ?? 0}`,
+              icon: 'devices',
+              text,
+              vars,
+              actions: [
+                { label: '수락', primary: true, run: decide(text, vars, g.id, 'grant') },
+                { label: '거절', run: decide(text, vars, g.id, 'reject') }
+              ]
+            }
+          })
       )
     }
     const poll = async (): Promise<void> => {
@@ -270,11 +387,12 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           const w = readWatches()
           const version = watchVersion.current
           const tidyIds = new Set(Object.values(w.tidy).flatMap(({ jobId }) => [
-            `tidy-ready:${jobId}`, `tidy-failed:${jobId}`
+            `tidy-ready:${jobId}`, `tidy-failed:${jobId}`, `tidy-empty:${jobId}`
           ]))
           setWatched((items) => {
             const stale = [...items.keys()].filter((id) =>
-              (id.startsWith('tidy-ready:') || id.startsWith('tidy-failed:')) && !tidyIds.has(id)
+              (id.startsWith('tidy-ready:') || id.startsWith('tidy-failed:') || id.startsWith('tidy-empty:')) &&
+              !tidyIds.has(id)
             )
             if (!stale.length) return items
             const next = new Map(items)
@@ -311,7 +429,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       off()
       window.removeEventListener('storage', onStorage)
     }
-  }, [api, attached, drop])
+  }, [api, attached, drop, record, settle])
 
   const notifications = useMemo<Notifications>(
     () => ({
@@ -328,22 +446,26 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           w.manager[ws] = { name, last: 'pending' }
         })
         pollRef.current()
-      }
+      },
+      record
     }),
-    []
+    [record]
   )
   const attach = useCallback((): (() => void) => {
     setAttached((n) => n + 1)
     return () => setAttached((n) => n - 1)
   }, [])
   const items = useMemo(() => [...requests, ...watched.values()], [requests, watched])
-  const center = useMemo<Center>(() => ({ items, seen, markSeen, attach }), [items, seen, markSeen, attach])
+  const center = useMemo<Center>(
+    () => ({ items, seen, markSeen, attach, history, clearHistory }),
+    [items, seen, markSeen, attach, history, clearHistory]
+  )
 
   return (
     <NotificationsContext.Provider value={notifications}>
       <CenterContext.Provider value={center}>
         {children}
-        {open && <WatchedTidy key={open.workspaceId} {...open} onClose={() => setOpen(null)} />}
+        {open && <WatchedTidy key={open.workspaceId} {...open} sheet={sheet} onClose={() => setOpen(null)} />}
       </CenterContext.Provider>
     </NotificationsContext.Provider>
   )
@@ -353,10 +475,12 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 function WatchedTidy({
   workspaceId,
   name,
+  sheet,
   onClose
 }: {
   workspaceId: string
   name: string
+  sheet: boolean
   onClose: () => void
 }): React.JSX.Element {
   const api = useApi()
@@ -399,7 +523,7 @@ function WatchedTidy({
     return () => window.removeEventListener('keydown', onKey)
   }, [data, onClose])
   if (!data) return createPortal(
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop${sheet ? ' tidy-sheet' : ''}`} onClick={onClose}>
       <section
         className="create-modal tidy-dialog"
         role="dialog"
@@ -427,20 +551,44 @@ function WatchedTidy({
       workspaceName={name}
       estimate={data.estimate}
       status={data.status}
+      sheet={sheet}
       onClose={onClose}
       onApplied={() => {}}
     />
   )
 }
 
-/** Sidebar bell: unseen items make it blink three times, then stay accent-colored until opened. */
-export function NotificationBell(): React.JSX.Element | null {
+/** How long a handled item fades out before its action runs. */
+const LEAVE_MS = 180
+
+/**
+ * Notification bell with a popover of new items and this device's history. Unseen items make it
+ * blink three times, then stay accent-colored until opened. `compact` is the icon-only button
+ * (collapsed sidebar, phone header); on the phone the popover is a bottom sheet.
+ */
+export function NotificationBell({ compact = false }: { compact?: boolean }): React.JSX.Element | null {
   const t = useT()
   const center = useContext(CenterContext)
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<'new' | 'history'>('new')
+  const [leaving, setLeaving] = useState<Set<string>>(new Set())
+  const [failed, setFailed] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const timers = useRef(new Set<number>())
+  const items = center?.items
+  const itemsRef = useRef<NotifyItem[]>([])
+  itemsRef.current = items ?? []
+  const leavingRef = useRef(leaving)
+  leavingRef.current = leaving
   const attach = center?.attach
   useEffect(() => attach?.(), [attach])
+  useEffect(() => {
+    const pending = timers.current
+    return () => {
+      for (const timer of pending) clearTimeout(timer)
+      pending.clear()
+    }
+  }, [])
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => {
@@ -456,8 +604,16 @@ export function NotificationBell(): React.JSX.Element | null {
       document.removeEventListener('mousedown', onDown)
     }
   }, [open])
+  // Forget fading ids once their item is gone.
+  useEffect(() => {
+    if (!items) return
+    setLeaving((s) => {
+      const ids = new Set(items.map((i) => i.id))
+      const next = new Set([...s].filter((id) => ids.has(id)))
+      return next.size === s.size ? s : next
+    })
+  }, [items])
   // Items arriving while the popover is open count as seen.
-  const items = center?.items
   const markSeen = center?.markSeen
   const seen = center?.seen
   useEffect(() => {
@@ -467,46 +623,170 @@ export function NotificationBell(): React.JSX.Element | null {
     }
   }, [open, items, seen, markSeen])
   if (!center) return null
+
   const unseen = center.items.some((i) => !center.seen.has(i.id))
+  const count = center.items.length
+  const visible = center.items
+  const toggle = (): void => {
+    if (!open) {
+      // Nothing new: go straight to what was handled before.
+      setTab(count ? 'new' : 'history')
+      setFailed(null)
+    }
+    setOpen(!open)
+  }
+  const act = (item: NotifyItem, action: NotifyItem['actions'][number]): void => {
+    setFailed(null)
+    if (action.label === '열기') {
+      setOpen(false)
+      void action.run()
+      return
+    }
+    setLeaving((s) => new Set(s).add(item.id))
+    const timer = window.setTimeout(() => {
+      timers.current.delete(timer)
+      Promise.resolve()
+        .then(() => action.run())
+        .then(
+          () => {
+            // The last new item was handled: close the popover.
+            if (itemsRef.current.every((i) => i.id === item.id || leavingRef.current.has(i.id))) setOpen(false)
+          },
+          () => {
+            setLeaving((s) => {
+              const next = new Set(s)
+              next.delete(item.id)
+              return next
+            })
+            setFailed(item.id)
+          }
+        )
+    }, LEAVE_MS)
+    timers.current.add(timer)
+  }
+
   return (
-    <div className="notify-wrap" ref={ref}>
-      <button
-        className={`sidebar-notify${unseen ? ' attention' : ''}`}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Icon name="bell" />
-        {t('알림')}
-        {center.items.length > 0 && <small>{center.items.length}</small>}
-      </button>
+    <div className={`notify-wrap${compact ? ' compact' : ''}`} ref={ref}>
+      {compact ? (
+        <button
+          type="button"
+          className={`notify-bell${unseen ? ' attention' : ''}`}
+          aria-label={t('알림')}
+          title={t('알림')}
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          <Icon name="bell" size={20} />
+          {count > 0 && <small>{count}</small>}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={`sidebar-notify${unseen ? ' attention' : ''}`}
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          <Icon name="bell" />
+          {t('알림')}
+          {count > 0 && <small>{count}</small>}
+        </button>
+      )}
       {open && (
-        <div className="notify-popover" role="dialog" aria-label={t('알림')}>
-          {center.items.length ? (
-            <ul>
-              {center.items.map((item) => (
-                <li key={item.id}>
-                  <p>{t(item.text, item.vars)}</p>
-                  <span>
-                    {item.actions.map((a) => (
-                      <button
-                        key={a.label}
-                        className={a.primary ? 'primary' : ''}
-                        onClick={() => {
-                          if (a.label === '열기') setOpen(false)
-                          a.run()
-                        }}
-                      >
-                        {t(a.label)}
-                      </button>
-                    ))}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="notify-empty">{t('새 알림이 없습니다.')}</p>
-          )}
-        </div>
+        <>
+          <div className="notify-scrim" onClick={() => setOpen(false)} />
+          <section className="notify-popover" role="dialog" aria-label={t('알림')}>
+            <header className="notify-head">
+              <h2>{t('알림')}</h2>
+              <button
+                type="button"
+                className="notify-close"
+                aria-label={t('닫기')}
+                title={t('닫기')}
+                onClick={() => setOpen(false)}
+              >
+                <Icon name="close" />
+              </button>
+            </header>
+            <div className="notify-tabs" role="tablist">
+              <button type="button" role="tab" aria-selected={tab === 'new'} onClick={() => setTab('new')}>
+                {t('새 알림')}
+                {visible.length > 0 && <small>{visible.length}</small>}
+              </button>
+              <button type="button" role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>
+                {t('지난 내역')}
+              </button>
+            </div>
+            {tab === 'new' ? (
+              visible.length ? (
+                <ul className="notify-list">
+                  {visible.map((item) => (
+                    <li key={item.id} className={`notify-item${leaving.has(item.id) ? ' leaving' : ''}`}>
+                      <span className="notify-icon">
+                        <Icon name={item.icon} size={18} />
+                      </span>
+                      <div className="notify-main">
+                        <p>{t(item.text, item.vars)}</p>
+                        {failed === item.id && (
+                          <p className="notify-error" role="alert">
+                            {t('처리하지 못했습니다. 다시 시도해 주세요.')}
+                          </p>
+                        )}
+                        <div className="notify-actions">
+                          {item.actions.map((a) => (
+                            <button
+                              type="button"
+                              key={a.label}
+                              className={a.primary ? 'primary' : ''}
+                              disabled={leaving.has(item.id)}
+                              onClick={() => act(item, a)}
+                            >
+                              {t(a.label)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="notify-empty">{t('새 알림이 없습니다.')}</p>
+              )
+            ) : center.history.length ? (
+              <>
+                <ul className="notify-list history">
+                  {center.history.map((r) => (
+                    <li key={r.id} className="notify-item">
+                      <span className="notify-icon">
+                        <Icon name={r.icon} size={18} />
+                      </span>
+                      <div className="notify-main">
+                        <p>{t(r.text, r.vars)}</p>
+                        {r.parts && r.parts.length > 0 && (
+                          <ul className="notify-parts">
+                            {r.parts.map((p) => (
+                              <li key={p.label}>{t(p.label, { n: p.n })}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="notify-meta">
+                          <span className="notify-outcome">{t(r.outcome)}</span>
+                          <time dateTime={r.at}>{dateLabel(r.at)}</time>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <footer className="notify-foot">
+                  <button type="button" onClick={center.clearHistory}>
+                    {t('내역 지우기')}
+                  </button>
+                </footer>
+              </>
+            ) : (
+              <p className="notify-empty">{t('지난 내역이 없습니다.')}</p>
+            )}
+          </section>
+        </>
       )}
     </div>
   )

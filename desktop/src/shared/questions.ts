@@ -121,7 +121,7 @@ export function filterQuestions(questions: Question[], filter: string, query: st
   )
 }
 
-export const QUESTIONS_PER_PAGE = 20
+export const QUESTIONS_PER_PAGE = 10
 /** page를 1..pages로 보정하고 해당 페이지 항목을 돌려준다. 빈 목록도 pages는 1. */
 export function pageSlice<T>(
   items: T[],

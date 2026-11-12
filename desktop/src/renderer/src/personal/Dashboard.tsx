@@ -38,7 +38,10 @@ import './personal.css'
 
 type ItemKind = 'profile' | 'workspace' | 'project' | 'concept' | 'question'
 
-/** Parses a card's Markdown only once it nears the visible part of the list; a page holds 20. */
+const SIDEBAR_MIN = 200
+const SIDEBAR_MAX = 360
+
+/** Parses a card's Markdown only once it nears the visible part of the list; a page holds 10. */
 function CardPreview({ text }: { text: string }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [near, setNear] = useState(false)
@@ -155,6 +158,34 @@ export default function Dashboard(): React.JSX.Element {
   /** Keeps the list at least 300px (plus the 24px handle) and the note at least 340px. */
   const clampDetail = (width: number): number =>
     Math.round(Math.max(340, Math.min((areaRef.current?.clientWidth ?? 0) - 324, width)))
+  // The sidebar: a draggable width (0 = default) and a collapsed mode, both remembered.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('fask:sidebar-collapsed') === '1'
+  )
+  useEffect(() => {
+    localStorage.setItem('fask:sidebar-collapsed', sidebarCollapsed ? '1' : '0')
+  }, [sidebarCollapsed])
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('fask:sidebar-width')) || 0)
+  useEffect(() => {
+    if (sidebarWidth) localStorage.setItem('fask:sidebar-width', String(sidebarWidth))
+    else localStorage.removeItem('fask:sidebar-width')
+  }, [sidebarWidth])
+  const sidebarRef = useRef<HTMLElement>(null)
+  const resizingSidebar = useRef(false)
+  const clampSidebar = (w: number): number => Math.round(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w)))
+  // After a toggle, focus moves to the button that undoes it (the clicked one unmounts).
+  const toggleFocus = useRef(false)
+  const collapseRef = useRef<HTMLButtonElement>(null)
+  const expandRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!toggleFocus.current) return
+    toggleFocus.current = false
+    ;(sidebarCollapsed ? expandRef : collapseRef).current?.focus()
+  }, [sidebarCollapsed])
+  const toggleSidebar = (collapsed: boolean): void => {
+    toggleFocus.current = true
+    setSidebarCollapsed(collapsed)
+  }
   const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
   useEffect(() => setPage(1), [project?.id])
   const graphRoot = useMemo(
@@ -285,152 +316,216 @@ export default function Dashboard(): React.JSX.Element {
   if (!data) return <div className="fask-loading">{error || t('나의 질문 공간을 열고 있습니다…')}</div>
   return (
     <div className="fask-app">
-      <aside className="fask-sidebar" inert={!!settingsSection}>
-        <div className="fask-wordmark">
-          <Wordmark />
-          <small>{t('개인용')}</small>
-        </div>
-        <label className="sidebar-label">
-          {t('프로필')}
+      {!sidebarCollapsed && (
+        <aside
+          ref={sidebarRef}
+          className="fask-sidebar"
+          inert={!!settingsSection}
+          style={sidebarWidth ? ({ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties) : undefined}
+        >
+          <div className="fask-wordmark">
+            <Wordmark />
+            <small>{t('개인용')}</small>
+            <button
+              ref={collapseRef}
+              className="sidebar-toggle"
+              aria-label={t('사이드바 접기')}
+              title={t('사이드바 접기')}
+              aria-expanded
+              onClick={() => toggleSidebar(true)}
+            >
+              <Icon name="sidebar" />
+            </button>
+          </div>
+          <label className="sidebar-label">
+            {t('프로필')}
+            <select
+              aria-label={t('프로필')}
+              onContextMenu={(e) =>
+                openContext(
+                  e,
+                  'profile',
+                  data.activeProfileId,
+                  data.profiles.find((p) => p.id === data.activeProfileId)!.name
+                )
+              }
+              value={data.activeProfileId}
+              onChange={(e) => {
+                const id = e.target.value
+                void run(async () => {
+                  await window.fask.switchProfile(id)
+                  setSearch({ scope: 'home' })
+                  setCompose(false)
+                  setSelectedId('')
+                })
+              }}
+            >
+              {data.profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="sidebar-add" onClick={() => beginCreate('profile')}>
+            <Icon name="plus" size={14} />
+            {t('프로필 추가')}
+          </button>
+          <div className="sidebar-heading">
+            {t('워크스페이스')}
+            <button aria-label={t('워크스페이스 추가')} onClick={() => beginCreate('workspace')}>
+              <Icon name="plus" size={14} />
+            </button>
+          </div>
           <select
-            aria-label={t('프로필')}
-            onContextMenu={(e) =>
-              openContext(
-                e,
-                'profile',
-                data.activeProfileId,
-                data.profiles.find((p) => p.id === data.activeProfileId)!.name
-              )
-            }
-            value={data.activeProfileId}
+            aria-label={t('워크스페이스')}
+            onContextMenu={(e) => {
+              if (workspace) openContext(e, 'workspace', workspace.id, workspace.name)
+            }}
+            value={workspace?.id || ''}
             onChange={(e) => {
-              const id = e.target.value
-              void run(async () => {
-                await window.fask.switchProfile(id)
-                setSearch({ scope: 'home' })
-                setCompose(false)
-                setSelectedId('')
-              })
+              setWorkspaceId(e.target.value)
+              setSelectedId('')
+              setCompose(false)
             }}
           >
-            {data.profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
+            {data.workspaces.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.remote ? t('{{name}} (원격)', { name: w.name }) : w.name}
               </option>
             ))}
           </select>
-        </label>
-        <button className="sidebar-add" onClick={() => beginCreate('profile')}>
-          <Icon name="plus" size={14} />
-          {t('프로필 추가')}
-        </button>
-        <div className="sidebar-heading">
-          {t('워크스페이스')}
-          <button aria-label={t('워크스페이스 추가')} onClick={() => beginCreate('workspace')}>
-            <Icon name="plus" size={14} />
-          </button>
-        </div>
-        <select
-          aria-label={t('워크스페이스')}
-          onContextMenu={(e) => {
-            if (workspace) openContext(e, 'workspace', workspace.id, workspace.name)
-          }}
-          value={workspace?.id || ''}
-          onChange={(e) => {
-            setWorkspaceId(e.target.value)
-            setSelectedId('')
-            setCompose(false)
-          }}
-        >
-          {data.workspaces.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.remote ? t('{{name}} (원격)', { name: w.name }) : w.name}
-            </option>
-          ))}
-        </select>
-        {workspace?.remote && (
-          <span className="sidebar-remote">
-            <Icon name="globe" size={14} />
-            <span>{workspace.remote.name}</span>
-            <small>
-              {t(
-                {
-                  online: '온라인',
-                  offline: '오프라인 (변경 불가)',
-                  revoked: '연결 해제됨',
-                  blocked: '인증서 불일치'
-                }[workspace.remote.status]
-              )}
-            </small>
-          </span>
-        )}
-        {workspace && (
-          <button
-            className="sidebar-rename"
-            disabled={locked}
-            onClick={() => beginRename('workspace', workspace.id, workspace.name)}
-          >
-            <Icon name="edit" size={14} />
-            {t('워크스페이스 이름 변경')}
-          </button>
-        )}
-        <div className="sidebar-heading">
-          {t('프로젝트')}
-          <button
-            aria-label={t('프로젝트 추가')}
-            disabled={locked}
-            onClick={() => beginCreate('project', workspace?.id)}
-          >
-            <Icon name="plus" size={14} />
-          </button>
-        </div>
-        <nav>
-          {projects.map((p) => (
+          {workspace?.remote && (
+            <span className="sidebar-remote">
+              <Icon name="globe" size={14} />
+              <span>{workspace.remote.name}</span>
+              <small>
+                {t(
+                  {
+                    online: '온라인',
+                    offline: '오프라인 (변경 불가)',
+                    revoked: '연결 해제됨',
+                    blocked: '인증서 불일치'
+                  }[workspace.remote.status]
+                )}
+              </small>
+            </span>
+          )}
+          {workspace && (
             <button
-              key={p.id}
-              onContextMenu={(e) => openContext(e, 'project', p.id, p.name)}
-              className={p.id === project?.id ? 'active' : ''}
-              onClick={() => {
-                setProjectId(p.id)
-                setSelectedId('')
-                setCompose(false)
-              }}
+              className="sidebar-rename"
+              disabled={locked}
+              onClick={() => beginRename('workspace', workspace.id, workspace.name)}
             >
-              {p.name}
-              <small>{data.questions.filter((q) => q.projectId === p.id).length}</small>
+              <Icon name="edit" size={14} />
+              {t('워크스페이스 이름 변경')}
             </button>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="local-status">
-            {t('로컬에 저장 중')}
-            <small>{t('이미지 {{size}} MB', { size: (data.storageBytes / 1024 / 1024).toFixed(1) })}</small>
+          )}
+          <div className="sidebar-heading">
+            {t('프로젝트')}
+            <button
+              aria-label={t('프로젝트 추가')}
+              disabled={locked}
+              onClick={() => beginCreate('project', workspace?.id)}
+            >
+              <Icon name="plus" size={14} />
+            </button>
           </div>
-          <NotificationBell />
-          <button onClick={() => {
-            setCaptureIssue(undefined)
-            setSettingsSection('ai')
-          }}>
-            <Icon name="gear" />
-            {t('설정과 AI 연결')}
-          </button>
-          <small>
-            {shortcut?.accelerator ? (
-              shortcut.accelerator.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + ')
-            ) : (
-              <>
-                <b>{t('단축키를 등록하지 못했습니다')}</b>
-                {t('다른 앱이 같은 키를 쓰는지 확인하세요.')}
-              </>
-            )}
-            <br />
-            {shortcut?.fallback && `${t('대체 단축키')}: `}
-            {t('화면 질문 열기, 패널 토글')}
-          </small>
-        </div>
-      </aside>
+          <nav>
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                onContextMenu={(e) => openContext(e, 'project', p.id, p.name)}
+                className={p.id === project?.id ? 'active' : ''}
+                onClick={() => {
+                  setProjectId(p.id)
+                  setSelectedId('')
+                  setCompose(false)
+                }}
+              >
+                {p.name}
+                <small>{data.questions.filter((q) => q.projectId === p.id).length}</small>
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="local-status">
+              {t('로컬에 저장 중')}
+              <small>{t('이미지 {{size}} MB', { size: (data.storageBytes / 1024 / 1024).toFixed(1) })}</small>
+            </div>
+            <NotificationBell />
+            <button onClick={() => {
+              setCaptureIssue(undefined)
+              setSettingsSection('ai')
+            }}>
+              <Icon name="gear" />
+              {t('설정과 AI 연결')}
+            </button>
+            <small>
+              {shortcut?.accelerator ? (
+                shortcut.accelerator.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + ')
+              ) : (
+                <>
+                  <b>{t('단축키를 등록하지 못했습니다')}</b>
+                  {t('다른 앱이 같은 키를 쓰는지 확인하세요.')}
+                </>
+              )}
+              <br />
+              {shortcut?.fallback && `${t('대체 단축키')}: `}
+              {t('화면 질문 열기, 패널 토글')}
+            </small>
+          </div>
+          <div
+            className="sidebar-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('사이드바 너비 조절')}
+            title={t('드래그해서 너비 조절, 두 번 눌러 기본값')}
+            tabIndex={0}
+            aria-valuemin={SIDEBAR_MIN}
+            aria-valuemax={SIDEBAR_MAX}
+            aria-valuenow={sidebarWidth || undefined}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              e.currentTarget.setPointerCapture(e.pointerId)
+              resizingSidebar.current = true
+            }}
+            onPointerMove={(e) => {
+              const aside = sidebarRef.current
+              if (!resizingSidebar.current || !aside) return
+              // The app root is CSS-zoomed by --ui-zoom; convert client px to layout px.
+              const rect = aside.getBoundingClientRect()
+              setSidebarWidth(clampSidebar((e.clientX - rect.left) * (aside.offsetWidth / rect.width || 1)))
+            }}
+            onPointerUp={() => (resizingSidebar.current = false)}
+            onPointerCancel={() => (resizingSidebar.current = false)}
+            onDoubleClick={() => setSidebarWidth(0)}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+              e.preventDefault()
+              const current = sidebarWidth || sidebarRef.current?.offsetWidth || 240
+              setSidebarWidth(clampSidebar(current + (e.key === 'ArrowRight' ? 16 : -16)))
+            }}
+          />
+        </aside>
+      )}
       <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`} inert={!!settingsSection}>
         <nav className="breadcrumb" aria-label={t('상위 경로')}>
+          {sidebarCollapsed && (
+            <>
+              <button
+                ref={expandRef}
+                className="sidebar-toggle"
+                aria-label={t('사이드바 펼치기')}
+                title={t('사이드바 펼치기')}
+                aria-expanded={false}
+                onClick={() => toggleSidebar(false)}
+              >
+                <Icon name="sidebar" />
+              </button>
+              <NotificationBell compact />
+            </>
+          )}
           <button
             aria-label={t('이전 화면')}
             disabled={!window.history.state?.idx}
