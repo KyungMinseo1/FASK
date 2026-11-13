@@ -8,6 +8,7 @@ import { crc32, inflateRawSync } from 'node:zlib'
 import { PersonalStore } from '../src/main/personal-store'
 import { KnowledgeExtractor, skippedSubjects, type Chat } from '../src/main/knowledge-extract'
 import { buildExport, zip } from '../src/main/knowledge-export'
+import { EXPORT_DEFAULTS, exportOptions } from '../src/shared/export'
 import { PARENT_LEVEL } from '../src/main/personal-backup'
 import type { Concept, Project, Question, Relation, TidyChange, TidyResult, Turn, Workspace } from '../src/preload/personal'
 
@@ -1372,7 +1373,7 @@ test('zip writer output has valid headers, CRCs, and UTF-8 names', () => {
   assert.deepEqual([...(files.get('raw.bin') ?? [])], [1, 2, 3])
 })
 
-test('export archive holds README, JSONL, SKOS; images only when requested', () => {
+test('export archive holds README, JSONL, SKOS; options gate images, conversations, memo and relations', () => {
   const workspace: Workspace = { id: 'w', profileId: 'p', name: '수학' }
   const project: Project = { id: 'p1', workspaceId: 'w', name: '선형대수', description: '' }
   const concept = (id: string, name: string, parentId: string | null, level: Concept['level']): Concept => ({
@@ -1404,24 +1405,49 @@ test('export archive holds README, JSONL, SKOS; images only when requested', () 
   }
   const relations: Relation[] = [
     { id: 'r1', workspaceId: 'w', from: 'c2', to: 'c1', type: 'part', questionId: 'q', turnIds: ['t'], confidence: 0.9, approved: true, createdAt: '', invalidatedAt: null },
-    { id: 'r2', workspaceId: 'w', from: 'c2', to: 'c1', type: 'uses', questionId: 'q', turnIds: ['t'], confidence: 0.9, approved: true, createdAt: '', invalidatedAt: '2026-01-02' }
+    { id: 'r2', workspaceId: 'w', from: 'c2', to: 'c1', type: 'uses', questionId: 'q', turnIds: ['t'], confidence: 0.9, approved: true, createdAt: '', invalidatedAt: '2026-01-02' },
+    { id: 'r3', workspaceId: 'w', from: 'c2', to: 'c1', type: 'example', questionId: 'q', turnIds: ['t'], confidence: 0.5, approved: false, createdAt: '', invalidatedAt: null }
   ]
   const source = { workspace, project, concepts, relations, questions: [q], image: () => Buffer.from('png') }
-  const files = unzip(buildExport(source, { images: false }))
+  const files = unzip(buildExport(source, exportOptions({ images: false })))
+  const rows = (archive: Map<string, Buffer>, name: string): Record<string, unknown>[] =>
+    (archive.get(name)?.toString() ?? '').trim().split('\n').map((l) => JSON.parse(l))
   assert.deepEqual([...files.keys()].sort(), ['README.md', 'concepts.jsonl', 'ontology.ttl', 'questions.jsonl', 'relations.jsonl'])
   const readme = files.get('README.md')?.toString() ?? ''
   assert.match(readme, /NOT verified facts/)
   assert.match(readme, /- 선형대수 \[topic\]\n {2}- 고유값 \[concept\]/)
   const exported = (files.get('concepts.jsonl')?.toString() ?? '').trim().split('\n').map((l) => JSON.parse(l))
   assert.deepEqual(exported.map((c) => c.id).sort(), ['c1', 'c2'], 'unlinked concepts stay out; ancestors come along')
-  assert.equal((files.get('relations.jsonl')?.toString() ?? '').trim().split('\n').length, 1, 'invalidated relations stay out')
+  assert.equal(rows(files, 'relations.jsonl').length, 2, 'invalidated relations stay out')
   const ttl = files.get('ontology.ttl')?.toString() ?? ''
   assert.match(ttl, /skos:broader <urn:fask:concept:c1>/)
   assert.match(ttl, /fask:part rdfs:subPropertyOf|fask:part a owl:ObjectProperty ; rdfs:subPropertyOf skos:related/)
   assert.match(ttl, /skos:altLabel "eigen \\"value\\""/)
   assert.match(ttl, /skos:definition "배율\\n한 줄"/)
   assert.ok(!JSON.parse(files.get('questions.jsonl')?.toString() ?? '{}').turns[0].image)
-  const withImages = unzip(buildExport(source, { images: true }))
+  assert.equal(rows(files, 'questions.jsonl')[0].memo, '메모')
+  const withImages = unzip(buildExport(source, exportOptions({ images: true })))
   assert.equal(withImages.get('images/a.png')?.toString(), 'png')
   assert.equal(JSON.parse(withImages.get('questions.jsonl')?.toString() ?? '{}').turns[0].image, 'images/a.png')
+
+  // Graph only: no conversations, so no images even when asked, and no question provenance.
+  const graph = unzip(buildExport(source, exportOptions({ conversations: false, images: true })))
+  assert.deepEqual([...graph.keys()].sort(), ['README.md', 'concepts.jsonl', 'ontology.ttl', 'relations.jsonl'])
+  for (const r of rows(graph, 'relations.jsonl')) assert.ok(!('questionId' in r) && !('turnIds' in r))
+  for (const c of rows(graph, 'concepts.jsonl')) assert.ok(!('questionIds' in c))
+  assert.match(graph.get('README.md')?.toString() ?? '', /conversations it was built from are not included/)
+
+  const noMemo = unzip(buildExport(source, exportOptions({ memo: false })))
+  assert.ok(!('memo' in rows(noMemo, 'questions.jsonl')[0]))
+
+  const approved = unzip(buildExport(source, exportOptions({ approvedOnly: true })))
+  assert.deepEqual(rows(approved, 'relations.jsonl').map((r) => r.id), ['r1'])
+  assert.match(approved.get('README.md')?.toString() ?? '', /only relations the user approved/)
+})
+
+test('exportOptions: non-boolean input takes defaults; memo and images need conversations', () => {
+  assert.deepEqual(exportOptions('x'), EXPORT_DEFAULTS)
+  assert.deepEqual(exportOptions({ memo: 'yes', approvedOnly: 1 }), EXPORT_DEFAULTS)
+  assert.equal(exportOptions({ conversations: false, memo: true }).memo, false)
+  assert.equal(exportOptions({ conversations: false, images: true }).images, false)
 })

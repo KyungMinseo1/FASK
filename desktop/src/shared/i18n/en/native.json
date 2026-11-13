@@ -49,5 +49,6 @@
   "화면 구성이 바뀌어 화면 질문을 종료했습니다. 앱에서 다시 시작해 주세요.": "Screen question stopped because the screen layout changed. Start it again from the app.",
   "화면 질문을 종료했습니다.": "Screen question stopped.",
   "질문 창이 비정상 종료되어 화면 질문을 종료했습니다.": "Screen question stopped because the question panel crashed.",
-  "페어링이 해제되었습니다. 앱에서 다시 연결해 주세요.": "Pairing was removed. Reconnect from the app."
+  "페어링이 해제되었습니다. 앱에서 다시 연결해 주세요.": "Pairing was removed. Reconnect from the app.",
+  "파일을 저장하지 못했습니다.": "Couldn't save the file."
 }

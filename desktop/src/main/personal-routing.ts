@@ -18,13 +18,19 @@ export const NOT_ALLOWED = '권한이 없는 요청입니다.'
 export const UNSUPPORTED = '지원하지 않는 요청입니다.'
 export const CROSS_BOUNDARY = '로컬과 외부 워크스페이스 사이에서는 이동·병합할 수 없습니다.'
 export const REMOTE_OFFLINE = '외부 PC가 오프라인이라 사용할 수 없습니다.'
-export const REMOTE_UNSUPPORTED = '외부 워크스페이스 프로젝트에서는 지원하지 않는 기능입니다.'
 export const TIDY_MANAGER_ONLY = '지식 관리자로 승인된 PC만 정리할 수 있습니다.'
-const MANAGER_ONLY: ReadonlySet<string> = new Set(['tidy-start', 'tidy-apply', 'tidy-clear'])
+export const EXPORT_MANAGER_ONLY = '지식 관리자로 승인된 PC만 내보낼 수 있습니다.'
+const MANAGER_ONLY: ReadonlyMap<string, string> = new Map([
+  ['tidy-start', TIDY_MANAGER_ONLY],
+  ['tidy-apply', TIDY_MANAGER_ONLY],
+  ['tidy-clear', TIDY_MANAGER_ONLY],
+  ['export-archive', EXPORT_MANAGER_ONLY]
+])
 
-/** Running or applying tidy on this host's workspaces needs the caller PC's knowledge-manager grant. */
+/** Tidying or exporting this host's workspaces needs the caller PC's knowledge-manager grant. */
 export function checkPeerManager(manager: ManagerState | undefined, name: string): void {
-  if (MANAGER_ONLY.has(name) && manager !== 'granted') throw new Error(TIDY_MANAGER_ONLY)
+  const message = MANAGER_ONLY.get(name)
+  if (message && manager !== 'granted') throw new Error(message)
 }
 
 /**
@@ -81,7 +87,7 @@ export function checkPeerCall(own: (kind: string, id: string) => unknown, name: 
     case 'tidy-manager-request':
     case 'tidy-apply':
       return owned('workspace', a)
-    case 'export':
+    case 'export-archive':
       return owned('project', a)
     case 'attachment':
     case 'cancel':
@@ -155,10 +161,10 @@ const ROUTE_KEY: Record<string, (args: unknown[]) => unknown> = {
   'clear-recent': (a) => a[0],
   'continue-question': (a) => a[0],
   'open-overlay': (a) => a[0],
-  export: (a) => a[0]
+  'export-archive': (a) => a[0]
 }
 // Reads are idempotent; `ask` is deduplicated by requestId on the host. Nothing else is retried.
-const RETRY = new Set(['snapshot', 'turn-state', 'attachment', 'ask'])
+const RETRY = new Set(['snapshot', 'turn-state', 'attachment', 'ask', 'export-archive'])
 
 export class RemoteRouter {
   private owners = new Map<string, string>()
@@ -299,7 +305,6 @@ export class RemoteRouter {
       name === 'open-overlay'
     )
       return this.local(name, args)
-    if (name === 'export') throw new Error(REMOTE_UNSUPPORTED)
     const peer = this.peer(owner)
     if (name === 'ask') {
       // The host answers with its own endpoint and active profile; the model is picked from its list.
