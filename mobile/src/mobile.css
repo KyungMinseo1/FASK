@@ -654,8 +654,8 @@
   min-height: 44px;
   font-size: 15px;
 }
-/* Settings toggles render as a switch; the native checkbox keeps its semantics. */
-.fask-mobile .mobile-settings label.check input {
+/* Settings and export toggles render as a switch; the native checkbox keeps its semantics. */
+.fask-mobile :is(.mobile-settings, .export-options) label.check input {
   appearance: none;
   flex: none;
   position: relative;
@@ -668,7 +668,7 @@
   background: var(--hairline-strong);
   cursor: pointer;
 }
-.fask-mobile .mobile-settings label.check input::after {
+.fask-mobile :is(.mobile-settings, .export-options) label.check input::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -679,19 +679,19 @@
   background: var(--surface-1);
   transition: transform 0.15s ease-out;
 }
-.fask-mobile .mobile-settings label.check input:checked {
+.fask-mobile :is(.mobile-settings, .export-options) label.check input:checked {
   background: var(--primary);
 }
-.fask-mobile .mobile-settings label.check input:checked::after {
+.fask-mobile :is(.mobile-settings, .export-options) label.check input:checked::after {
   transform: translateX(18px);
   background: var(--on-primary);
 }
-.fask-mobile .mobile-settings label.check input:focus-visible {
+.fask-mobile :is(.mobile-settings, .export-options) label.check input:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .fask-mobile .mobile-settings label.check input::after {
+  .fask-mobile :is(.mobile-settings, .export-options) label.check input::after {
     transition: none;
   }
 }
@@ -845,6 +845,21 @@
 /* Anchors the tidy bar to the graph, so it scrolls with it instead of floating over the header. */
 .mobile-graph {
   position: relative;
+}
+.fask-mobile .mobile-graph-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
+.fask-mobile .mobile-graph-actions button {
+  min-height: 40px;
+}
+.mobile-sheet .export-options label.check {
+  min-height: 52px;
+  margin: 0;
+}
+.mobile-sheet .export-option-text > span {
+  font-size: 15px;
 }
 /* Non-modal half sheet over the graph: it scrolls inside, the handle toggles full height. */
 .mobile-sheet.concept-sheet {

@@ -38,6 +38,7 @@ import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
 import { Icon } from '../icons'
+import ExportSheet from './ExportSheet'
 import {
   isAndroidOverlay,
   isOverlayCancellation,
@@ -74,7 +75,7 @@ function useWide(): boolean {
 
 export default function ProjectScreen(): React.JSX.Element {
   const { projectId = '', questionId } = useParams()
-  const { data, refresh } = useMobile()
+  const { data, refresh, demo } = useMobile()
   const api = useApi()
   const [graphError, setGraphError] = useState('')
   const navigate = useNavigate()
@@ -87,7 +88,8 @@ export default function ProjectScreen(): React.JSX.Element {
     [view, setView] = useState<'list' | 'graph'>('list'),
     [menu, setMenu] = useState<Question | null>(null),
     [conceptId, setConceptId] = useState<string | null>(null),
-    [sheetFull, setSheetFull] = useState(false)
+    [sheetFull, setSheetFull] = useState(false),
+    [exporting, setExporting] = useState(false)
   const questions = useMemo(
     () => data.questions.filter((q) => q.projectId === projectId),
     [data.questions, projectId]
@@ -219,6 +221,14 @@ export default function ProjectScreen(): React.JSX.Element {
               {graphError}
             </p>
           )}
+          {!demo && (
+            <div className="mobile-graph-actions">
+              <button disabled={locked} onClick={() => setExporting(true)}>
+                <Icon name="export" size={18} />
+                {t('내보내기')}
+              </button>
+            </div>
+          )}
           <div className="mobile-graph" ref={graphRef}>
             <TidyBar
               workspaceId={project.workspaceId}
@@ -348,6 +358,7 @@ export default function ProjectScreen(): React.JSX.Element {
           onClose={() => setMenu(null)}
         />
       )}
+      {exporting && <ExportSheet projectId={projectId} onClose={() => setExporting(false)} />}
       {/* Non-modal half sheet: the graph above stays visible and tappable (another concept swaps the sheet). */}
       {conceptId && data.concepts.some((c) => c.id === conceptId) && (
         <div

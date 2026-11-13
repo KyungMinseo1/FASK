@@ -3,6 +3,7 @@
 // tokens that silence callbacks from superseded streams.
 import type {
   AskResult,
+  ExportOptions,
   KnowledgeApi,
   Snapshot,
   StreamEvent,
@@ -27,6 +28,8 @@ import { t } from '@desktop/shared/i18n'
 
 export type HubConn = { state: 'online' | 'offline' | 'blocked'; savedAt?: string }
 export type HubClient = KnowledgeApi & {
+  /** Base64 zip of the project, built by the hub (or its linked host). */
+  exportArchive(projectId: string, options: ExportOptions): Promise<string>
   /** Address of the last successful RPC or event stream. */
   address(): string
   reconnect(): void
@@ -140,7 +143,8 @@ const FAILOVER_SAFE: ReadonlySet<string> = new Set([
   'set-relation',
   'focus-question',
   'tidy-plan',
-  'tidy-status'
+  'tidy-status',
+  'export-archive'
 ])
 const RETRY_MS = [1000, 2000, 5000, 10000]
 
@@ -190,7 +194,8 @@ export function createHubClient<P extends HubIdentity>(
           'POST',
           `/rpc/${name}`,
           body,
-          name === 'ask' ? 60000 : 15000
+          // Base64 archives of up to 25 MiB may come through the relay.
+          name === 'ask' ? 60000 : name === 'export-archive' ? 120000 : 15000
         )
       } catch (e) {
         if (closed) throw closedError()
@@ -442,6 +447,11 @@ export function createHubClient<P extends HubIdentity>(
     attachment: (id) => rpc('attachment', [id]) as Promise<string | null>,
     clearAttachment: async (questionId, turnId) =>
       void (await rpc('clear-attachment', [questionId, turnId])),
+    async exportArchive(projectId, options) {
+      const data = await rpc('export-archive', [projectId, options])
+      if (typeof data !== 'string') throw new Error(t('요청 형식이 잘못되었습니다.'))
+      return data
+    },
     onStream(cb) {
       streamSubs.add(cb)
       return () => void streamSubs.delete(cb)
