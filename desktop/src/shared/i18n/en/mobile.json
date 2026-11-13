@@ -52,6 +52,7 @@
   "데모 (PC 없음)": "Demo (no PC)",
   "데모 모드: PC 없이 샘플 데이터로 동작합니다. 변경 내용은 저장되지 않습니다.": "Demo mode: running on sample data without a PC. Changes aren't saved.",
   "데모 종료": "Exit demo",
+  "데모에서는 내보낼 수 없습니다.": "Export isn't available in the demo.",
   "뒤로": "Back",
   "모바일": "mobile",
   "모바일 연결을 켜고 주소를 고릅니다.": "Turn on Mobile connection and choose an address.",

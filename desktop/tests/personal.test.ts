@@ -19,6 +19,8 @@ import type { PeerStatus, Project, Question, Snapshot, Turn, TurnState } from '.
 import { PairingHost } from '../src/main/peer-pairing'
 import { dial, pairWithHost, PeerConnection, type PeerLink } from '../src/main/personal-peers'
 import { checkPeerCall, checkPeerManager, RemoteRouter } from '../src/main/personal-routing'
+import { EXPORT_TRANSFER_MAX } from '../src/main/knowledge-export'
+import { EXPORT_DEFAULTS } from '../src/shared/export'
 import { pairConfig, pairRelayKey, runPairClient, type PairPayload, type PairPost } from '../src/shared/pair-code'
 import { OpaqueClient } from '@cloudflare/opaque-ts'
 import { validateBackup } from '../src/main/personal-backup'
@@ -1412,9 +1414,11 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
         hub.broadcast('changed', {})
         return null
       }
+      // The largest archive another device may receive.
+      if (name === 'export-archive') return Buffer.alloc(EXPORT_TRANSFER_MAX, 7).toString('base64')
       throw new Error('지원하지 않는 요청입니다.')
     },
-    new Set(['snapshot', 'rename']),
+    new Set(['snapshot', 'rename', 'export-archive']),
     '1.1.2',
     {
       ke1: (b) => pairing.ke1(b),
@@ -1701,7 +1705,8 @@ test('peer rules: only records of the active profile; no workspace creation or d
     checkPeerCall(own, 'tidy-clear', [project.workspaceId, 'job'])
     checkPeerCall(own, 'tidy-manager-request', [project.workspaceId])
     checkPeerCall(own, 'tidy-apply', [project.workspaceId, 'proposal', [0], []])
-    checkPeerCall(own, 'export', [project.id, { images: false }])
+    checkPeerCall(own, 'export-archive', [project.id, EXPORT_DEFAULTS])
+    assert.throws(() => checkPeerCall(own, 'export-archive', ['missing', EXPORT_DEFAULTS]), /권한이 없는 요청입니다/)
     assert.throws(() => checkPeerCall(own, 'set-relation', ['missing', 'remove']), /권한이 없는 요청입니다/)
     assert.throws(() => checkPeerCall(own, 'focus-question', ['theirs']), /권한이 없는 요청입니다/)
     assert.throws(() => checkPeerCall(own, 'tidy-start', [project.id]), /권한이 없는 요청입니다/)
@@ -1715,11 +1720,33 @@ test('peer rules: only records of the active profile; no workspace creation or d
   }
 })
 
-test('peer rules: running or applying tidy needs the knowledge-manager grant', () => {
+test('peer rules: tidying or exporting needs the knowledge-manager grant', () => {
   assert.throws(() => checkPeerManager(undefined, 'tidy-start'), /지식 관리자로 승인된 PC만/)
   assert.throws(() => checkPeerManager('pending', 'tidy-apply'), /지식 관리자로 승인된 PC만/)
+  assert.throws(() => checkPeerManager('pending', 'export-archive'), /내보낼 수 있습니다/)
+  assert.throws(() => checkPeerManager(undefined, 'export-archive'), /내보낼 수 있습니다/)
   checkPeerManager('granted', 'tidy-start')
+  checkPeerManager('granted', 'export-archive')
   checkPeerManager(undefined, 'tidy-status')
+})
+
+test('linked PC: a maximum-size export archive arrives intact over the pinned TLS RPC', async () => {
+  const h = await peerHost()
+  try {
+    const conn = new PeerConnection(await linked(h), () => {}, () => {}, h.port)
+    try {
+      await until(() => conn.status === 'online', 5000, 'online')
+      const data = await conn.rpc('export-archive', ['pr1', EXPORT_DEFAULTS])
+      assert.equal(typeof data, 'string')
+      const archive = Buffer.from(data as string, 'base64')
+      assert.equal(archive.length, EXPORT_TRANSFER_MAX)
+      assert.ok(archive.every((b) => b === 7))
+    } finally {
+      conn.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
 })
 
 test('linked PC: offline keeps the last snapshot, refuses edits, and reconnects', async () => {
@@ -1802,7 +1829,10 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
   assert.deepEqual(calls[2], ['cancel', 'r1'])
   assert.deepEqual(local, [['rename', 'question', 'lq', 'local']])
   await assert.rejects(router.route('move-question', ['rq', 'lp']), /로컬과 외부 워크스페이스 사이/)
-  await assert.rejects(router.route('export', ['rp']), /지원하지 않는 기능/)
+  await router.route('export-archive', ['rp', EXPORT_DEFAULTS])
+  assert.deepEqual(calls[3], ['export-archive', 'rp', EXPORT_DEFAULTS])
+  // Saving happens on this PC: `export` itself always runs locally and fetches through export-archive.
+  await router.route('export', ['rp', EXPORT_DEFAULTS])
   assert.deepEqual(asked, [['rp', 'rq']])
   // The overlay and its recent conversation live on this PC, even for linked-PC projects.
   await router.route('open-overlay', ['rp', 'rq'])
@@ -1810,6 +1840,7 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
   await router.route('clear-recent', ['rp'])
   await router.route('continue-question', ['rp', 'rq'])
   assert.deepEqual(local.slice(1), [
+    ['export', 'rp', EXPORT_DEFAULTS],
     ['open-overlay', 'rp', 'rq'],
     ['active-project', 'rp'],
     ['clear-recent', 'rp'],

@@ -424,6 +424,15 @@ export interface TidyResult {
   movedQuestions: number
   skipped: number[]
 }
+/** What a project export contains. `images` and `memo` only apply with `conversations`. */
+export interface ExportOptions {
+  /** questions.jsonl plus question provenance on concepts/relations; off = concept graph only. */
+  conversations: boolean
+  memo: boolean
+  images: boolean
+  /** Leave out relations the user has not approved. */
+  approvedOnly: boolean
+}
 /** Knowledge operations shared by the desktop preload and the mobile hub client. */
 export interface KnowledgeApi {
   snapshot(): Promise<Snapshot>
@@ -520,8 +529,8 @@ export interface PersonalApi extends KnowledgeApi {
   switchProfile(id: string): Promise<void>
   saveSettings(settings: LocalSettings, key?: string): Promise<void>
   models(endpoint: string, key?: string): Promise<string[]>
-  /** Zip with README, JSONL and SKOS; images only when chosen. */
-  export(projectId: string, options: { images: boolean }): Promise<boolean>
+  /** Zip with README, JSONL and SKOS per the chosen options; a linked-PC project is fetched from its host. */
+  export(projectId: string, options: ExportOptions): Promise<boolean>
   backup(): Promise<boolean>
   restore(): Promise<boolean>
   displays(): Promise<DisplayInfo[]>

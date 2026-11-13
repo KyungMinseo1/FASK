@@ -669,6 +669,9 @@ export function createDemoHub(): HubClient {
       if (t) t.attachment = null
       changed()
     },
+    exportArchive: async () => {
+      throw new Error('데모에서는 내보낼 수 없습니다.')
+    },
     onStream: (cb) => {
       streams.add(cb)
       return () => void streams.delete(cb)

@@ -2120,6 +2120,65 @@ button.memo-saved:disabled {
 .create-modal .button-row {
   justify-content: flex-end;
 }
+.export-options {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+.export-options legend {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+.export-options label.check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 -12px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.export-options label.check:hover {
+  background: var(--surface-3);
+}
+.export-options label.check:has(input:disabled) {
+  cursor: default;
+  background: none;
+  color: var(--dis-ink);
+}
+.export-option-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.export-option-text > span {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.export-option-text > small {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.export-options label.check:has(input:disabled) small {
+  color: var(--dis-ink);
+}
+/* .create-modal p pulls paragraphs up under the title; this note sits below the options. */
+.create-modal p.export-remote,
+.export-remote {
+  margin: 0 0 18px;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-3);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
 
 /* ---------- composer ---------- */
 .composer {
@@ -3503,14 +3562,15 @@ button.memo-saved:disabled {
   margin: 4px 6px 4px 0;
 }
 
-/* checkboxes become switches */
-.settings-body input[type='checkbox'] {
+/* checkboxes become switches (settings and export options) */
+:is(.settings-body, .export-options) input[type='checkbox'] {
   appearance: none;
   flex: none;
   position: relative;
   width: 36px;
   height: 20px;
   margin: 0;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: var(--r-pill);
@@ -3518,7 +3578,7 @@ button.memo-saved:disabled {
   cursor: pointer;
   transition: background 0.15s;
 }
-.settings-body input[type='checkbox']::after {
+:is(.settings-body, .export-options) input[type='checkbox']::after {
   content: '';
   position: absolute;
   top: 2px;
@@ -3529,22 +3589,22 @@ button.memo-saved:disabled {
   background: var(--sw-knob);
   transition: transform 0.15s ease-out;
 }
-.settings-body input[type='checkbox']:checked {
+:is(.settings-body, .export-options) input[type='checkbox']:checked {
   background: var(--sw-on);
 }
-.settings-body input[type='checkbox']:checked::after {
+:is(.settings-body, .export-options) input[type='checkbox']:checked::after {
   transform: translateX(16px);
   background: var(--sw-on-knob);
 }
-.settings-body input[type='checkbox']:focus-visible {
+:is(.settings-body, .export-options) input[type='checkbox']:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.settings-body input[type='checkbox']:disabled {
+:is(.settings-body, .export-options) input[type='checkbox']:disabled {
   background: var(--dis-bg);
   cursor: default;
 }
-.settings-body input[type='checkbox']:disabled::after {
+:is(.settings-body, .export-options) input[type='checkbox']:disabled::after {
   background: var(--dis-ink);
 }
 .settings-body label.check {

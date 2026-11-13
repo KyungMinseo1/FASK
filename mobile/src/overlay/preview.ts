@@ -202,6 +202,9 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     refine: async (raw) => t('{{text}} (미리보기에서 다듬은 질문)', { text: raw.trim() }),
     attachment: async () => null,
     clearAttachment: async () => {},
+    exportArchive: async () => {
+      throw new Error(t('데모에서는 내보낼 수 없습니다.'))
+    },
     onStream: (cb) => {
       streams.add(cb)
       return () => streams.delete(cb)

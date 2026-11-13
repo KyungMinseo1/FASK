@@ -102,6 +102,7 @@ interface FaskHubPlugin {
   ): Promise<{ status: number; body: string; fingerprint: string }>
   openEvents(o: { id: string; url: string; fingerprint: string; token: string } & RelayOptions): Promise<void>
   closeEvents(o: { id: string }): Promise<void>
+  saveDocument(o: { fileName: string; mimeType: string; data: string }): Promise<{ saved: boolean }>
   addListener(
     e: 'hubEvent',
     cb: (x: { id: string; event: string; data: string }) => void
@@ -204,6 +205,18 @@ export async function pairPost(endpoint: PairEndpoint, path: string, body: unkno
     // Non-JSON bodies surface as `HTTP <status>` through the caller's error mapping.
   }
   return { status: res.status, body: parsed, fingerprint: res.fingerprint }
+}
+
+/** Saves base64 bytes where the user picks (Android document picker); false when the picker was cancelled. */
+export async function saveDocument(fileName: string, mimeType: string, data: string): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) return (await FaskHub.saveDocument({ fileName, mimeType, data })).saved
+  // vite dev in a desktop browser: a regular download.
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0))
+  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+  const a = Object.assign(document.createElement('a'), { href: url, download: fileName })
+  a.click()
+  URL.revokeObjectURL(url)
+  return true
 }
 
 /** Feeds `event:`/`data:` lines; a blank line dispatches one event and `:` comments are skipped. */

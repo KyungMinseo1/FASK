@@ -22,16 +22,18 @@ import { PersonalCapture } from './personal-capture'
 import { validateBackup } from './personal-backup'
 import { KnowledgeExtractor, recallMemory } from './knowledge-extract'
 import { prompt } from './prompts'
-import { buildExport } from './knowledge-export'
+import { buildExport, EXPORT_TOO_LARGE, EXPORT_TRANSFER_MAX } from './knowledge-export'
 import { questionShortcutInfo, registerQuestionShortcut } from './personal-shortcuts'
 import { localModels, normalizeEndpoint, streamChat, type WireMessage } from './local-api'
 import { cleanTitle, questionImages, recommend, routedModel } from '../shared/questions'
+import { exportFileName, exportOptions } from '../shared/export'
 import { i18n, t } from '../shared/i18n'
 import type {
   AskInput,
   AskResult,
   CaptureSetupRequired,
   Concept,
+  ExportOptions,
   HubAddress,
   HubStatus,
   LocalSettings,
@@ -72,7 +74,8 @@ const HUB_METHODS: ReadonlySet<string> = new Set([
   'refine',
   'attachment',
   'clear-attachment',
-  'peer-leave'
+  'peer-leave',
+  'export-archive'
 ])
 const HUB_KIND_ORDER: Record<HubAddress['kind'], number> = { tailscale: 0, lan: 1, other: 2 }
 interface PeerGrant {
@@ -906,16 +909,9 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   })
   handle('capture', (strokes?: string) => capture.question(strokes))
   handle('dashboard', () => capture.showDashboard())
-  handle('export', async (projectId: string, options: { images?: unknown } | undefined) => {
+  const projectArchive = (projectId: string, options: ExportOptions): Buffer => {
     const project = store.record<Project>('project', projectId)
-    const images = options?.images === true
-    const result = await dialog.showSaveDialog({
-      title: t('프로젝트 기억 내보내기'),
-      defaultPath: `${project.name.replace(/[<>:"/\\|?*]/g, '_')}-fask.zip`,
-      filters: [{ name: 'ZIP', extensions: ['zip'] }]
-    })
-    if (result.canceled || !result.filePath) return false
-    const archive = buildExport(
+    return buildExport(
       {
         workspace: store.record<Workspace>('workspace', project.workspaceId),
         project,
@@ -927,8 +923,31 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           return existsSync(path) ? readFileSync(path) : null
         }
       },
-      { images }
+      options
     )
+  }
+  // Sent to a linked PC or the phone over the pinned-TLS hub connection; never written to disk here.
+  handle('export-archive', (projectId: string, raw: unknown) => {
+    const archive = projectArchive(projectId, exportOptions(raw))
+    if (archive.length > EXPORT_TRANSFER_MAX) throw new Error(EXPORT_TOO_LARGE)
+    return archive.toString('base64')
+  })
+  handle('export', async (projectId: string, raw: unknown) => {
+    const project = anyProject(projectId)
+    const options = exportOptions(raw)
+    // A linked-PC archive is fetched before the dialog so grant and size errors show before a path is picked.
+    let archive: Buffer
+    if (router.remoteProject(projectId)) {
+      const data = await router.route('export-archive', [projectId, options])
+      if (typeof data !== 'string') throw new Error('요청 형식이 잘못되었습니다.')
+      archive = Buffer.from(data, 'base64')
+    } else archive = projectArchive(projectId, options)
+    const result = await dialog.showSaveDialog({
+      title: t('프로젝트 기억 내보내기'),
+      defaultPath: exportFileName(project.name),
+      filters: [{ name: 'ZIP', extensions: ['zip'] }]
+    })
+    if (result.canceled || !result.filePath) return false
     writeFileSync(result.filePath, archive)
     return true
   })

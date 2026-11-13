@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import type { CaptureSetupReason, Reference, ShortcutInfo } from '../../../preload/personal'
+import type { CaptureSetupReason, ExportOptions, Reference, ShortcutInfo } from '../../../preload/personal'
+import { EXPORT_DEFAULTS } from '../../../shared/export'
 import { captureSetupMessage } from '../../../shared/capture'
 import {
   filterQuestions,
@@ -19,6 +20,7 @@ import QuestionDetail from './QuestionDetail'
 import ConceptPanel from './ConceptPanel'
 import TidyBar from './TidyBar'
 import Settings, { type SettingsCategory } from './Settings'
+import ExportOptionsFields from './ExportOptionsFields'
 import { Icon } from './ToolbarIcons'
 import { NotificationBell } from './notifications'
 import { Wordmark } from './Wordmark'
@@ -110,7 +112,8 @@ export default function Dashboard(): React.JSX.Element {
   }), [])
   const [compose, setCompose] = useState(false),
     [notice, setNotice] = useState(''),
-    [exportImages, setExportImages] = useState<boolean | null>(null)
+    [exportOpts, setExportOpts] = useState<ExportOptions | null>(null),
+    [exportBusy, setExportBusy] = useState(false)
   const [create, setCreate] = useState<{
       kind: ItemKind
       parent?: string
@@ -611,7 +614,7 @@ export default function Dashboard(): React.JSX.Element {
           <div className="button-row">
             {scope === 'project' ? (
               <>
-                <button disabled={!project} onClick={() => setExportImages(false)}>
+                <button disabled={!project || locked} onClick={() => setExportOpts(EXPORT_DEFAULTS)}>
                   <Icon name="export" />
                   {t('기억 내보내기')}
                 </button>
@@ -1229,17 +1232,18 @@ export default function Dashboard(): React.JSX.Element {
           </form>
         </div>
       )}
-      {exportImages !== null && project && (
+      {exportOpts !== null && project && (
         <div className="modal-backdrop">
           <form
             className="create-modal"
             onSubmit={(e) => {
               e.preventDefault()
-              const images = exportImages
+              const options = exportOpts
+              setExportBusy(true)
               void run(async () => {
-                await window.fask.export(project.id, { images })
-                setExportImages(null)
-              })
+                await window.fask.export(project.id, options)
+                setExportOpts(null)
+              }).finally(() => setExportBusy(false))
             }}
           >
             <h2>{t('기억 내보내기')}</h2>
@@ -1248,21 +1252,19 @@ export default function Dashboard(): React.JSX.Element {
                 '질문, 개념, 관계를 zip 파일 하나로 내보냅니다. 다른 LLM이 읽을 안내(README)와 SKOS 온톨로지가 함께 들어갑니다.'
               )}
             </p>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={exportImages}
-                onChange={(e) => setExportImages(e.target.checked)}
-              />
-              {t('이미지 포함 (파일이 커질 수 있음)')}
-            </label>
+            <ExportOptionsFields
+              value={exportOpts}
+              onChange={setExportOpts}
+              images={new Set(questions.flatMap(questionImages)).size}
+              host={workspace?.remote?.name}
+            />
             {notice && <p className="error">{notice}</p>}
             <div className="button-row">
-              <button type="button" onClick={() => setExportImages(null)}>
+              <button type="button" disabled={exportBusy} onClick={() => setExportOpts(null)}>
                 {t('취소')}
               </button>
-              <button className="primary" autoFocus>
-                {t('내보내기')}
+              <button className="primary" disabled={exportBusy} autoFocus>
+                {exportBusy ? t('준비 중…') : t('내보내기')}
               </button>
             </div>
           </form>

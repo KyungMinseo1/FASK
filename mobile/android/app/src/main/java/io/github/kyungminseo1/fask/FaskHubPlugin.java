@@ -1,11 +1,20 @@
 package io.github.kyungminseo1.fask;
 
+import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.Intent;
+import android.net.Uri;
+import android.provider.DocumentsContract;
+import android.util.Base64;
 import android.util.Log;
+import androidx.activity.result.ActivityResult;
 import java.io.IOException;
+import java.io.OutputStream;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "FaskHub")
@@ -116,6 +125,58 @@ public class FaskHubPlugin extends Plugin {
         String id = call.getString("id");
         if (id != null) client.closeEvents(id);
         call.resolve();
+    }
+
+    /** Storage Access Framework picker: the user chooses where the file goes, so no storage permission is needed. */
+    @PluginMethod
+    public void saveDocument(PluginCall call) {
+        String name = call.getString("fileName");
+        String mime = call.getString("mimeType");
+        if (name == null || mime == null || call.getString("data") == null) {
+            call.reject("INVALID", "INVALID");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mime)
+            .putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(call, intent, "saveDocumentResult");
+    }
+
+    @ActivityCallback
+    private void saveDocumentResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        Uri uri = result.getResultCode() == Activity.RESULT_OK && result.getData() != null ? result.getData().getData() : null;
+        if (uri == null) {
+            call.resolve(new JSObject().put("saved", false));
+            return;
+        }
+        String data = call.getString("data");
+        ContentResolver resolver = getContext().getContentResolver();
+        // The picker already created the file; a failed write removes it.
+        Runnable discard = () -> {
+            try {
+                DocumentsContract.deleteDocument(resolver, uri);
+            } catch (Exception ignored) {
+                // Best effort: some providers do not support deletion.
+            }
+        };
+        if (data == null) {
+            discard.run();
+            call.reject("파일을 저장하지 못했습니다.", "WRITE_FAILED");
+            return;
+        }
+        getBridge().execute(() -> {
+            try (OutputStream out = resolver.openOutputStream(uri, "wt")) {
+                if (out == null) throw new IOException("no stream");
+                out.write(Base64.decode(data, Base64.DEFAULT));
+                call.resolve(new JSObject().put("saved", true));
+            } catch (IOException | IllegalArgumentException | SecurityException e) {
+                Log.w(TAG, "saveDocument failed", e);
+                discard.run();
+                call.reject("파일을 저장하지 못했습니다.", "WRITE_FAILED");
+            }
+        });
     }
 
     /** The call's hub URL with the relay pseudo-address mapped to the loopback tunnel; null rejects NETWORK. */
