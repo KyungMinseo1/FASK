@@ -115,6 +115,12 @@ const fask: PersonalApi = {
   setHubRelay: (enabled, url) => ipcRenderer.invoke('personal:hub-relay', enabled, url),
   resetHubPairing: () => ipcRenderer.invoke('personal:hub-reset'),
   setUiLanguage: (lang) => ipcRenderer.invoke('personal:ui-language', lang),
+  habits: () => ipcRenderer.invoke('personal:habits'),
+  decideHabit: (id, decision) => ipcRenderer.invoke('personal:habit-decide', id, decision),
+  saveHabit: (input) => ipcRenderer.invoke('personal:habit-save', input),
+  removeHabit: (id) => ipcRenderer.invoke('personal:habit-remove', id),
+  exportHabits: () => ipcRenderer.invoke('personal:habit-export'),
+  importHabits: (text) => ipcRenderer.invoke('personal:habit-import', text),
   onStream: (cb) => {
     const listener = (_: Electron.IpcRendererEvent, event: StreamEvent): void => cb(event)
     ipcRenderer.on('personal:stream', listener)

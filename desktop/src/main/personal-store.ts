@@ -14,6 +14,7 @@ import type {
   Concept,
   ConceptLevel,
   ConceptRole,
+  Habit,
   LocalSettings,
   Profile,
   Project,
@@ -60,6 +61,7 @@ export const defaults: LocalSettings = {
   promptLanguage: 'ko',
   retention: 'balanced',
   autoTitle: true,
+  answerHabits: true,
   regions: []
 }
 
@@ -202,6 +204,7 @@ export class PersonalStore {
     this.migrateKnowledge()
     this.migrateLevels()
     this.migrateHierarchyRelations()
+    this.migrateHabitWatermark()
     if (!this.list<Profile>('profile', '*').length) {
       const id = this.put('profile', '*', { id: randomUUID(), name: '기본 프로필' })
       this.pref('active', id)
@@ -396,6 +399,24 @@ export class PersonalStore {
       throw e
     }
   }
+  /**
+   * Schema 6: answer-habit detection starts after the turns present at upgrade, so a first run
+   * never sends every past conversation to the model.
+   */
+  private migrateHabitWatermark(): void {
+    if (this.db.prepare('SELECT version FROM schema_migrations WHERE version=6').get()) return
+    this.db.exec('BEGIN')
+    try {
+      this.db.exec(
+        "UPDATE records SET data=json_set(data,'$.habitTurns',json_array_length(data,'$.turns')) WHERE kind='question'"
+      )
+      this.db.exec('INSERT INTO schema_migrations VALUES(6); COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      this.db.close()
+      throw e
+    }
+  }
   findRun(
     requestId: string
   ): { questionId: string; turnId: string; profile: string; requestHash: string } | undefined {
@@ -579,6 +600,11 @@ export class PersonalStore {
     if (!row) return
     this.index.remove(Number(row.rowid))
     this.db.prepare('DELETE FROM records WHERE rowid=?').run(row.rowid)
+  }
+  /** Deletes an answer habit of the profile; throws when it does not exist. */
+  removeHabit(id: string, profile = this.active): void {
+    this.record('habit', id, profile)
+    this.drop(id, profile)
   }
   record<T>(kind: string, id: string, profile = this.active): T {
     const row = this.db
@@ -866,6 +892,11 @@ export class PersonalStore {
         else if (r.questionId && removedQuestions.has(r.questionId))
           // Provenance is gone; the relation itself stays.
           this.put('relation', profile, { ...r, questionId: null, turnIds: [] })
+      for (const h of this.list<Habit>('habit', profile))
+        if (kind === 'workspace' && h.workspaceId === id) this.drop(h.id, profile)
+        else if (h.sources.some((s) => removedQuestions.has(s.questionId)))
+          // Evidence is gone; the habit itself stays.
+          this.put('habit', profile, { ...h, sources: h.sources.filter((s) => !removedQuestions.has(s.questionId)) })
       if (kind === 'workspace')
         for (const c of this.list<Concept>('concept', profile))
           if (c.workspaceId === id) this.drop(c.id, profile)

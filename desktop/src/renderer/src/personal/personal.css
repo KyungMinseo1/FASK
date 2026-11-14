@@ -3866,6 +3866,20 @@ button.memo-saved:disabled {
 .peer-connect ~ .peer-list {
   margin-top: 14px;
 }
+.habit-drop {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--r-lg);
+  text-align: center;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.habit-drop.dragging,
+.habit-drop:focus-visible {
+  border-color: var(--accent);
+  color: var(--ink);
+}
 
 /* Thread jump controls (portaled to <body>). TurnNav sets right/bottom to the
    visible corner of the thread's scroller. Hidden until the thread scrolls. */

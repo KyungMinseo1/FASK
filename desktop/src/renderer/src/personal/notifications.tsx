@@ -5,7 +5,7 @@ import { Icon, type IconName } from './ToolbarIcons'
 import TidyDialog from './TidyDialog'
 import { dateLabel, errorText } from './common'
 import { useT } from '../../../shared/i18n/react'
-import type { PeerGrantInfo, TidyAccess, TidyEstimate, TidyStatus } from '../../../preload/personal'
+import type { Habit, HabitList, PeerGrantInfo, TidyAccess, TidyEstimate, TidyStatus } from '../../../preload/personal'
 
 /** What a tidy or manager request asks the notification center to follow. No-ops without a provider. */
 export interface Notifications {
@@ -145,6 +145,7 @@ export function NotificationsProvider({
   // Items derived from watches; they outlive the watch (lost, answered) until dismissed.
   const [watched, setWatched] = useState<Map<string, NotifyItem>>(new Map())
   const [requests, setRequests] = useState<NotifyItem[]>([])
+  const [habitItems, setHabitItems] = useState<NotifyItem[]>([])
   const [seen, setSeen] = useState<Set<string>>(() => new Set(readSeen()))
   const [history, setHistory] = useState<NotifyRecord[]>(readHistory)
   const [open, setOpen] = useState<{ workspaceId: string; name: string } | null>(null)
@@ -374,6 +375,61 @@ export function NotificationsProvider({
           })
       )
     }
+    const pollHabits = async (): Promise<void> => {
+      let list: HabitList
+      try {
+        list = await api.habits()
+      } catch {
+        return
+      }
+      if (!live) return
+      if (!list.enabled) {
+        setHabitItems([])
+        return
+      }
+      // Rejections reach the bell, which shows the failure and keeps the item.
+      const decide =
+        (text: string, vars: Record<string, unknown>, h: Habit, decision: 'active' | 'rejected', outcome: string) =>
+        (): Promise<void> =>
+          api
+            .decideHabit(h.id, decision)
+            .then(() => record({ icon: 'refine', text, vars, outcome }))
+            .finally(() => pollRef.current())
+      const next: NotifyItem[] = []
+      for (const h of list.habits) {
+        if (h.status === 'proposed') {
+          const text = h.when
+            ? '이 답변 방식을 기억할까요? "{{rule}}" ({{when}}, {{n}}번 요청)'
+            : '이 답변 방식을 기억할까요? "{{rule}}" ({{n}}번 요청)'
+          const vars = { rule: h.rule, when: h.when, n: h.count }
+          next.push({
+            id: `habit:${h.id}`,
+            icon: 'refine',
+            text,
+            vars,
+            actions: [
+              { label: '기억', primary: true, run: decide(text, vars, h, 'active', '기억함') },
+              { label: '무시', run: decide(text, vars, h, 'rejected', '무시함') }
+            ]
+          })
+        } else if (h.status === 'active' && h.origin === 'explicit' && h.reviewedAt === null) {
+          // The model turned it on from an explicit request; confirm or undo.
+          const text = '앞으로 이렇게 답합니다: "{{rule}}"'
+          const vars = { rule: h.rule }
+          next.push({
+            id: `habit-on:${h.id}`,
+            icon: 'refine',
+            text,
+            vars,
+            actions: [
+              { label: '확인', primary: true, run: decide(text, vars, h, 'active', '확인함') },
+              { label: '끄기', run: decide(text, vars, h, 'rejected', '끔') }
+            ]
+          })
+        }
+      }
+      setHabitItems(next)
+    }
     const poll = async (): Promise<void> => {
       if (!live) return
       if (running) {
@@ -402,7 +458,8 @@ export function NotificationsProvider({
           await Promise.all([
             ...Object.entries(w.tidy).map(([ws, v]) => pollTidy(ws, v.jobId, v.name, version)),
             ...Object.entries(w.manager).map(([ws, v]) => pollManager(ws, v.name, v.last, version)),
-            pollRequests()
+            pollRequests(),
+            pollHabits()
           ])
         } while (again && live)
       } finally {
@@ -455,7 +512,7 @@ export function NotificationsProvider({
     setAttached((n) => n + 1)
     return () => setAttached((n) => n - 1)
   }, [])
-  const items = useMemo(() => [...requests, ...watched.values()], [requests, watched])
+  const items = useMemo(() => [...requests, ...habitItems, ...watched.values()], [requests, habitItems, watched])
   const center = useMemo<Center>(
     () => ({ items, seen, markSeen, attach, history, clearHistory }),
     [items, seen, markSeen, attach, history, clearHistory]

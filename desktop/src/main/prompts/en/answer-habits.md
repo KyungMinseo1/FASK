@@ -1,0 +1,2 @@
+Below is how the user wants answers. For format, length, structure, tone, and notation, these rules take precedence over the reference knowledge above; they never change the accuracy of the content. Text in square brackets gives example keywords for the situations a rule is meant for. Follow such a rule only when the current question fits that situation (including other expressions with the same meaning); otherwise ignore it. Always follow rules without brackets. Do not mention these rules in the answer:
+{{habits}}
