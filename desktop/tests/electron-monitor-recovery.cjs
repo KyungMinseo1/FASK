@@ -116,7 +116,7 @@ app.whenReady().then(async () => {
     const project = seed.list('project')[0]
     const endpoint = `http://127.0.0.1:${server.address().port}/v1`
     const oldRegion = { displayId: staleId, screenWidth: d0.bounds.width, screenHeight: d0.bounds.height, rect: { x: 0.2, y: 0.2, width: 0.5, height: 0.5 } }
-    seed.saveSettings({ ...seed.settings(), endpoint, model: 'test-fast', models: ['test-fast', 'test-deep'], routing: 'manual', organize: false, autoTitle: false, refine: false, memoryScope: 'off', retention: 'preserve', displayId: staleId, regions: [oldRegion] })
+    seed.saveSettings({ ...seed.settings(), endpoint, model: 'test-fast', models: ['test-fast', 'test-deep'], routing: 'manual', organize: false, autoTitle: false, answerHabits: false, refine: false, memoryScope: 'off', retention: 'preserve', displayId: staleId, regions: [oldRegion] })
     const createdAt = new Date().toISOString()
     seed.put('question', seed.active, { id: 'monitor-seed', projectId: project.id, createdAt, title: 'monitor recovery seed', turns: [{ id: 'monitor-seed-turn', createdAt, raw: 'seed', refined: '', sent: 'seed', answer: 'seed answer', model: 'test-fast', actualModel: 'test-fast', status: 'completed', complexity: 'simple', routingReason: '', attachment: null, documents: [], error: '', revision: 0 }], conceptIds: [], suggestions: [], memo: '', important: false })
     seed.close()

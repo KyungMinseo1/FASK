@@ -120,6 +120,7 @@ app.whenReady().then(async () => {
       models: ['test-fast', 'test-deep'],
       organize: false,
       autoTitle: false,
+      answerHabits: false,
       memoryScope: 'off'
     })
     const base = Date.now()
