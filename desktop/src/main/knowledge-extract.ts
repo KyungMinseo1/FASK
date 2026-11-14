@@ -27,6 +27,7 @@ import { CHILD_LEVEL, PARENT_LEVEL } from './personal-backup'
 import {
   conceptName,
   parseExtraction,
+  parseHabits,
   parseRetag,
   parseTidy,
   type ExtractedConcept,
@@ -37,6 +38,7 @@ import {
 import { normalizeName, questionText, type SearchHit } from './knowledge-search'
 import { addSuggestions, mentionTurns, placementKey, type PersonalStore } from './personal-store'
 import { prompt } from './prompts'
+import { applyDetected, feedbackTurns, habitContext } from './habits'
 
 /** One non-streaming completion; `model` is already resolved. */
 export type Chat = (
@@ -453,7 +455,7 @@ export class KnowledgeExtractor {
   /** A turn of the question finished; restarts its debounce. */
   completed(profile: string, questionId: string): void {
     const settings = this.store.settings(profile)
-    if (!settings.organize || this.closed) return
+    if ((!settings.organize && !settings.answerHabits) || this.closed) return
     clearTimeout(this.timers.get(questionId)?.timer)
     const timer = setTimeout(
       () => {
@@ -484,7 +486,8 @@ export class KnowledgeExtractor {
   /** Startup: questions with completed turns past their watermark get a debounce. */
   scan(profiles: string[]): void {
     for (const profile of profiles) {
-      if (!this.store.settings(profile).organize) continue
+      const settings = this.store.settings(profile)
+      if (!settings.organize && !settings.answerHabits) continue
       for (const q of this.store.list<Question>('question', profile)) {
         const { start, end } = pendingRange(q)
         if (q.turns.slice(start, end).some((t) => t.status === 'completed')) this.completed(profile, q.id)
@@ -530,63 +533,98 @@ export class KnowledgeExtractor {
     this.store.put('question', profile, { ...fresh, extractedTurns: end })
   }
 
+  private markHabits(profile: string, questionId: string, end: number): void {
+    const fresh = this.store.record<Question>('question', questionId, profile)
+    if ((fresh.habitTurns ?? 0) >= end) return
+    this.store.put('question', profile, { ...fresh, habitTurns: end })
+  }
+
+  /**
+   * One model call per run: concept extraction of the pending turns and, when feedback turns past
+   * `habitTurns` pass the habit gate, the answer-habit judgment riding on it (or alone when concept
+   * extraction is off or has nothing to send). A failed call leaves both watermarks for a retry.
+   */
   private async extract(profile: string, questionId: string): Promise<void> {
     const settings = this.store.settings(profile)
-    if (!settings.organize) return
+    if (!settings.organize && !settings.answerHabits) return
     const q = this.store.record<Question>('question', questionId, profile)
     const { start, end } = pendingRange(q)
-    if (end <= start) return
+    const lang = settings.promptLanguage
     const batch = q.turns
       .map((turn, index) => ({ turn, index }))
       .slice(start, end)
       .filter(({ turn }) => turn.status === 'completed' || turn.status === 'saved')
     const signal = batch.map(({ turn }) => `${userText(turn)}\n${turn.answer}`).join('\n')
-    if (signal.replace(/\s/g, '').length < MIN_TEXT) {
+    let doConcepts = settings.organize && end > start
+    if (doConcepts && signal.replace(/\s/g, '').length < MIN_TEXT) {
       this.advance(profile, questionId, end)
+      doConcepts = false
+    }
+    const feedback = settings.answerHabits ? feedbackTurns(q, Math.min(q.habitTurns ?? 0, end), end) : []
+    if (!doConcepts && !feedback.length) {
+      if (settings.answerHabits) this.markHabits(profile, questionId, end)
       return
     }
     const workspaceId = this.store.record<Project>('project', q.projectId, profile).workspaceId
-    const graph = new Graph(this.store, profile, workspaceId)
-    const linked = q.conceptIds.flatMap((id) => graph.get(id) ?? [])
-    const candidates = this.store.search(profile, signal.slice(0, 4000), {
-      workspaceId,
-      kinds: ['concept'],
-      limit: CANDIDATES
-    }).flatMap((hit) => (q.conceptIds.includes(hit.id) ? [] : (graph.get(hit.id) ?? [])))
-    const describe = (c: Concept): Record<string, unknown> => ({
-      id: c.id,
-      name: c.name,
-      aliases: c.aliases,
-      level: c.level,
-      parent: c.parentId ? (graph.get(c.parentId)?.name ?? null) : null
-    })
-    const input = JSON.stringify({
-      title: questionHeading(q),
-      turns: batch.map(({ turn, index }) => ({
-        index,
-        question: userText(turn),
-        ...(turn.documents.length ? { files: turn.documents.map((d) => d.name) } : {}),
-        answer: turn.answer.slice(0, 6000)
-      })),
-      candidates: candidates.map(describe),
-      linked: linked.map((c) => ({
-        ...describe(c),
-        role: roleOf(q, c.id),
-        ...(q.conceptSources?.[c.id] === 'user' ? { user: true } : {})
-      }))
-    })
-    const known = new Set([...candidates, ...linked].map((c) => c.id))
-    const parsed = parseExtraction(
-      await this.chat(profile, organizeModel(settings), prompt(settings.promptLanguage, 'extract'), input, AbortSignal.timeout(120000)),
-      known
-    )
-    const fresh = this.store.record<Question>('question', questionId, profile)
-    // Moved to another workspace meanwhile: this result belongs to the old graph.
-    if (this.store.record<Project>('project', fresh.projectId, profile).workspaceId !== workspaceId) {
-      this.advance(profile, questionId, end)
-      return
+    const sent = feedback.length ? habitContext(this.store, profile) : []
+    const habitInput = feedback.length
+      ? { feedback, habits: sent.map((h) => ({ id: h.id, rule: h.rule, when: h.when, status: h.status })) }
+      : {}
+    let instruction = prompt(lang, 'habits')
+    let input = JSON.stringify(habitInput)
+    let concepts: { graph: Graph; known: Set<string> } | undefined
+    if (doConcepts) {
+      const graph = new Graph(this.store, profile, workspaceId)
+      const linked = q.conceptIds.flatMap((id) => graph.get(id) ?? [])
+      const candidates = this.store.search(profile, signal.slice(0, 4000), {
+        workspaceId,
+        kinds: ['concept'],
+        limit: CANDIDATES
+      }).flatMap((hit) => (q.conceptIds.includes(hit.id) ? [] : (graph.get(hit.id) ?? [])))
+      const describe = (c: Concept): Record<string, unknown> => ({
+        id: c.id,
+        name: c.name,
+        aliases: c.aliases,
+        level: c.level,
+        parent: c.parentId ? (graph.get(c.parentId)?.name ?? null) : null
+      })
+      input = JSON.stringify({
+        title: questionHeading(q),
+        turns: batch.map(({ turn, index }) => ({
+          index,
+          question: userText(turn),
+          ...(turn.documents.length ? { files: turn.documents.map((d) => d.name) } : {}),
+          answer: turn.answer.slice(0, 6000)
+        })),
+        candidates: candidates.map(describe),
+        linked: linked.map((c) => ({
+          ...describe(c),
+          role: roleOf(q, c.id),
+          ...(q.conceptSources?.[c.id] === 'user' ? { user: true } : {})
+        })),
+        ...habitInput
+      })
+      instruction = prompt(lang, 'extract') + (feedback.length ? `\n\n${prompt(lang, 'habits')}` : '')
+      concepts = { graph, known: new Set([...candidates, ...linked].map((c) => c.id)) }
     }
-    this.apply(graph, fresh, parsed, batch, end, profile)
+    const text = await this.chat(profile, organizeModel(settings), instruction, input, AbortSignal.timeout(120000))
+    if (concepts) {
+      const parsed = parseExtraction(text, concepts.known)
+      const fresh = this.store.record<Question>('question', questionId, profile)
+      // Moved to another workspace meanwhile: this result belongs to the old graph.
+      if (this.store.record<Project>('project', fresh.projectId, profile).workspaceId !== workspaceId)
+        this.advance(profile, questionId, end)
+      else this.apply(concepts.graph, fresh, parsed, batch, end, profile)
+    }
+    // Habits belong to the workspace the feedback was given in, even if the question moved since.
+    if (feedback.length)
+      applyDetected(
+        this.store,
+        profile,
+        parseHabits(text, new Set(sent.map((h) => h.id)), new Set(feedback.map((f) => f.turn))),
+        { questionId, workspaceId, turns: q.turns }
+      )
+    if (settings.answerHabits) this.markHabits(profile, questionId, end)
     this.changed()
   }
 

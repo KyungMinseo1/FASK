@@ -210,6 +210,10 @@ export default function Settings(): React.JSX.Element {
               <dt>{t('참고 토큰 상한')}</dt>
               <dd>{data.settings.memoryTokens.toLocaleString()}</dd>
             </div>
+            <div>
+              <dt>{t('답변 습관')}</dt>
+              <dd>{data.settings.answerHabits ? t('켜짐') : t('꺼짐')}</dd>
+            </div>
           </dl>
         </section>
         {(overlayPreviewAvailable() || (demoAvailable() && !demo)) && (

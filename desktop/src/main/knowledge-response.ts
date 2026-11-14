@@ -1,5 +1,6 @@
 import type { ConceptLevel, ConceptRole, RelationType, RetagVerdict } from '../preload/personal'
 import { CONCEPT_LEVELS, RELATION_TYPES } from './personal-backup'
+import { normalizeWhen } from './habits'
 
 /**
  * Strict validation of the extraction, tidy and re-tag model responses. Every field is checked; an item
@@ -305,4 +306,63 @@ export function parseRetag(text: string, linked: ReadonlySet<string>, known: Rea
   )
   report('retag', dropped)
   return judged
+}
+
+export interface ExtractedHabit {
+  rule: string
+  when: string
+  scope: 'profile' | 'workspace'
+  explicit: boolean
+  same: string | null
+  replaces: string | null
+  turns: number[]
+}
+
+/**
+ * Answer-habit part of a response; `known` holds the habit ids sent, `feedbackTurns` the turn
+ * indexes sent as feedback. An item citing no feedback turn, naming an unsent id, or claiming both
+ * `same` and `replaces` is dropped. Unparseable output finds nothing.
+ */
+export function parseHabits(text: string, known: ReadonlySet<string>, feedbackTurns: ReadonlySet<number>): ExtractedHabit[] {
+  const parsed = parseObject(text)
+  if (!parsed) {
+    console.debug('[knowledge] habits: unparseable response, treated as empty')
+    return []
+  }
+  const dropped: Record<string, number> = {}
+  const habits = items(
+    parsed.habits,
+    (raw): Checked<ExtractedHabit> => {
+      const rule = typeof raw.rule === 'string' ? raw.rule.trim() : ''
+      const same = raw.same === null ? null : knownId(raw.same, known) ? raw.same : BAD
+      const replaces = raw.replaces === null ? null : knownId(raw.replaces, known) ? raw.replaces : BAD
+      if (
+        !rule ||
+        rule.length > 300 ||
+        typeof raw.when !== 'string' ||
+        (raw.scope !== 'profile' && raw.scope !== 'workspace') ||
+        typeof raw.explicit !== 'boolean' ||
+        same === BAD ||
+        replaces === BAD ||
+        (same !== null && replaces !== null) ||
+        !Array.isArray(raw.turns) ||
+        !raw.turns.length ||
+        !raw.turns.every((i) => Number.isInteger(i) && feedbackTurns.has(i as number))
+      )
+        return BAD
+      return {
+        rule,
+        when: normalizeWhen(raw.when),
+        scope: raw.scope,
+        explicit: raw.explicit,
+        same,
+        replaces,
+        turns: [...new Set(raw.turns as number[])]
+      }
+    },
+    dropped,
+    'habits'
+  )
+  report('habits', dropped)
+  return habits
 }

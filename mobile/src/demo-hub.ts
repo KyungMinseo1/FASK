@@ -262,6 +262,7 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
         promptLanguage: 'ko',
         retention: 'balanced',
         autoTitle: true,
+        answerHabits: true,
         regions: []
       },
       storageBytes: 1_250_000
@@ -672,6 +673,8 @@ export function createDemoHub(): HubClient {
     exportArchive: async () => {
       throw new Error('데모에서는 내보낼 수 없습니다.')
     },
+    habits: async () => ({ enabled: false, habits: [], workspaces: [] }),
+    decideHabit: async () => {},
     onStream: (cb) => {
       streams.add(cb)
       return () => void streams.delete(cb)

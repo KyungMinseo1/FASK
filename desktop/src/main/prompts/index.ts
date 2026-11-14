@@ -15,6 +15,8 @@ import koAttachments from './ko/attachments.md?raw'
 import koExtract from './ko/extract.md?raw'
 import koTidy from './ko/tidy.md?raw'
 import koRetag from './ko/retag.md?raw'
+import koHabits from './ko/habits.md?raw'
+import koAnswerHabits from './ko/answer-habits.md?raw'
 import enAnswer from './en/answer.md?raw'
 import enAnswerMemory from './en/answer-memory.md?raw'
 import enAnnotation from './en/annotation.md?raw'
@@ -29,6 +31,8 @@ import enAttachments from './en/attachments.md?raw'
 import enExtract from './en/extract.md?raw'
 import enTidy from './en/tidy.md?raw'
 import enRetag from './en/retag.md?raw'
+import enHabits from './en/habits.md?raw'
+import enAnswerHabits from './en/answer-habits.md?raw'
 
 export type PromptLanguage = LocalSettings['promptLanguage']
 
@@ -49,7 +53,9 @@ const ko = {
   attachments: clean(koAttachments),
   extract: clean(koExtract),
   tidy: clean(koTidy),
-  retag: clean(koRetag)
+  retag: clean(koRetag),
+  habits: clean(koHabits),
+  'answer-habits': clean(koAnswerHabits)
 }
 export type PromptName = keyof typeof ko
 const en: Record<PromptName, string> = {
@@ -66,7 +72,9 @@ const en: Record<PromptName, string> = {
   attachments: clean(enAttachments),
   extract: clean(enExtract),
   tidy: clean(enTidy),
-  retag: clean(enRetag)
+  retag: clean(enRetag),
+  habits: clean(enHabits),
+  'answer-habits': clean(enAnswerHabits)
 }
 export const PROMPTS: Record<PromptLanguage, Record<PromptName, string>> = { ko, en }
 

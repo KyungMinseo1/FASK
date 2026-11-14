@@ -1,4 +1,5 @@
 import type {
+  Habit,
   Concept,
   ConceptLevel,
   LocalSettings,
@@ -10,11 +11,13 @@ import type {
 } from '../preload/personal'
 import { mergeLegacyQuestions, type LegacyQuestion } from '../shared/questions'
 import { normalizeName } from './knowledge-search'
+import { backupHabits } from './habits'
 
 export interface Backup {
   version: 3
   snapshot: Snapshot
   images: Record<string, string>
+  habits: Habit[]
 }
 const STATUSES = ['saved', 'running', 'completed', 'failed', 'cancelled']
 const COMPLEXITIES = ['simple', 'complex', 'unknown']
@@ -200,7 +203,7 @@ export function validateBackup(input: unknown): Backup {
     throw new Error('백업 형식이나 프로젝트 참조가 잘못되었습니다.')
   }
   if (!input || typeof input !== 'object') fail()
-  const value = input as { version: unknown; snapshot: Snapshot; images: Record<string, string> }
+  const value = input as { version: unknown; snapshot: Snapshot; images: Record<string, string>; habits?: unknown }
   if (
     (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
     !value.snapshot ||
@@ -358,6 +361,8 @@ export function validateBackup(input: unknown): Backup {
       !Number.isInteger(q.extractedTurns) ||
       q.extractedTurns < 0 ||
       q.extractedTurns > q.turns.length ||
+      (q.habitTurns !== undefined &&
+        (!Number.isInteger(q.habitTurns) || q.habitTurns < 0 || q.habitTurns > q.turns.length)) ||
       !q.conceptTurns ||
       typeof q.conceptTurns !== 'object' ||
       Array.isArray(q.conceptTurns) ||
@@ -456,6 +461,7 @@ export function validateBackup(input: unknown): Backup {
   )
     fail()
   if (s.settings.autoTitle !== undefined && typeof s.settings.autoTitle !== 'boolean') fail()
+  if (s.settings.answerHabits !== undefined && typeof s.settings.answerHabits !== 'boolean') fail()
   for (const key of ['memoryTokens', 'extractDelaySec'] as const)
     if (
       s.settings[key] !== undefined &&
@@ -486,5 +492,7 @@ export function validateBackup(input: unknown): Backup {
     )
       fail()
   }
-  return { version: 3, snapshot: s, images: value.images }
+  // Every version is v3-shaped by now; v1/v2 backups have no habits.
+  const habits = backupHabits(value.habits, new Set(s.workspaces.map((w) => w.id)), s.questions) ?? fail()
+  return { version: 3, snapshot: s, images: value.images, habits }
 }

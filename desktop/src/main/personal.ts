@@ -21,6 +21,7 @@ import { DisplayImages } from './image-display'
 import { PersonalCapture } from './personal-capture'
 import { validateBackup } from './personal-backup'
 import { KnowledgeExtractor, recallMemory } from './knowledge-extract'
+import { decideHabit, habitFile, importHabitFile, listHabits, recallHabits, saveHabit } from './habits'
 import { prompt } from './prompts'
 import { buildExport, EXPORT_TOO_LARGE, EXPORT_TRANSFER_MAX } from './knowledge-export'
 import { questionShortcutInfo, registerQuestionShortcut } from './personal-shortcuts'
@@ -36,6 +37,8 @@ import type {
   ExportOptions,
   HubAddress,
   HubStatus,
+  Habit,
+  HabitInput,
   LocalSettings,
   Profile,
   Project,
@@ -75,7 +78,9 @@ const HUB_METHODS: ReadonlySet<string> = new Set([
   'attachment',
   'clear-attachment',
   'peer-leave',
-  'export-archive'
+  'export-archive',
+  'habits',
+  'habit-decide'
 ])
 const HUB_KIND_ORDER: Record<HubAddress['kind'], number> = { tailscale: 0, lan: 1, other: 2 }
 interface PeerGrant {
@@ -437,7 +442,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       memoryTokens: Math.round(Number(settings.memoryTokens)),
       extractDelaySec: Math.round(Number(settings.extractDelaySec)),
       retention: settings.retention,
-      autoTitle: !!settings.autoTitle
+      autoTitle: !!settings.autoTitle,
+      answerHabits: !!settings.answerHabits
     }
     if (
       !['manual', 'recommend', 'auto'].includes(clean.routing) ||
@@ -766,6 +772,10 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
               })
         if (memory.references.length)
           store.updateTurn(questionId, turnId, { references: memory.references }, profile)
+        // Habits of this PC's active profile; a linked PC's workspace is answered there, with its habits.
+        const habits = settings.answerHabits
+          ? recallHabits(store, { profile, workspaceId: project.workspaceId, text: clues })
+          : []
         const messages: WireMessage[] = [
           {
             role: 'system',
@@ -773,6 +783,11 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
               prompt(lang, 'answer', { project: project.name }) +
               (memory.context.length
                 ? `\n\n${prompt(lang, 'answer-memory', { context: JSON.stringify(memory.context) })}`
+                : '') +
+              (habits.length
+                ? `\n\n${prompt(lang, 'answer-habits', {
+                    habits: habits.map((h) => `- ${h.rule}${h.when ? ` [${h.when}]` : ''}`).join('\n')
+                  })}`
                 : '') +
               (annotated ? `\n\n${prompt(lang, 'annotation')}` : '')
           }
@@ -969,7 +984,9 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       JSON.stringify({
         version: 3,
         snapshot: { ...snapshot, settings: { ...snapshot.settings, hasKey: false } },
-        images
+        images,
+        // Superseded habits too, so `replaces` chains survive a restore.
+        habits: store.list<Habit>('habit')
       }),
       'utf8'
     )
@@ -1090,7 +1107,9 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
                   })
                 }
               : {})
-          }))
+          })),
+          // Past turns of an older backup are not checked for habits after the restore.
+          habitTurns: q.habitTurns ?? q.turns.length
         }
         // The workspace in which tidy's move offer was kept; one outside the backup is dropped.
         const stay = q.tidyStay === undefined ? undefined : ids.get(q.tidyStay)
@@ -1098,6 +1117,18 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         else delete question.tidyStay
         store.put('question', profile, question)
       }
+      const habitIds = new Map(backup.habits.map((h) => [h.id, randomUUID()]))
+      for (const h of backup.habits)
+        store.put<Habit>('habit', profile, {
+          ...h,
+          id: habitIds.get(h.id) ?? randomUUID(),
+          workspaceId: h.workspaceId ? mapped(h.workspaceId) : null,
+          replaces: h.replaces ? (habitIds.get(h.replaces) ?? null) : null,
+          sources: h.sources.flatMap((s) => {
+            const questionId = ids.get(s.questionId)
+            return questionId ? [{ questionId, turnIds: turnMapped(s.turnIds) }] : []
+          })
+        })
       store.saveSettings({
         ...store.settings(),
         ...snapshot.settings,
@@ -1112,6 +1143,37 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       store.pref('active', previous)
       throw e
     }
+  })
+  // ── Answer habits ── per profile, local to this PC; the phone may list and decide them.
+  handle('habits', () => listHabits(store, store.active))
+  handle('habit-decide', (id: string, decision: unknown) => {
+    if (decision !== 'active' && decision !== 'rejected') throw new Error('요청 형식이 잘못되었습니다.')
+    decideHabit(store, store.active, String(id), decision)
+    changed()
+  })
+  handle('habit-save', (input: HabitInput) => {
+    const id = saveHabit(store, store.active, input)
+    changed()
+    return id
+  })
+  handle('habit-remove', (id: string) => {
+    store.removeHabit(String(id))
+    changed()
+  })
+  handle('habit-export', async () => {
+    const result = await dialog.showSaveDialog({
+      title: t('답변 습관 저장'),
+      defaultPath: 'fask-habits.json',
+      filters: [{ name: 'FASK habits', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) return false
+    writeFileSync(result.filePath, habitFile(store, store.active), 'utf8')
+    return true
+  })
+  handle('habit-import', (text: string) => {
+    const result = importHabitFile(store, store.active, text)
+    changed()
+    return result
   })
   // ── Mobile hub ── global (not per-profile) settings; secrets are encrypted with safeStorage.
   const readSecret = (name: string): string => {

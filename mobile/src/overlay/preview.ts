@@ -43,6 +43,7 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       promptLanguage: 'ko',
       retention: 'balanced',
       autoTitle: false,
+      answerHabits: false,
       regions: []
     },
     storageBytes: 0
@@ -205,6 +206,8 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     exportArchive: async () => {
       throw new Error(t('데모에서는 내보낼 수 없습니다.'))
     },
+    habits: async () => ({ enabled: false, habits: [], workspaces: [] }),
+    decideHabit: async () => {},
     onStream: (cb) => {
       streams.add(cb)
       return () => streams.delete(cb)

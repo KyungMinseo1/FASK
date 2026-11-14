@@ -3,6 +3,9 @@ import QRCode from 'qrcode'
 import type {
   CaptureSetupReason,
   DisplayInfo,
+  Habit,
+  HabitInput,
+  HabitList,
   HubStatus,
   LocalSettings,
   ManagerState,
@@ -361,7 +364,7 @@ export default function Settings({
             min={0}
             max={3600}
             value={draft.extractDelaySec}
-            disabled={!draft.organize}
+            disabled={!draft.organize && !draft.answerHabits}
             onChange={(e) => change('extractDelaySec', Math.max(0, Math.round(Number(e.target.value) || 0)))}
           />
         </label>
@@ -391,6 +394,23 @@ export default function Settings({
             onChange={(e) => change('memoryTokens', Math.max(0, Math.round(Number(e.target.value) || 0)))}
           />
         </label>
+      </section>
+      <section>
+        <h3>{t('답변 습관')}</h3>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.answerHabits}
+            onChange={(e) => change('answerHabits', e.target.checked)}
+          />
+          {t('답변 습관 사용: 형식에 대한 피드백에서 답변 방식을 배우고 다음 답변에 적용')}
+        </label>
+        <small>
+          {t(
+            '형식에 대한 피드백은 개념 추출과 같은 시점(추출 대기 시간 뒤 또는 질문을 떠날 때)에 확인하며, 새 방식은 알림에서 승인한 뒤에 적용됩니다. "앞으로", "항상"처럼 직접 요청한 방식은 바로 적용되고 알림에서 끌 수 있습니다.'
+          )}
+        </small>
+        <HabitSection />
       </section>
     </>
   )
@@ -1082,5 +1102,239 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
         )}
       </p>
     </section>
+  )
+}
+
+const HABIT_GROUPS: { status: Habit['status']; title: string }[] = [
+  { status: 'proposed', title: '제안' },
+  { status: 'active', title: '사용 중' },
+  { status: 'rejected', title: '꺼짐' }
+]
+
+function HabitSection(): React.JSX.Element {
+  const [list, setList] = useState<HabitList | null>(null),
+    [editing, setEditing] = useState<HabitInput | null>(null),
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState(''),
+    [busy, setBusy] = useState(false),
+    [dragging, setDragging] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const t = useT()
+  useEffect(() => {
+    const load = (): void => {
+      void window.fask
+        .habits()
+        .then(setList)
+        .catch((e) => setError(errorText(e)))
+    }
+    load()
+    return window.fask.onChanged(load)
+  }, [])
+  const act = async (fn: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      await fn()
+      setList(await window.fask.habits())
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const importFile = (file: File | undefined): void => {
+    if (!file) return
+    if (file.size > 1_000_000) {
+      setNotice('')
+      setError(t('습관 파일이 너무 큽니다.'))
+      return
+    }
+    void act(async () => {
+      const r = await window.fask.importHabits(await file.text())
+      setNotice(
+        t('습관 {{added}}개를 불러왔습니다. {{skipped}}개는 이미 있거나 맞는 워크스페이스가 없어 건너뛰었습니다.', r)
+      )
+    })
+  }
+  const habits = list?.habits ?? []
+  const workspaces = list?.workspaces ?? []
+  return (
+    <>
+      {editing && (
+        <div>
+          <label>
+            {t('습관')}
+            <input
+              value={editing.rule}
+              maxLength={300}
+              onChange={(e) => setEditing({ ...editing, rule: e.target.value })}
+            />
+          </label>
+          <label>
+            {t('상황')}
+            <input
+              value={editing.when}
+              maxLength={200}
+              placeholder={t('상황 키워드를 쉼표로 구분 (예: 수식, 공식, LaTeX). 비우면 모든 답변')}
+              onChange={(e) => setEditing({ ...editing, when: e.target.value })}
+            />
+          </label>
+          <label>
+            {t('범위')}
+            <select
+              value={editing.scope === 'workspace' ? `ws:${editing.workspaceId}` : 'profile'}
+              onChange={(e) => {
+                const v = e.target.value
+                setEditing(
+                  v.startsWith('ws:')
+                    ? { ...editing, scope: 'workspace', workspaceId: v.slice(3) }
+                    : { ...editing, scope: 'profile', workspaceId: null }
+                )
+              }}
+            >
+              <option value="profile">{t('모든 워크스페이스')}</option>
+              {workspaces.map((w) => (
+                <option key={w.id} value={`ws:${w.id}`}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            disabled={busy || !editing.rule.trim()}
+            onClick={() =>
+              void act(async () => {
+                await window.fask.saveHabit(editing)
+                setEditing(null)
+              })
+            }
+          >
+            {t('저장')}
+          </button>
+          <button disabled={busy} onClick={() => setEditing(null)}>
+            {t('취소')}
+          </button>
+        </div>
+      )}
+      {list && !habits.length && <p className="peer-empty">{t('아직 기억한 답변 습관이 없습니다.')}</p>}
+      {HABIT_GROUPS.map(({ status, title }) => {
+        const group = habits.filter((h) => h.status === status)
+        if (!group.length) return null
+        return (
+          <div key={status}>
+            <h4>{t(title)}</h4>
+            <ul className="peer-list">
+              {group.map((h) => (
+                <li key={h.id}>
+                  <span className="peer-info">
+                    <strong>{h.rule}</strong>
+                    <small>
+                      {h.when || t('모든 답변')} ·{' '}
+                      {h.scope === 'workspace'
+                        ? (workspaces.find((w) => w.id === h.workspaceId)?.name ?? '')
+                        : t('모든 워크스페이스')}{' '}
+                      · {t('{{n}}번 요청', { n: h.count })}
+                    </small>
+                  </span>
+                  {status === 'proposed' && (
+                    <>
+                      <button disabled={busy} onClick={() => void act(() => window.fask.decideHabit(h.id, 'active'))}>
+                        {t('기억')}
+                      </button>
+                      <button disabled={busy} onClick={() => void act(() => window.fask.decideHabit(h.id, 'rejected'))}>
+                        {t('무시')}
+                      </button>
+                    </>
+                  )}
+                  {status === 'active' && (
+                    <>
+                      <button disabled={busy} onClick={() => void act(() => window.fask.decideHabit(h.id, 'rejected'))}>
+                        {t('끄기')}
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          setEditing({ id: h.id, rule: h.rule, when: h.when, scope: h.scope, workspaceId: h.workspaceId })
+                        }
+                      >
+                        {t('편집')}
+                      </button>
+                    </>
+                  )}
+                  {status === 'rejected' && (
+                    <button disabled={busy} onClick={() => void act(() => window.fask.decideHabit(h.id, 'active'))}>
+                      {t('켜기')}
+                    </button>
+                  )}
+                  {status !== 'proposed' && (
+                    <button
+                      disabled={busy}
+                      onClick={() => {
+                        if (window.confirm(t('이 습관을 삭제할까요?'))) void act(() => window.fask.removeHabit(h.id))
+                      }}
+                    >
+                      {t('삭제')}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+      <div>
+        <button
+          disabled={busy || !list}
+          onClick={() => setEditing({ rule: '', when: '', scope: 'profile', workspaceId: null })}
+        >
+          {t('습관 추가')}
+        </button>
+        <button
+          disabled={busy || !habits.some((h) => h.status === 'active')}
+          onClick={() =>
+            void act(async () => {
+              await window.fask.exportHabits()
+            })
+          }
+        >
+          {t('파일로 저장')}
+        </button>
+      </div>
+      <div
+        className={`habit-drop${dragging ? ' dragging' : ''}`}
+        role="button"
+        tabIndex={0}
+        onClick={() => fileInput.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') fileInput.current?.click()
+        }}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          importFile(e.dataTransfer.files[0])
+        }}
+      >
+        {t('다른 프로필이나 PC에서 저장한 습관 파일(.json)을 여기로 끌어 놓거나 눌러서 고르세요.')}
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            importFile(e.target.files?.[0])
+            e.target.value = ''
+          }}
+        />
+      </div>
+      {notice && <p>{notice}</p>}
+      {error && <p className="error">{error}</p>}
+    </>
   )
 }

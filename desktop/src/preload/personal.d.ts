@@ -56,6 +56,8 @@ export interface LocalSettings {
   promptLanguage: 'ko' | 'en'
   retention: 'minimal' | 'balanced' | 'preserve'
   autoTitle: boolean
+  /** Learn answer-format habits from feedback and apply them to answers. */
+  answerHabits: boolean
   regions: CaptureRegion[]
   displayId?: number
 }
@@ -225,6 +227,8 @@ export interface Question {
   conceptSources?: Record<string, TagSource>
   /** Number of leading turns already sent to concept extraction. */
   extractedTurns: number
+  /** Leading turns already checked for answer-habit feedback; absent = 0. */
+  habitTurns?: number
   /**
    * Candidate concepts: names the answers drew on that are not nodes yet (not in the tree, no
    * tags, no relations). One recurring in another question of the workspace becomes a node.
@@ -234,6 +238,49 @@ export interface Question {
   tidyStay?: string
   memo: string
   important: boolean
+}
+export type HabitStatus = 'proposed' | 'active' | 'rejected'
+export interface HabitSource {
+  questionId: string
+  turnIds: string[]
+}
+export interface Habit {
+  id: string
+  /** One imperative sentence, 1–300 chars. */
+  rule: string
+  /** Comma-separated situation keywords (normalizeWhen); '' = every answer. */
+  when: string
+  scope: 'profile' | 'workspace'
+  /** Set only when scope is 'workspace'. */
+  workspaceId: string | null
+  status: HabitStatus
+  origin: 'detected' | 'explicit' | 'manual' | 'imported'
+  /** Latest 10 evidence turns, newest last. */
+  sources: HabitSource[]
+  /** Times the feedback was seen; display and ordering only, never activates by itself. */
+  count: number
+  /** Id of the habit this one supersedes once it becomes active. */
+  replaces: string | null
+  /** Last time the user decided, edited, added or imported it; null = never confirmed by the user. */
+  reviewedAt: string | null
+  createdAt: string
+  updatedAt: string
+  /** Superseded; never shown, sent or applied. */
+  invalidatedAt: string | null
+}
+export interface HabitList {
+  enabled: boolean
+  /** Non-invalidated habits: proposed, then active, then rejected; each newest updatedAt first. */
+  habits: Habit[]
+  /** Local workspaces of the active profile, for scope labels and the scope picker. */
+  workspaces: { id: string; name: string }[]
+}
+export interface HabitInput {
+  id?: string
+  rule: string
+  when: string
+  scope: 'profile' | 'workspace'
+  workspaceId: string | null
 }
 export interface AskResult {
   questionId: string
@@ -492,6 +539,10 @@ export interface KnowledgeApi {
   clearAttachment(questionId: string, turnId: string): Promise<void>
   onStream(cb: (event: StreamEvent) => void): () => void
   onChanged(cb: () => void): () => void
+  /** Answer habits of the active profile (local to this PC; a linked PC never sees them). */
+  habits(): Promise<HabitList>
+  /** Confirms or turns off a habit; sets reviewedAt. */
+  decideHabit(id: string, decision: 'active' | 'rejected'): Promise<void>
 }
 export interface HubAddress {
   address: string
@@ -561,6 +612,11 @@ export interface PersonalApi extends KnowledgeApi {
   peerPair(target: PeerTarget, code: string): Promise<void>
   peerLinks(): Promise<PeerLinkInfo[]>
   peerUnlink(id: string): Promise<void>
+  saveHabit(input: HabitInput): Promise<string>
+  removeHabit(id: string): Promise<void>
+  /** Saves the active habits as a JSON file; false when the dialog was cancelled. */
+  exportHabits(): Promise<boolean>
+  importHabits(text: string): Promise<{ added: number; skipped: number }>
 }
 declare global {
   interface Window {
