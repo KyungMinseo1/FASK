@@ -4,6 +4,7 @@
 import type {
   AskResult,
   ExportOptions,
+  HabitList,
   KnowledgeApi,
   Snapshot,
   StreamEvent,
@@ -144,7 +145,9 @@ const FAILOVER_SAFE: ReadonlySet<string> = new Set([
   'focus-question',
   'tidy-plan',
   'tidy-status',
-  'export-archive'
+  'export-archive',
+  'habits',
+  'habit-decide'
 ])
 const RETRY_MS = [1000, 2000, 5000, 10000]
 
@@ -452,6 +455,8 @@ export function createHubClient<P extends HubIdentity>(
       if (typeof data !== 'string') throw new Error(t('요청 형식이 잘못되었습니다.'))
       return data
     },
+    habits: () => rpc('habits', []) as Promise<HabitList>,
+    decideHabit: async (id, decision) => void (await rpc('habit-decide', [id, decision])),
     onStream(cb) {
       streamSubs.add(cb)
       return () => void streamSubs.delete(cb)
