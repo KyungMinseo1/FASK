@@ -1,8 +1,23 @@
 # Changelog
 
-All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run version:bump -- X.Y.Z` moves them into that version's section, and pushing the tag puts the section at the top of the GitHub Release notes, followed by download links and the auto-generated PR list. Start a section with a one-sentence summary, and add a `> [!WARNING]` block only when users must act.
+All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run version:bump -- X.Y.Z` moves them into that version's section (replacing `{{version}}` with the version), and pushing the tag puts the section at the top of the GitHub Release notes, followed by download links and the auto-generated PR list. Open a section with a launch headline `## 🚀 FASK v{{version}} "Codename" is here!`, a one- or two-sentence pitch of the release, then `### ✨ Added`, `### 🔧 Changed`, `### 🐛 Fixed` as needed. Add a `> [!WARNING]` block only when users must act.
 
 ## [Unreleased]
+
+## 🚀 FASK v{{version}} "Remember Me" is here!
+
+Your answer style, learned once and applied everywhere. Plus knowledge exports you can shape and take anywhere, from a linked PC or your phone.
+
+### ✨ Added
+- **Answer habits**: FASK picks up feedback about answer format, length, structure, tone or notation (for example "수식은 LaTeX로") and applies it to later answers. It checks at the same time as concept extraction; a new habit is suggested in notifications ("기억" / "무시"), while ones you ask for directly ("앞으로", "항상") apply right away and can be turned off from the notification. One-time requests and content questions are ignored.
+- Settings → 답변 습관: turn the feature on or off, and review, add, edit, turn off or delete habits. Each habit has a rule, optional situation keywords (empty means all answers) and a scope (whole profile or one workspace). Habits can be saved to a `.json` file and imported on another profile or PC. Habits are included in backups.
+- Mobile: the answer habits on/off switch in settings.
+- **Export options**: choose what the knowledge export zip contains: questions and answers (off exports only the concept graph), your notes, screenshots (with a count) and approved relations only.
+- Exporting a linked PC's project fetches the zip from that PC over the encrypted connection and saves it on this device. This PC must be approved there as a knowledge manager.
+- Mobile: export a project's knowledge archive from the project screen and choose where to save the ZIP.
+
+### 🔧 Changed
+- The export dialog's "이미지 포함" checkbox is replaced by the content options above.
 
 ## [1.1.9] - 2026-11-12
 
