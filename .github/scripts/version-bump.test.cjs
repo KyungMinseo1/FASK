@@ -43,9 +43,9 @@ test('bump synchronizes all versions and passes the real release guard', () => {
     assert.notEqual(refused.status, 0)
     assert.match(refused.stderr, /Unreleased/)
     assert.match(readFileSync(gradlePath, 'utf8'), /versionCode 2/)
-    writeFileSync(changelogPath, readFileSync(changelogPath, 'utf8').replace('## [Unreleased]\n', '## [Unreleased]\n\n- 복사 기능\n'))
+    writeFileSync(changelogPath, readFileSync(changelogPath, 'utf8').replace('## [Unreleased]\n', '## [Unreleased]\n\n- 복사 기능 v{{version}}\n'))
     assert.equal(run('1.1.2').status, 0)
-    assert.match(readFileSync(changelogPath, 'utf8'), /^## \[Unreleased\]\n\n## \[1\.1\.2\] - \d{4}-\d{2}-\d{2}\n\n- 복사 기능\n\n## \[1\.1\.1\]/m)
+    assert.match(readFileSync(changelogPath, 'utf8'), /^## \[Unreleased\]\n\n## \[1\.1\.2\] - \d{4}-\d{2}-\d{2}\n\n- 복사 기능 v1\.1\.2\n\n## \[1\.1\.1\]/m)
     for (const directory of ['desktop', 'mobile']) {
       const pkg = JSON.parse(readFileSync(join(root, directory, 'package.json'), 'utf8'))
       const lock = JSON.parse(readFileSync(join(root, directory, 'package-lock.json'), 'utf8'))

@@ -16,7 +16,7 @@ function releaseNotes(text, version) {
   return body
 }
 
-// Turn the Unreleased notes into the given version's section; no-op when that section exists.
+// Turn the Unreleased notes into the given version's section, filling in `{{version}}`; no-op when that section exists.
 function promoteUnreleased(text, version, date) {
   const all = sections(text)
   if (all.some(({ name }) => name === version)) return text
@@ -26,7 +26,7 @@ function promoteUnreleased(text, version, date) {
   }
   const newline = text.includes('\r\n') ? '\r\n' : '\n'
   return text.slice(0, unreleased.start) + `## [Unreleased]${newline}${newline}## [${version}] - ${date}` +
-    text.slice(unreleased.headingEnd)
+    text.slice(unreleased.headingEnd, unreleased.end).replaceAll('{{version}}', version) + text.slice(unreleased.end)
 }
 
 // Release page body: CHANGELOG notes, then download links and install notes for the uploaded files.
