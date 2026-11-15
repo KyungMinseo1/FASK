@@ -4,7 +4,9 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
-## 🚀 FASK v{{version}} "Remember Me" is here!
+## [1.2.0] - 2026-11-15
+
+## 🚀 FASK v1.2.0 "Remember Me" is here!
 
 Your answer style, learned once and applied everywhere. Plus knowledge exports you can shape and take anywhere, from a linked PC or your phone.
 
