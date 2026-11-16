@@ -7,6 +7,7 @@ import type {
   HabitInput,
   HabitList,
   HubStatus,
+  JevProvider,
   LocalSettings,
   ManagerState,
   PeerCode,
@@ -66,7 +67,7 @@ const MODEL_ROLES: {
   {
     field: 'deepModel',
     label: '깊은 추론 모델',
-    description: '증명, 설계, 분석처럼 복잡한 질문에 추천하거나 자동으로 고릅니다.',
+    description: '자동 선택에서 증명, 설계, 분석처럼 복잡한 질문에 씁니다.',
     placeholder: '기본 모델 사용',
     icon: 'modelDeep'
   },
@@ -94,6 +95,8 @@ export default function Settings({
 }): React.JSX.Element {
   const [draft, setDraft] = useState(settings),
     [key, setKey] = useState<string | undefined>(),
+    // undefined keeps the saved Jev key; '' removes it.
+    [jevKey, setJevKey] = useState<string | undefined>(),
     [displays, setDisplays] = useState<DisplayInfo[]>([])
   const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>(),
     [refreshingDisplays, setRefreshingDisplays] = useState(true),
@@ -199,7 +202,7 @@ export default function Settings({
     }
   }
   const save = async (): Promise<void> => {
-    await window.fask.saveSettings(draft, key)
+    await window.fask.saveSettings(draft, key, jevKey)
   }
   const close = (): void => {
     if (!editingRef.current) onClose()
@@ -278,6 +281,65 @@ export default function Settings({
         </small>
       </section>
       <section>
+        <h3>{t('Jev 연결')}</h3>
+        <p>
+          {t(
+            'Jev는 모델 선택과 참고 지식 탐색을 판단하는 TypeSafe의 의사결정 모델입니다. 질문 텍스트와 과거 기록 일부가 선택한 공급자로 전송됩니다.'
+          )}
+        </p>
+        <label>
+          {t('공급자')}
+          <select value={draft.jevProvider} onChange={(e) => change('jevProvider', e.target.value as JevProvider)}>
+            <option value="typesafe">TypeSafe (console.typesafe.ai)</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+        </label>
+        <label>
+          {t('Jev API 키')}
+          <input
+            type="password"
+            value={jevKey ?? ''}
+            onChange={(e) => setJevKey(e.target.value)}
+            placeholder={
+              settings.hasJevKey
+                ? t('저장된 키 사용 중, 바꾸려면 입력')
+                : draft.jevProvider === 'openrouter'
+                  ? t('OpenRouter API 키')
+                  : t('TypeSafe 콘솔에서 발급한 키')
+            }
+          />
+        </label>
+        {settings.hasJevKey && <button onClick={() => setJevKey('')}>{t('저장된 키 제거')}</button>}
+        <button
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            setNotice('')
+            window.fask
+              .jevTest(draft.jevProvider, jevKey)
+              .then(({ model }) =>
+                setNotice(t('Jev 연결을 확인했습니다 ({{model}}). 저장을 눌러 적용하세요.', { model }))
+              )
+              .catch((e: unknown) => setNotice(errorText(e)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          <Icon name="key" />
+          {busy ? t('확인 중…') : t('Jev 연결 확인')}
+        </button>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.jevRecall}
+            onChange={(e) => change('jevRecall', e.target.checked)}
+          />
+          {t('Jev 계층 탐색으로 참고 지식 찾기 (실패하면 키워드 검색)')}
+        </label>
+        <small>
+          {t('키는 OS 저장소로 암호화해 이 PC에만 저장하며, 화면·백업·모바일로 다시 보내지 않습니다.')}
+        </small>
+      </section>
+      <section>
         <h3>{t('모델')}</h3>
         <datalist id="local-models">
           {draft.models.map((m) => (
@@ -304,6 +366,61 @@ export default function Settings({
           ))}
         </div>
       </section>
+      <section>
+        <h3>{t('답변 모델 선택')}</h3>
+        <div className="segmented" role="radiogroup" aria-label={t('답변 모델 선택')}>
+          <label className={draft.routing === 'auto' ? 'on' : ''}>
+            <input type="radio" checked={draft.routing === 'auto'} onChange={() => change('routing', 'auto')} />
+            {t('자동 선택')}
+          </label>
+          <label className={draft.routing === 'manual' ? 'on' : ''}>
+            <input type="radio" checked={draft.routing === 'manual'} onChange={() => change('routing', 'manual')} />
+            {t('직접 선택')}
+          </label>
+        </div>
+        <small>
+          {draft.routing === 'auto'
+            ? t('질문마다 복잡도를 판단해 빠른 모델이나 깊은 추론 모델로 답합니다. 질문 창에서 쓰일 모델을 보여 주며, 이번 질문만 직접 고를 수도 있습니다.')
+            : t('질문 창에서 고른 모델로 답합니다. 마지막으로 고른 모델이 다음 질문에도 선택됩니다.')}
+        </small>
+        {draft.routing === 'auto' && (
+          <>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={draft.jevRouting}
+                onChange={(e) => change('jevRouting', e.target.checked)}
+              />
+              {t('Jev로 복잡도 판단 (끄면 로컬 규칙)')}
+            </label>
+            {draft.jevRouting && (
+              <label>
+                {t('Jev 판단 시점')}
+                <select
+                  value={draft.jevPreviewSec}
+                  onChange={(e) => change('jevPreviewSec', Number(e.target.value))}
+                >
+                  {[1, 2, 3].map((n) => (
+                    <option key={n} value={n}>
+                      {t('입력이 {{n}}초 멈추면', { n })}
+                    </option>
+                  ))}
+                  <option value={0}>{t('보낼 때만')}</option>
+                </select>
+              </label>
+            )}
+            {draft.jevRouting && (
+              <small>
+                {!settings.hasJevKey && !jevKey
+                  ? t('위 Jev 연결에서 키를 저장해야 Jev가 판단합니다. 그전에는 로컬 규칙을 씁니다.')
+                  : draft.jevPreviewSec === 0
+                    ? t('Jev 요청이 질문당 한 번으로 줄지만, 보내기 전에는 로컬 규칙의 추정이 보입니다.')
+                    : t('입력이 멈출 때마다 Jev에 묻습니다. 다시 고쳐 쓰면 요청이 늘어납니다.')}
+              </small>
+            )}
+          </>
+        )}
+      </section>
     </>
   )
   const questionsContent = (
@@ -323,17 +440,6 @@ export default function Settings({
         <small>
           {t('모델에게 보내는 지시문의 언어입니다. 화면 언어와 따로 정하며, 답변과 개념 이름은 대화에 쓰인 언어를 따릅니다.')}
         </small>
-        <label>
-          {t('모델 선택')}
-          <select
-            value={draft.routing}
-            onChange={(e) => change('routing', e.target.value as LocalSettings['routing'])}
-          >
-            <option value="manual">{t('직접 선택')}</option>
-            <option value="recommend">{t('추천 표시, 전송 전에 바꿀 수 있음')}</option>
-            <option value="auto">{t('복잡도에 따라 자동 선택')}</option>
-          </select>
-        </label>
         <label className="check">
           <input type="checkbox" checked={draft.refine} onChange={(e) => change('refine', e.target.checked)} />
           {t('전송 전에 질문 다듬기와 검토')}

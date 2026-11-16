@@ -41,7 +41,8 @@ export interface LocalSettings {
   fastModel: string
   deepModel: string
   models: string[]
-  routing: 'manual' | 'recommend' | 'auto'
+  /** auto: routed per question (the composer can pin one model for a question); manual: the composer's pick. */
+  routing: 'manual' | 'auto'
   refine: boolean
   organize: boolean
   /** Knowledge injected into answers: off, current project, or the whole workspace. */
@@ -60,6 +61,22 @@ export interface LocalSettings {
   answerHabits: boolean
   regions: CaptureRegion[]
   displayId?: number
+  /** Jev (TypeSafe decision model) provider; the key itself never leaves main. */
+  jevProvider: JevProvider
+  hasJevKey: boolean
+  /** Jev judges complexity for auto routing; needs a saved Jev key. Off uses the local rule. */
+  jevRouting: boolean
+  /** Seconds a draft must rest before Jev previews its route; 0 judges only on send. */
+  jevPreviewSec: number
+  /** Jev searches the knowledge hierarchy for injected memory; needs a saved Jev key. */
+  jevRecall: boolean
+}
+export type JevProvider = 'typesafe' | 'openrouter'
+/** Answer-model routing verdict; `source` tells a local rule from a Jev judgment. */
+export interface RouteResult {
+  complexity: 'simple' | 'complex' | 'unknown'
+  reason: string
+  source: 'local' | 'jev'
 }
 /** The settings that pick an answer model; a linked PC shares its own with this PC. */
 export type ModelSettings = Pick<LocalSettings, 'model' | 'fastModel' | 'deepModel' | 'models' | 'routing'>
@@ -324,6 +341,8 @@ export interface AskInput {
   useMemory?: boolean
   /** Sent as `reasoning_effort`; omitted uses the model's default. */
   reasoningEffort?: ReasoningEffort
+  /** The user picked `model` for this question; it wins over auto routing. */
+  pinModel?: boolean
 }
 export interface StreamEvent {
   requestId: string
@@ -543,6 +562,8 @@ export interface KnowledgeApi {
   habits(): Promise<HabitList>
   /** Confirms or turns off a habit; sets reviewedAt. */
   decideHabit(id: string, decision: 'active' | 'rejected'): Promise<void>
+  /** Jev routing verdict for a draft; null when Jev is off or failed. Desktop only. */
+  routePreview?(text: string, hasImage: boolean): Promise<RouteResult | null>
 }
 export interface HubAddress {
   address: string
@@ -578,7 +599,9 @@ export interface PersonalApi extends KnowledgeApi {
   shortcutInfo(): Promise<ShortcutInfo>
   onTogglePanel(cb: () => void): () => void
   switchProfile(id: string): Promise<void>
-  saveSettings(settings: LocalSettings, key?: string): Promise<void>
+  saveSettings(settings: LocalSettings, key?: string, jevKey?: string): Promise<void>
+  /** Checks a Jev key (the saved one when `key` is undefined) with one minimal request. */
+  jevTest(provider: JevProvider, key?: string): Promise<{ model: string }>
   models(endpoint: string, key?: string): Promise<string[]>
   /** Zip with README, JSONL and SKOS per the chosen options; a linked-PC project is fetched from its host. */
   export(projectId: string, options: ExportOptions): Promise<boolean>

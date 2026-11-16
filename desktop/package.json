@@ -7,6 +7,7 @@
   "homepage": "https://electron-vite.org",
   "scripts": {
     "test": "node tests/run.cjs",
+    "test:jev": "node tests/jev-live.cjs",
     "test:smoke": "npm run build && node tests/smoke.cjs",
     "test:slow": "npm run build && node tests/slow.cjs",
     "format": "prettier --write .",

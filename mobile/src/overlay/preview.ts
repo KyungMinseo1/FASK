@@ -44,7 +44,12 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       retention: 'balanced',
       autoTitle: false,
       answerHabits: false,
-      regions: []
+      regions: [],
+      jevProvider: 'typesafe',
+      hasJevKey: false,
+      jevRouting: false,
+      jevPreviewSec: 1,
+      jevRecall: false
     },
     storageBytes: 0
   }

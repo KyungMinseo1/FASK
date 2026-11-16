@@ -4,6 +4,17 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+### ✨ Added
+- **Jev connection**: Settings → AI → Jev 연결 connects TypeSafe's decision model Jev with a TypeSafe key (default) or an OpenRouter key; no environment variables needed. 연결 확인 checks the key with one minimal request. The key is encrypted with the OS keystore (as the local access key is), stays on this PC, and is never sent to the screen, backups or the phone. Two switches, both on by default and active only with a saved key: model routing and knowledge search.
+- **Jev model routing**: while you type, the composer shows the local rule; once typing pauses for 1 second, Jev judges whether the question is simple or needs multi-step reasoning and the recommendation shows a "Jev 판단" chip. The verdict is cached, so sending the same text makes no second request. In Auto, sending without a cached verdict asks Jev and falls back to the local rule after 3 seconds; Manual never asks Jev. Linked-PC and phone composers keep the local-rule preview.
+- **Jev knowledge search** (DecisionRAG): reference knowledge for answers is found by Jev reading a table of contents (projects and topic concepts), opening the promising branches, scoring their questions and concepts, and comparing the best five, so it can find related records that share no keyword with the question. Keyword (BM25) hits join as extra candidates. If Jev fails, the keyword search is used as before.
+- `npm run test:jev` runs real Jev API tests with `TYPESAFE_API_KEY` from the shell; without it they are skipped.
+
+### 🔧 Changed
+- **Answer model choice is simpler**: Settings → AI 연결 → 답변 모델 선택 is either 자동 선택 or 직접 선택. The Jev switch and when it judges sit right under it: after a 1, 2 or 3-second pause in typing, or only on send (one Jev request per question).
+- In Auto, the composer shows one line with the model that will answer, the judged complexity and who judged it (Jev, the local rule, or decided on send), plus reasoning effort. There is no model picker until you press 직접 선택, which picks a model for that question only; 자동으로 returns to Auto. In 직접 선택 mode the picker is always on that line.
+- The Recommend mode is gone; saved settings and backups that use it open as Auto. A model picked with 직접 선택 skips routing on the answering PC, so no Jev request is made for it.
+
 ## [1.2.0] - 2026-11-15
 
 ## 🚀 FASK v1.2.0 "Remember Me" is here!

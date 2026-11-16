@@ -263,7 +263,12 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
         retention: 'balanced',
         autoTitle: true,
         answerHabits: true,
-        regions: []
+        regions: [],
+        jevProvider: 'typesafe',
+        hasJevKey: false,
+        jevRouting: false,
+        jevPreviewSec: 1,
+        jevRecall: false
       },
       storageBytes: 1_250_000
     }

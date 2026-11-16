@@ -129,7 +129,8 @@ function hostModels(s: Snapshot): ModelSettings | undefined {
     fastModel: v.fastModel,
     deepModel: v.deepModel,
     models: v.models.filter((m): m is string => typeof m === 'string'),
-    routing: v.routing as ModelSettings['routing']
+    // A PC on 1.2 or older may still share 'recommend'; it answers with the model this PC sends.
+    routing: v.routing === 'manual' ? 'manual' : 'auto'
   }
 }
 

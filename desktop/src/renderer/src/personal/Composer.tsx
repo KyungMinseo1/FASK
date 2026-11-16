@@ -5,6 +5,7 @@ import type {
   ModelSettings,
   ReasoningEffort,
   Reference,
+  RouteResult,
   Question,
   TextAttachment,
   TurnState,
@@ -131,6 +132,10 @@ export default function Composer({
       return EFFORTS.find((e) => e.value === saved)?.value ?? ''
     })
   const model = chosenModel || modelSettings?.model || ''
+  // Auto routing can be overridden for one question; manual mode always shows the picker.
+  const [pinned, setPinned] = useState(false)
+  const manual = modelSettings?.routing === 'manual'
+  const choosing = manual || pinned
   const [image, setImage] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -160,6 +165,29 @@ export default function Composer({
   const hasInput = canRefine || (!!onCapture && includeCapture)
   // Per-question knowledge injection; the settings scope supplies the default.
   const [useMemory, setUseMemory] = useState(settings.memoryScope !== 'off')
+  const imageInput = !!image || (!!onCapture && includeCapture)
+  // Only this PC's own drafts are previewed; a linked PC (`host`) and the mobile hub route on send.
+  const remoteRoute = !!host || !api.routePreview
+  const previewMs = settings.jevPreviewSec * 1000
+  const jevOn =
+    !remoteRoute && settings.hasJevKey && settings.jevRouting && settings.routing === 'auto' && previewMs > 0 && !pinned
+  // Whether the answering PC may still replace the shown route with a Jev verdict on send.
+  const decidedOnSend = remoteRoute || (settings.hasJevKey && settings.jevRouting)
+  // Jev's verdict for one exact draft; typing shows the local rule until the input rests.
+  const [jevRoute, setJevRoute] = useState<{ raw: string; image: boolean; route: RouteResult } | null>(null)
+  useEffect(() => {
+    if (!jevOn || !raw.trim()) return
+    const text = raw,
+      img = imageInput
+    const timer = setTimeout(() => {
+      void api.routePreview?.(text, img)
+        .then((route) => {
+          if (route) setJevRoute({ raw: text, image: img, route })
+        })
+        .catch(() => {})
+    }, previewMs)
+    return () => clearTimeout(timer)
+  }, [jevOn, raw, imageInput, api, previewMs])
   const attach = async (files: File[]): Promise<void> => {
     if (locked) return
     setBusy(true)
@@ -276,6 +304,7 @@ export default function Composer({
       setRefined('')
       setImage('')
       setDocuments([])
+      setPinned(false)
       const qid = question.current
       notify(() => callbacks.current.onCompleted?.(qid, { turnId, status: 'completed' }))
     } else if (r.finished.status !== 'saved')
@@ -418,9 +447,8 @@ export default function Composer({
       await refine()
       return
     }
-    const routed = modelSettings?.routing === 'auto'
-    if (modelSettings && !routed && model) localStorage.setItem(lastModelKey, model)
-    setSentModel(!modelSettings ? '' : routed ? autoModel : model)
+    if (modelSettings && choosing && model) localStorage.setItem(lastModelKey, model)
+    setSentModel(!modelSettings ? '' : choosing ? model : routing.source === 'jev' || !decidedOnSend ? autoModel : '')
     // Frozen before capture: later edits or a new questionId never alter this request.
     const base: Omit<AskInput, 'requestId'> = {
       profileId,
@@ -428,7 +456,9 @@ export default function Composer({
       ...(questionId ? { questionId } : {}),
       raw,
       refined,
-      model,
+      // Auto sends the shown model too: a PC on 1.2 or older in recommend mode answers with it.
+      model: modelSettings && !choosing ? autoModel : model,
+      ...(pinned && !manual ? { pinModel: true } : {}),
       documents: [...documents],
       useMemory,
       ...(effort ? { reasoningEffort: effort } : {})
@@ -467,20 +497,39 @@ export default function Composer({
   const replay = (): void => {
     if (pending.current && !busy) void submit(pending.current)
   }
-  const routing = recommend(raw, !!image || (!!onCapture && includeCapture))
+  const localRoute = recommend(raw, imageInput)
+  const routing =
+    jevRoute && jevRoute.raw === raw && jevRoute.image === imageInput ? jevRoute.route : localRoute
   const autoModel = modelSettings ? routedModel(modelSettings, routing.complexity) : ''
-  const routingChips =
-    routing.complexity === 'complex' ? (
-      <span>{t('여러 단계의 추론')}</span>
-    ) : routing.complexity === 'unknown' ? (
-      <span>{t('이미지 난이도 미확정')}</span>
-    ) : (
-      <>
-        <span>{t('간단한 설명')}</span>
-        <span>{t('로컬 규칙')}</span>
-      </>
-    )
-  const autoModelName = autoModel ? <b>{autoModel}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>
+  const complexityLabel =
+    routing.complexity === 'complex'
+      ? t('여러 단계의 추론')
+      : routing.complexity === 'unknown'
+        ? t('이미지 난이도 미확정')
+        : t('간단한 설명')
+  const sourceLabel =
+    routing.source === 'jev' ? t('Jev 판단') : decidedOnSend ? t('보낼 때 확정') : t('로컬 규칙')
+  const effortSelect = (
+    <label className="model-select effort-select">
+      <span>{t('추론 강도')}</span>
+      <select
+        value={effort}
+        disabled={locked}
+        onChange={(e) => {
+          const next = EFFORTS.find((x) => x.value === e.target.value)?.value ?? ''
+          setEffort(next)
+          localStorage.setItem(effortKey, next)
+        }}
+      >
+        <option value="">{t('모델 기본값')}</option>
+        {EFFORTS.map((e) => (
+          <option key={e.value} value={e.value}>
+            {t(e.label)}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
   return (
     <div
       className="composer"
@@ -622,38 +671,46 @@ export default function Composer({
           </button>
         </label>
       )}
-      {host && (
-        <div className="recommendation">
-          <span>
-            {modelSettings
-              ? t('{{name}} PC의 모델로 답변합니다', { name: host.name })
-              : t('{{name}} PC의 모델 설정으로 답변합니다', { name: host.name })}
-          </span>
+      {modelSettings ? (
+        <div className="model-line">
+          {host && <span>{t('{{name}} PC 모델', { name: host.name })}</span>}
+          {choosing ? (
+            <>
+              <label className="model-select answer-model">
+                <span>{t('답변 모델')}</span>
+                <select value={model} disabled={locked} onChange={(e) => setModel(e.target.value)}>
+                  <option value="">{t('모델 선택')}</option>
+                  {[...new Set([...modelSettings.models, modelSettings.model, model].filter(Boolean))].map((m) => (
+                    <option key={m}>{m}</option>
+                  ))}
+                </select>
+              </label>
+              {!manual && (
+                <button disabled={locked} onClick={() => setPinned(false)}>
+                  {t('자동으로')}
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="model-line-mode">{t('자동 선택')}</span>
+              {autoModel ? <b>{autoModel}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>}
+              <span title={t(routing.reason)}>
+                {complexityLabel} · {sourceLabel}
+              </span>
+              <button disabled={locked} onClick={() => setPinned(true)}>
+                {t('직접 선택')}
+              </button>
+            </>
+          )}
+          {effortSelect}
+        </div>
+      ) : (
+        <div className="model-line">
+          {host && <span>{t('{{name}} PC의 모델 설정으로 답변합니다', { name: host.name })}</span>}
+          {effortSelect}
         </div>
       )}
-      {modelSettings?.routing === 'auto' ? (
-        <div className="recommendation">
-          <span>{t('자동 선택')}</span>
-          {autoModelName}
-          {routingChips}
-          <span>{t('이 모델로 답변합니다')}</span>
-        </div>
-      ) : modelSettings?.routing === 'recommend' ? (
-        <div className="recommendation">
-          <span>{t('추천 모델')}</span>
-          {autoModelName}
-          {routingChips}
-          {autoModel === model ? (
-            <span className="chip">{t('적용됨')}</span>
-          ) : (
-            autoModel && (
-              <button disabled={locked} onClick={() => setModel(autoModel)}>
-                {t('사용')}
-              </button>
-            )
-          )}
-        </div>
-      ) : null}
       <div className="composer-actions">
         {mediaActions?.length ? (
           <div className="attach-menu-anchor" ref={attachMenu}>
@@ -728,47 +785,6 @@ export default function Composer({
           <Icon name="refine" />
           {t('질문 다듬기')}
         </button>
-        {modelSettings && (
-          <label className="model-select answer-model">
-            <span>{t('답변 모델')}</span>
-            {modelSettings.routing === 'auto' ? (
-              <select value={autoModel} disabled>
-                <option value="">{t('모델 선택')}</option>
-                {[
-                  ...new Set([...modelSettings.models, modelSettings.model, model, autoModel].filter(Boolean))
-                ].map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
-              </select>
-            ) : (
-              <select value={model} disabled={locked} onChange={(e) => setModel(e.target.value)}>
-                <option value="">{t('모델 선택')}</option>
-                {[...new Set([...modelSettings.models, modelSettings.model, model].filter(Boolean))].map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
-              </select>
-            )}
-          </label>
-        )}
-        <label className="model-select effort-select">
-          <span>{t('추론 강도')}</span>
-          <select
-            value={effort}
-            disabled={locked}
-            onChange={(e) => {
-              const next = EFFORTS.find((x) => x.value === e.target.value)?.value ?? ''
-              setEffort(next)
-              localStorage.setItem(effortKey, next)
-            }}
-          >
-            <option value="">{t('모델 기본값')}</option>
-            {EFFORTS.map((e) => (
-              <option key={e.value} value={e.value}>
-                {t(e.label)}
-              </option>
-            ))}
-          </select>
-        </label>
         {running ? (
           <button
             className="danger"

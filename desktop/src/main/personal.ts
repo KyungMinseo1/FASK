@@ -20,12 +20,15 @@ import { PersonalStore } from './personal-store'
 import { DisplayImages } from './image-display'
 import { PersonalCapture } from './personal-capture'
 import { validateBackup } from './personal-backup'
-import { KnowledgeExtractor, recallMemory } from './knowledge-extract'
+import { KnowledgeExtractor, recallMemory, type RecallParams, type RecallResult } from './knowledge-extract'
+import { jevRecall } from './jev-recall'
 import { decideHabit, habitFile, importHabitFile, listHabits, recallHabits, saveHabit } from './habits'
 import { prompt } from './prompts'
 import { buildExport, EXPORT_TOO_LARGE, EXPORT_TRANSFER_MAX } from './knowledge-export'
 import { questionShortcutInfo, registerQuestionShortcut } from './personal-shortcuts'
 import { localModels, normalizeEndpoint, streamChat, type WireMessage } from './local-api'
+import { JEV_BASE_URL, jevClient, type JevCall } from './jev-api'
+import { JEV_ROUTE_TIMEOUT_MS, jevRoute, RouteCache, routeKey } from './jev-routing'
 import { cleanTitle, questionImages, recommend, routedModel } from '../shared/questions'
 import { exportFileName, exportOptions } from '../shared/export'
 import { i18n, t } from '../shared/i18n'
@@ -39,10 +42,12 @@ import type {
   HubStatus,
   Habit,
   HabitInput,
+  JevProvider,
   LocalSettings,
   Profile,
   Project,
   Question,
+  RouteResult,
   Snapshot,
   StreamEvent,
   TidyStatus,
@@ -129,7 +134,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     ...s,
     profiles: s.profiles.filter((p) => p.id === s.activeProfileId),
     recentQuestions: {},
-    settings: { ...s.settings, endpoint: '', hasKey: false, regions: [], displayId: undefined },
+    settings: { ...s.settings, endpoint: '', hasKey: false, hasJevKey: false, regions: [], displayId: undefined },
     storageBytes: 0
   })
   const hubInvoke = async (caller: HubCaller, name: string, args: unknown[]): Promise<unknown> => {
@@ -357,6 +362,30 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     if (!result.trim()) throw new Error('모델이 빈 답변을 반환했습니다.')
     return result.trim()
   }
+  const routeCache = new RouteCache()
+  const jev = (profile = store.active): JevCall | undefined => {
+    const s = store.settings(profile)
+    if (!s.hasJevKey) return undefined
+    // Read the key per call so a decryption failure is a rejection the callers fall back on.
+    return async (request, signal) => jevClient(JEV_BASE_URL[s.jevProvider], jevKey(profile))(request, signal)
+  }
+  // `auto` may call Jev (once per draft, shared with the preview); `recommend` only reuses a
+  // finished preview; `manual` never asks Jev.
+  const askRoute = async (
+    profile: string,
+    settings: LocalSettings,
+    raw: string,
+    hasImage: boolean
+  ): Promise<RouteResult> => {
+    const local = recommend(raw, hasImage)
+    const call = settings.jevRouting && settings.routing !== 'manual' && raw.trim() ? jev(profile) : undefined
+    if (!call) return local
+    const k = routeKey(profile, raw, hasImage)
+    if (settings.routing !== 'auto') return routeCache.settled(k) ?? local
+    return routeCache
+      .route(k, () => jevRoute(call, raw, hasImage, AbortSignal.timeout(JEV_ROUTE_TIMEOUT_MS)))
+      .catch(() => local)
+  }
   const extractor = new KnowledgeExtractor(
     store,
     (profile, model, instruction, input, signal) =>
@@ -425,7 +454,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     store.switchProfile(id)
     changed()
   })
-  handle('save-settings', (settings: LocalSettings, newKey?: string) => {
+  handle('save-settings', (settings: LocalSettings, newKey?: string, newJevKey?: string) => {
     const clean = {
       ...store.settings(),
       endpoint: normalizeEndpoint(settings.endpoint),
@@ -443,15 +472,21 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       extractDelaySec: Math.round(Number(settings.extractDelaySec)),
       retention: settings.retention,
       autoTitle: !!settings.autoTitle,
-      answerHabits: !!settings.answerHabits
+      answerHabits: !!settings.answerHabits,
+      jevProvider: settings.jevProvider,
+      jevRouting: !!settings.jevRouting,
+      jevPreviewSec: Number(settings.jevPreviewSec),
+      jevRecall: !!settings.jevRecall
     }
     if (
-      !['manual', 'recommend', 'auto'].includes(clean.routing) ||
+      !['manual', 'auto'].includes(clean.routing) ||
+      ![0, 1, 2, 3].includes(clean.jevPreviewSec) ||
       !['minimal', 'balanced', 'preserve'].includes(clean.retention) ||
       !['off', 'project', 'workspace'].includes(clean.memoryScope) ||
       !(clean.memoryTokens >= 100 && clean.memoryTokens <= 20000) ||
       !(clean.extractDelaySec >= 0 && clean.extractDelaySec <= 3600) ||
-      !['ko', 'en'].includes(clean.promptLanguage)
+      !['ko', 'en'].includes(clean.promptLanguage) ||
+      !['typesafe', 'openrouter'].includes(clean.jevProvider)
     )
       throw new Error('설정 값이 잘못되었습니다.')
     if (newKey !== undefined) {
@@ -462,12 +497,44 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         newKey ? safeStorage.encryptString(newKey).toString('base64') : ''
       )
     }
+    if (newJevKey !== undefined) {
+      const v = newJevKey.trim()
+      if (v) writeSecret(`jev-key:${store.active}`, v)
+      else store.pref(`jev-key:${store.active}`, '')
+    }
     store.saveSettings(clean)
     changed()
   })
   handle('models', (endpoint: string, newKey?: string) =>
     localModels(endpoint, newKey === undefined ? key() : newKey)
   )
+  handle('route-preview', async (text: unknown, hasImage: unknown): Promise<RouteResult | null> => {
+    if (typeof text !== 'string' || !text.trim() || text.length > 50000) return null
+    const profile = store.active,
+      settings = store.settings(profile)
+    const call = settings.jevRouting && settings.routing !== 'manual' ? jev(profile) : undefined
+    if (!call) return null
+    const image = hasImage === true
+    return routeCache
+      .route(routeKey(profile, text, image), () =>
+        jevRoute(call, text, image, AbortSignal.timeout(JEV_ROUTE_TIMEOUT_MS))
+      )
+      .catch(() => null)
+  })
+  handle('jev-test', async (provider: JevProvider, newJevKey?: string) => {
+    if (!['typesafe', 'openrouter'].includes(provider)) throw new Error('설정 값이 잘못되었습니다.')
+    const res = await jevClient(
+      JEV_BASE_URL[provider],
+      newJevKey === undefined ? jevKey() : String(newJevKey).trim()
+    )(
+      {
+        state: 'FASK connection check',
+        questions: { ok: { type: 'noul', instructions: 'This text is a connection check.' } }
+      },
+      AbortSignal.timeout(15000)
+    )
+    return { model: res.model }
+  })
   handle('update-question', (id, patch) => {
     store.updateQuestion(id, patch)
     changed()
@@ -647,10 +714,14 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     if (effort !== undefined && !['low', 'medium', 'high'].includes(effort))
       throw new Error('추론 강도가 잘못되었습니다.')
     const profile = store.active,
-      settings = store.settings(profile),
-      routing = recommend(input.raw, !!input.image)
+      settings = store.settings(profile)
+    // A model the user picked for this question skips routing, Jev included.
+    const pinned = input.pinModel === true && !!input.model
+    const routing = pinned
+      ? recommend(input.raw, !!input.image)
+      : await askRoute(profile, settings, input.raw, !!input.image)
     const model =
-      settings.routing === 'auto' ? routedModel(settings, routing.complexity) : input.model || settings.model
+      settings.routing === 'auto' && !pinned ? routedModel(settings, routing.complexity) : input.model || settings.model
     const saveOnly = !!input.saveOnly
     const annotated = input.annotated === true && !!input.image
     const requestHash = createHash('sha256')
@@ -666,7 +737,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           saveOnly,
           annotated,
           input.useMemory ?? null,
-          effort ?? ''
+          effort ?? '',
+          pinned
         ])
       )
       .digest('hex')
@@ -758,18 +830,31 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           ...documents.map((d) => d.text.slice(0, 1000)),
           ...history.slice(-2).map((t) => t.refined || t.raw)
         ].join('\n')
-        const memory =
-          scope === 'off'
-            ? { context: [], references: [] }
-            : recallMemory(store, {
-                profile,
-                scope,
-                projectId: project.id,
-                workspaceId: project.workspaceId,
-                questionId,
-                text: clues,
-                budgetChars: settings.memoryTokens * 3
+        let memory: RecallResult = { context: [], references: [] }
+        if (scope !== 'off') {
+          const params: RecallParams = {
+            profile,
+            scope,
+            projectId: project.id,
+            workspaceId: project.workspaceId,
+            questionId,
+            text: clues,
+            budgetChars: settings.memoryTokens * 3
+          }
+          const call = settings.jevRecall ? jev(profile) : undefined
+          memory = call
+            ? await jevRecall(
+                store,
+                params,
+                call,
+                AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])
+              ).catch((e: unknown) => {
+                if (controller.signal.aborted) throw e
+                console.warn('Jev recall failed; falling back to keyword search', e)
+                return recallMemory(store, params)
               })
+            : recallMemory(store, params)
+        }
         if (memory.references.length)
           store.updateTurn(questionId, turnId, { references: memory.references }, profile)
         // Habits of this PC's active profile; a linked PC's workspace is answered there, with its habits.
@@ -983,7 +1068,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       result.filePath,
       JSON.stringify({
         version: 3,
-        snapshot: { ...snapshot, settings: { ...snapshot.settings, hasKey: false } },
+        snapshot: { ...snapshot, settings: { ...snapshot.settings, hasKey: false, hasJevKey: false } },
         images,
         // Superseded habits too, so `replaces` chains survive a restore.
         habits: store.list<Habit>('habit')
@@ -1133,7 +1218,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
         ...store.settings(),
         ...snapshot.settings,
         endpoint: normalizeEndpoint(snapshot.settings.endpoint),
-        hasKey: false
+        hasKey: false,
+        hasJevKey: false
       })
       store.db.exec('COMMIT')
       changed()
@@ -1186,6 +1272,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     if (!safeStorage.isEncryptionAvailable()) throw new Error('OS 키 저장소를 사용할 수 없습니다.')
     store.pref(name, safeStorage.encryptString(value).toString('base64'))
   }
+  const jevKey = (profile = store.active): string => readSecret(`jev-key:${profile}`)
   const hubTls = (): HubTls => {
     const value: unknown = JSON.parse(readSecret('hub:tls'))
     if (

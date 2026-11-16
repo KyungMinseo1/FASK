@@ -253,26 +253,60 @@ describe('Composer model choice', () => {
     expect(select()?.value).toBe('typed-model')
   })
 
-  it('auto routing shows the routed model in a disabled select and does not overwrite the last pick', async () => {
+  it('auto shows the routed model without a picker and sends it unpinned', async () => {
     localStorage.setItem(lastKey, 'a')
     const hub = fakeHub()
     mount(hub, { settings: { ...models, routing: 'auto', fastModel: 'b', deepModel: 'c' } as never })
     type('이 설계를 분석해 줘')
-    expect(select()?.disabled).toBe(true)
-    expect(select()?.value).toBe('c')
-    expect(screen.getByText('이 모델로 답변합니다')).toBeTruthy()
+    expect(select()).toBeNull()
+    expect(document.querySelector('.model-line b')?.textContent).toBe('c')
     await send()
-    expect(label()).toBe('답변 작성 중c')
+    expect(hub.asks[0].model).toBe('c')
+    expect(hub.asks[0].pinModel).toBeUndefined()
+    // The phone cannot know whether its PC re-judges with Jev on send, so no model is claimed yet.
+    expect(label()).toBe('답변 작성 중')
     expect(localStorage.getItem(lastKey)).toBe('a')
   })
 
-  it('recommend mode marks an applied recommendation and applies one with 사용', () => {
-    mount(fakeHub(), { settings: { ...models, routing: 'recommend', fastModel: 'b', deepModel: 'c' } as never })
-    type('짧은 질문')
-    expect(screen.queryByText('적용됨')).toBeNull()
-    fireEvent.click(screen.getByText('사용'))
-    expect(select()?.value).toBe('b')
-    expect(screen.getByText('적용됨')).toBeTruthy()
+  it('직접 선택 pins a picked model for one question, then returns to auto', async () => {
+    localStorage.setItem(lastKey, 'a')
+    const hub = fakeHub()
+    mount(hub, { settings: { ...models, routing: 'auto', fastModel: 'b', deepModel: 'c' } as never })
+    fireEvent.click(screen.getByText('직접 선택'))
+    expect(select()?.value).toBe('a')
+    fireEvent.change(select()!, { target: { value: 'b' } })
+    type('이 설계를 분석해 줘')
+    await send()
+    expect(hub.asks[0]).toMatchObject({ model: 'b', pinModel: true })
+    expect(label()).toBe('답변 작성 중b')
+    expect(localStorage.getItem(lastKey)).toBe('b')
+    await complete(hub, 't1', '답변')
+    expect(select()).toBeNull()
+    expect(screen.getByText('직접 선택')).toBeTruthy()
+  })
+
+  it('previews with Jev after the configured pause, and never when Jev judges only on send', async () => {
+    vi.useFakeTimers()
+    try {
+      const hub = fakeHub()
+      const routePreview = vi.fn(async () => ({ complexity: 'complex' as const, reason: '', source: 'jev' as const }))
+      Object.assign(hub.api, { routePreview })
+      const jev = { ...models, routing: 'auto', fastModel: 'b', deepModel: 'c', hasJevKey: true, jevRouting: true }
+      const { update } = mount(hub, { settings: { ...jev, jevPreviewSec: 2 } as never })
+      type('짧은 질문')
+      await act(async () => vi.advanceTimersByTime(1500))
+      expect(routePreview).not.toHaveBeenCalled()
+      await act(async () => vi.advanceTimersByTime(500))
+      expect(routePreview).toHaveBeenCalledTimes(1)
+      expect(document.querySelector('.model-line b')?.textContent).toBe('c')
+      update({ settings: { ...jev, jevPreviewSec: 0 } as never })
+      type('다른 질문')
+      await act(async () => vi.advanceTimersByTime(5000))
+      expect(routePreview).toHaveBeenCalledTimes(1)
+      expect(screen.getByText('간단한 설명 · 보낼 때 확정')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('a linked PC on an older build hides the picker, names the host, and never remembers a model', async () => {
@@ -297,7 +331,7 @@ describe('Composer model choice', () => {
     }
     const hub = fakeHub()
     mount(hub, { settings: models as never, host })
-    expect(screen.getByText('PC A PC의 모델로 답변합니다')).toBeTruthy()
+    expect(screen.getByText('PC A PC 모델')).toBeTruthy()
     // This PC's last pick 'b' is not on the host, so the host default is used.
     expect(select()?.value).toBe('h1')
     expect([...select()!.options].map((o) => o.value)).toEqual(['', 'h1', 'h2'])

@@ -455,6 +455,7 @@ export function validateBackup(input: unknown): Backup {
     if (typeof s.settings[key] !== 'string') fail()
   if (
     s.settings.models.some((m) => typeof m !== 'string') ||
+    // 'recommend' comes from backups made until 1.2; settings() reads it as 'auto'.
     !['manual', 'recommend', 'auto'].includes(s.settings.routing) ||
     !['minimal', 'balanced', 'preserve'].includes(s.settings.retention) ||
     !MEMORY_SCOPES.includes(s.settings.memoryScope)
@@ -462,6 +463,10 @@ export function validateBackup(input: unknown): Backup {
     fail()
   if (s.settings.autoTitle !== undefined && typeof s.settings.autoTitle !== 'boolean') fail()
   if (s.settings.answerHabits !== undefined && typeof s.settings.answerHabits !== 'boolean') fail()
+  if (s.settings.jevProvider !== undefined && !['typesafe', 'openrouter'].includes(s.settings.jevProvider)) fail()
+  for (const key of ['jevRouting', 'jevRecall'] as const)
+    if (s.settings[key] !== undefined && typeof s.settings[key] !== 'boolean') fail()
+  if (s.settings.jevPreviewSec !== undefined && ![0, 1, 2, 3].includes(s.settings.jevPreviewSec)) fail()
   for (const key of ['memoryTokens', 'extractDelaySec'] as const)
     if (
       s.settings[key] !== undefined &&
