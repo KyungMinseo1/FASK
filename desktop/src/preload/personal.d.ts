@@ -41,7 +41,8 @@ export interface LocalSettings {
   fastModel: string
   deepModel: string
   models: string[]
-  routing: 'manual' | 'recommend' | 'auto'
+  /** auto: routed per question (the composer can pin one model for a question); manual: the composer's pick. */
+  routing: 'manual' | 'auto'
   refine: boolean
   organize: boolean
   /** Knowledge injected into answers: off, current project, or the whole workspace. */
@@ -63,8 +64,10 @@ export interface LocalSettings {
   /** Jev (TypeSafe decision model) provider; the key itself never leaves main. */
   jevProvider: JevProvider
   hasJevKey: boolean
-  /** Jev picks the answer model (recommend/auto routing); needs a saved Jev key. */
+  /** Jev judges complexity for auto routing; needs a saved Jev key. Off uses the local rule. */
   jevRouting: boolean
+  /** Seconds a draft must rest before Jev previews its route; 0 judges only on send. */
+  jevPreviewSec: number
   /** Jev searches the knowledge hierarchy for injected memory; needs a saved Jev key. */
   jevRecall: boolean
 }
@@ -338,6 +341,8 @@ export interface AskInput {
   useMemory?: boolean
   /** Sent as `reasoning_effort`; omitted uses the model's default. */
   reasoningEffort?: ReasoningEffort
+  /** The user picked `model` for this question; it wins over auto routing. */
+  pinModel?: boolean
 }
 export interface StreamEvent {
   requestId: string

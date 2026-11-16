@@ -267,6 +267,7 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
         jevProvider: 'typesafe',
         hasJevKey: false,
         jevRouting: false,
+        jevPreviewSec: 1,
         jevRecall: false
       },
       storageBytes: 1_250_000

@@ -51,7 +51,7 @@ export const defaults: LocalSettings = {
   fastModel: '',
   deepModel: '',
   models: [],
-  routing: 'recommend',
+  routing: 'auto',
   refine: false,
   organize: true,
   memoryScope: 'project',
@@ -66,6 +66,7 @@ export const defaults: LocalSettings = {
   jevProvider: 'typesafe',
   hasJevKey: false,
   jevRouting: true,
+  jevPreviewSec: 1,
   jevRecall: true
 }
 
@@ -663,12 +664,15 @@ export class PersonalStore {
   }
   settings(profile = this.active): LocalSettings {
     const value = this.pref(`settings:${profile}`)
-    return {
+    const s: LocalSettings = {
       ...defaults,
       ...(value ? JSON.parse(value) : {}),
       hasKey: !!this.pref(`key:${profile}`),
       hasJevKey: !!this.pref(`jev-key:${profile}`)
     }
+    // 'recommend' (until 1.2) showed the routed model with an apply button; auto now shows it before sending.
+    if ((s.routing as string) === 'recommend') s.routing = 'auto'
+    return s
   }
   saveSettings(settings: LocalSettings): void {
     this.pref(`settings:${this.active}`, JSON.stringify(settings))

@@ -285,11 +285,13 @@
   gap: 8px;
 }
 .fask-mobile .composer-actions > button,
-.fask-mobile .composer-actions .model-select select,
+.fask-mobile .model-line select,
+.fask-mobile .model-line button,
 .fask-mobile .composer-actions > .capture-toggle,
 .fask-mobile .composer-actions > .attach-menu-anchor > button,
 .screen-q-panel .composer-actions > button,
-.screen-q-panel .composer-actions .model-select select,
+.screen-q-panel .model-line select,
+.screen-q-panel .model-line button,
 .screen-q-panel .composer-actions > .capture-toggle {
   min-height: 44px;
   font-size: 15px;

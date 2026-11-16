@@ -318,6 +318,20 @@ test('display copies are served when present and deleted with the original', () 
     rmSync(path, { recursive: true, force: true })
   }
 })
+test('settings saved in the retired recommend mode read back as auto', () => {
+  const path = mkdtempSync(join(tmpdir(), 'fask-routing-')),
+    store = new PersonalStore(path)
+  try {
+    store.saveSettings({ ...store.settings(), routing: 'recommend' as never, model: 'm' })
+    assert.equal(store.settings().routing, 'auto')
+    assert.equal(store.settings().model, 'm')
+    store.saveSettings({ ...store.settings(), routing: 'manual' })
+    assert.equal(store.settings().routing, 'manual')
+  } finally {
+    store.close()
+    rmSync(path, { recursive: true, force: true })
+  }
+})
 test('endpoint normalization rejects remote hosts and avoids duplicate v1 paths', () => {
   assert.equal(
     normalizeEndpoint('http://localhost:8317/v1/v1/chat/completions/'),
@@ -1821,6 +1835,12 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
     status: 'online',
     models: { model: 'host-a', fastModel: 'host-fast', deepModel: '', models: ['host-a', 'host-fast'], routing: 'manual' }
   })
+  // A PC on 1.2 or older may share 'recommend'; it answers with the model this PC sends, like auto.
+  remote.settings = { ...remote.settings, routing: 'recommend' as never }
+  router.rebuild()
+  assert.equal(router.merge({ ...remote, workspaces: [], projects: [], questions: [] }).workspaces[0].remote?.models?.routing, 'auto')
+  remote.settings = { ...remote.settings, routing: 'manual' }
+  router.rebuild()
   assert.equal(merged.questions[0].id, 'rq')
   await router.route('rename', ['question', 'rq', 'renamed'])
   await router.route('rename', ['question', 'lq', 'local'])

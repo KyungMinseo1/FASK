@@ -475,10 +475,12 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       answerHabits: !!settings.answerHabits,
       jevProvider: settings.jevProvider,
       jevRouting: !!settings.jevRouting,
+      jevPreviewSec: Number(settings.jevPreviewSec),
       jevRecall: !!settings.jevRecall
     }
     if (
-      !['manual', 'recommend', 'auto'].includes(clean.routing) ||
+      !['manual', 'auto'].includes(clean.routing) ||
+      ![0, 1, 2, 3].includes(clean.jevPreviewSec) ||
       !['minimal', 'balanced', 'preserve'].includes(clean.retention) ||
       !['off', 'project', 'workspace'].includes(clean.memoryScope) ||
       !(clean.memoryTokens >= 100 && clean.memoryTokens <= 20000) ||
@@ -713,9 +715,13 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       throw new Error('추론 강도가 잘못되었습니다.')
     const profile = store.active,
       settings = store.settings(profile)
-    const routing = await askRoute(profile, settings, input.raw, !!input.image)
+    // A model the user picked for this question skips routing, Jev included.
+    const pinned = input.pinModel === true && !!input.model
+    const routing = pinned
+      ? recommend(input.raw, !!input.image)
+      : await askRoute(profile, settings, input.raw, !!input.image)
     const model =
-      settings.routing === 'auto' ? routedModel(settings, routing.complexity) : input.model || settings.model
+      settings.routing === 'auto' && !pinned ? routedModel(settings, routing.complexity) : input.model || settings.model
     const saveOnly = !!input.saveOnly
     const annotated = input.annotated === true && !!input.image
     const requestHash = createHash('sha256')
@@ -731,7 +737,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
           saveOnly,
           annotated,
           input.useMemory ?? null,
-          effort ?? ''
+          effort ?? '',
+          pinned
         ])
       )
       .digest('hex')

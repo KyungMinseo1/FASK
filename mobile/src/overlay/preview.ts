@@ -48,6 +48,7 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
       jevProvider: 'typesafe',
       hasJevKey: false,
       jevRouting: false,
+      jevPreviewSec: 1,
       jevRecall: false
     },
     storageBytes: 0
