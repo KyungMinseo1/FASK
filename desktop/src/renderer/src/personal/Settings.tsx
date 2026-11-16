@@ -7,6 +7,7 @@ import type {
   HabitInput,
   HabitList,
   HubStatus,
+  JevProvider,
   LocalSettings,
   ManagerState,
   PeerCode,
@@ -94,6 +95,8 @@ export default function Settings({
 }): React.JSX.Element {
   const [draft, setDraft] = useState(settings),
     [key, setKey] = useState<string | undefined>(),
+    // undefined keeps the saved Jev key; '' removes it.
+    [jevKey, setJevKey] = useState<string | undefined>(),
     [displays, setDisplays] = useState<DisplayInfo[]>([])
   const [selectedDisplayId, setSelectedDisplayId] = useState<number | undefined>(),
     [refreshingDisplays, setRefreshingDisplays] = useState(true),
@@ -199,7 +202,7 @@ export default function Settings({
     }
   }
   const save = async (): Promise<void> => {
-    await window.fask.saveSettings(draft, key)
+    await window.fask.saveSettings(draft, key, jevKey)
   }
   const close = (): void => {
     if (!editingRef.current) onClose()
@@ -275,6 +278,73 @@ export default function Settings({
           {t(
             '접속 키는 OS 저장소로 암호화합니다. 공급자 로그인, 계정, 폴백 설정은 OpenAI compatible API에서 관리하세요.'
           )}
+        </small>
+      </section>
+      <section>
+        <h3>{t('Jev 연결')}</h3>
+        <p>
+          {t(
+            'Jev는 모델 선택과 참고 지식 탐색을 판단하는 TypeSafe의 의사결정 모델입니다. 질문 텍스트와 과거 기록 일부가 선택한 공급자로 전송됩니다.'
+          )}
+        </p>
+        <label>
+          {t('공급자')}
+          <select value={draft.jevProvider} onChange={(e) => change('jevProvider', e.target.value as JevProvider)}>
+            <option value="typesafe">TypeSafe (console.typesafe.ai)</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+        </label>
+        <label>
+          {t('Jev API 키')}
+          <input
+            type="password"
+            value={jevKey ?? ''}
+            onChange={(e) => setJevKey(e.target.value)}
+            placeholder={
+              settings.hasJevKey
+                ? t('저장된 키 사용 중, 바꾸려면 입력')
+                : draft.jevProvider === 'openrouter'
+                  ? t('OpenRouter API 키')
+                  : t('TypeSafe 콘솔에서 발급한 키')
+            }
+          />
+        </label>
+        {settings.hasJevKey && <button onClick={() => setJevKey('')}>{t('저장된 키 제거')}</button>}
+        <button
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            setNotice('')
+            window.fask
+              .jevTest(draft.jevProvider, jevKey)
+              .then(({ model }) =>
+                setNotice(t('Jev 연결을 확인했습니다 ({{model}}). 저장을 눌러 적용하세요.', { model }))
+              )
+              .catch((e: unknown) => setNotice(errorText(e)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          <Icon name="key" />
+          {busy ? t('확인 중…') : t('Jev 연결 확인')}
+        </button>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.jevRouting}
+            onChange={(e) => change('jevRouting', e.target.checked)}
+          />
+          {t('Jev로 모델 추천·자동 선택 (입력이 1초 멈추면 판단)')}
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.jevRecall}
+            onChange={(e) => change('jevRecall', e.target.checked)}
+          />
+          {t('Jev 계층 탐색으로 참고 지식 찾기 (실패하면 키워드 검색)')}
+        </label>
+        <small>
+          {t('키는 OS 저장소로 암호화해 이 PC에만 저장하며, 화면·백업·모바일로 다시 보내지 않습니다.')}
         </small>
       </section>
       <section>

@@ -60,6 +60,20 @@ export interface LocalSettings {
   answerHabits: boolean
   regions: CaptureRegion[]
   displayId?: number
+  /** Jev (TypeSafe decision model) provider; the key itself never leaves main. */
+  jevProvider: JevProvider
+  hasJevKey: boolean
+  /** Jev picks the answer model (recommend/auto routing); needs a saved Jev key. */
+  jevRouting: boolean
+  /** Jev searches the knowledge hierarchy for injected memory; needs a saved Jev key. */
+  jevRecall: boolean
+}
+export type JevProvider = 'typesafe' | 'openrouter'
+/** Answer-model routing verdict; `source` tells a local rule from a Jev judgment. */
+export interface RouteResult {
+  complexity: 'simple' | 'complex' | 'unknown'
+  reason: string
+  source: 'local' | 'jev'
 }
 /** The settings that pick an answer model; a linked PC shares its own with this PC. */
 export type ModelSettings = Pick<LocalSettings, 'model' | 'fastModel' | 'deepModel' | 'models' | 'routing'>
@@ -543,6 +557,8 @@ export interface KnowledgeApi {
   habits(): Promise<HabitList>
   /** Confirms or turns off a habit; sets reviewedAt. */
   decideHabit(id: string, decision: 'active' | 'rejected'): Promise<void>
+  /** Jev routing verdict for a draft; null when Jev is off or failed. Desktop only. */
+  routePreview?(text: string, hasImage: boolean): Promise<RouteResult | null>
 }
 export interface HubAddress {
   address: string
@@ -578,7 +594,9 @@ export interface PersonalApi extends KnowledgeApi {
   shortcutInfo(): Promise<ShortcutInfo>
   onTogglePanel(cb: () => void): () => void
   switchProfile(id: string): Promise<void>
-  saveSettings(settings: LocalSettings, key?: string): Promise<void>
+  saveSettings(settings: LocalSettings, key?: string, jevKey?: string): Promise<void>
+  /** Checks a Jev key (the saved one when `key` is undefined) with one minimal request. */
+  jevTest(provider: JevProvider, key?: string): Promise<{ model: string }>
   models(endpoint: string, key?: string): Promise<string[]>
   /** Zip with README, JSONL and SKOS per the chosen options; a linked-PC project is fetched from its host. */
   export(projectId: string, options: ExportOptions): Promise<boolean>

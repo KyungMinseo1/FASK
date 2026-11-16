@@ -62,7 +62,11 @@ export const defaults: LocalSettings = {
   retention: 'balanced',
   autoTitle: true,
   answerHabits: true,
-  regions: []
+  regions: [],
+  jevProvider: 'typesafe',
+  hasJevKey: false,
+  jevRouting: true,
+  jevRecall: true
 }
 
 export interface ConceptFields {
@@ -662,7 +666,8 @@ export class PersonalStore {
     return {
       ...defaults,
       ...(value ? JSON.parse(value) : {}),
-      hasKey: !!this.pref(`key:${profile}`)
+      hasKey: !!this.pref(`key:${profile}`),
+      hasJevKey: !!this.pref(`jev-key:${profile}`)
     }
   }
   saveSettings(settings: LocalSettings): void {
@@ -905,7 +910,7 @@ export class PersonalStore {
       if (kind === 'profile') {
         this.db.prepare('DELETE FROM records WHERE profile=?').run(profile)
         this.index.removeProfile(profile)
-        for (const key of [`settings:${profile}`, `key:${profile}`])
+        for (const key of [`settings:${profile}`, `key:${profile}`, `jev-key:${profile}`])
           this.db.prepare('DELETE FROM preferences WHERE key=?').run(key)
         if (this.active === profile) {
           const next =

@@ -462,6 +462,9 @@ export function validateBackup(input: unknown): Backup {
     fail()
   if (s.settings.autoTitle !== undefined && typeof s.settings.autoTitle !== 'boolean') fail()
   if (s.settings.answerHabits !== undefined && typeof s.settings.answerHabits !== 'boolean') fail()
+  if (s.settings.jevProvider !== undefined && !['typesafe', 'openrouter'].includes(s.settings.jevProvider)) fail()
+  for (const key of ['jevRouting', 'jevRecall'] as const)
+    if (s.settings[key] !== undefined && typeof s.settings[key] !== 'boolean') fail()
   for (const key of ['memoryTokens', 'extractDelaySec'] as const)
     if (
       s.settings[key] !== undefined &&

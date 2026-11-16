@@ -1942,22 +1942,60 @@ function propose(
 }
 
 const RECALL_RELATIVE_FLOOR = 0.5
+export type RecallParams = {
+  profile: string
+  scope: 'project' | 'workspace'
+  projectId: string
+  workspaceId: string
+  questionId: string
+  text: string
+  budgetChars: number
+}
+export type RecallResult = { context: unknown[]; references: Reference[] }
+/**
+ * The prompt item injected for one recalled record; undefined when the record is gone or is a
+ * question with neither a completed turn nor a memo.
+ */
+export function memoryItem(
+  store: PersonalStore,
+  kind: 'concept' | 'question',
+  id: string,
+  profile: string
+): { item: Record<string, unknown>; name: string } | undefined {
+  try {
+    if (kind === 'concept') {
+      const c = store.record<Concept>('concept', id, profile)
+      return {
+        name: c.name,
+        item: {
+          concept: c.name,
+          ...(c.aliases.length ? { aliases: c.aliases } : {}),
+          ...(c.definition ? { definition: c.definition } : {})
+        }
+      }
+    }
+    const q = store.record<Question>('question', id, profile)
+    const done = q.turns.filter((t) => t.status === 'completed')
+    const last = done[done.length - 1]
+    if (!last && !q.memo) return undefined
+    const name = questionHeading(q)
+    return {
+      name,
+      item: {
+        pastQuestion: name,
+        ...(last ? { question: last.sent.slice(0, 300), answer: last.answer.slice(0, 900) } : {}),
+        ...(q.memo ? { memo: q.memo.slice(0, 600) } : {})
+      }
+    }
+  } catch {
+    return undefined
+  }
+}
 /**
  * Knowledge injected into an answer: BM25 hits over the project or workspace, within
  * `budgetChars`. Nothing when the text has no searchable signal.
  */
-export function recallMemory(
-  store: PersonalStore,
-  p: {
-    profile: string
-    scope: 'project' | 'workspace'
-    projectId: string
-    workspaceId: string
-    questionId: string
-    text: string
-    budgetChars: number
-  }
-): { context: unknown[]; references: Reference[] } {
+export function recallMemory(store: PersonalStore, p: RecallParams): RecallResult {
   const context: unknown[] = []
   const references: Reference[] = []
   const text = p.text.trim()
@@ -1974,37 +2012,13 @@ export function recallMemory(
   let used = 0
   for (const hit of hits) {
     if (hit.score < floor) break
-    let item: Record<string, unknown>
-    let name: string
-    try {
-      if (hit.kind === 'concept') {
-        const c = store.record<Concept>('concept', hit.id, p.profile)
-        name = c.name
-        item = {
-          concept: c.name,
-          ...(c.aliases.length ? { aliases: c.aliases } : {}),
-          ...(c.definition ? { definition: c.definition } : {})
-        }
-      } else {
-        const q = store.record<Question>('question', hit.id, p.profile)
-        const done = q.turns.filter((t) => t.status === 'completed')
-        const last = done[done.length - 1]
-        if (!last && !q.memo) continue
-        name = questionHeading(q)
-        item = {
-          pastQuestion: name,
-          ...(last ? { question: last.sent.slice(0, 300), answer: last.answer.slice(0, 900) } : {}),
-          ...(q.memo ? { memo: q.memo.slice(0, 600) } : {})
-        }
-      }
-    } catch {
-      continue
-    }
-    const size = JSON.stringify(item).length
+    const found = memoryItem(store, hit.kind, hit.id, p.profile)
+    if (!found) continue
+    const size = JSON.stringify(found.item).length
     if (used + size > p.budgetChars) continue
     used += size
-    context.push(item)
-    references.push({ kind: hit.kind, id: hit.id, name })
+    context.push(found.item)
+    references.push({ kind: hit.kind, id: hit.id, name: found.name })
   }
   return { context, references }
 }

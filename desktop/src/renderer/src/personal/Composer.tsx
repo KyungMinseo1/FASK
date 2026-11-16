@@ -5,6 +5,7 @@ import type {
   ModelSettings,
   ReasoningEffort,
   Reference,
+  RouteResult,
   Question,
   TextAttachment,
   TurnState,
@@ -160,6 +161,25 @@ export default function Composer({
   const hasInput = canRefine || (!!onCapture && includeCapture)
   // Per-question knowledge injection; the settings scope supplies the default.
   const [useMemory, setUseMemory] = useState(settings.memoryScope !== 'off')
+  const imageInput = !!image || (!!onCapture && includeCapture)
+  // A linked PC (`host`) and the mobile hub have no preview; the answering PC still routes with Jev.
+  const jevOn =
+    !host && !!api.routePreview && settings.hasJevKey && settings.jevRouting && modelSettings?.routing !== 'manual'
+  // Jev's verdict for one exact draft; typing shows the local rule until the input rests 1s.
+  const [jevRoute, setJevRoute] = useState<{ raw: string; image: boolean; route: RouteResult } | null>(null)
+  useEffect(() => {
+    if (!jevOn || !raw.trim()) return
+    const text = raw,
+      img = imageInput
+    const timer = setTimeout(() => {
+      void api.routePreview?.(text, img)
+        .then((route) => {
+          if (route) setJevRoute({ raw: text, image: img, route })
+        })
+        .catch(() => {})
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [jevOn, raw, imageInput, api])
   const attach = async (files: File[]): Promise<void> => {
     if (locked) return
     setBusy(true)
@@ -467,17 +487,26 @@ export default function Composer({
   const replay = (): void => {
     if (pending.current && !busy) void submit(pending.current)
   }
-  const routing = recommend(raw, !!image || (!!onCapture && includeCapture))
+  const localRoute = recommend(raw, imageInput)
+  const routing =
+    jevRoute && jevRoute.raw === raw && jevRoute.image === imageInput ? jevRoute.route : localRoute
   const autoModel = modelSettings ? routedModel(modelSettings, routing.complexity) : ''
+  const sourceChip = routing.source === 'jev' ? <span>{t('Jev 판단')}</span> : null
   const routingChips =
     routing.complexity === 'complex' ? (
-      <span>{t('여러 단계의 추론')}</span>
+      <>
+        <span>{t('여러 단계의 추론')}</span>
+        {sourceChip}
+      </>
     ) : routing.complexity === 'unknown' ? (
-      <span>{t('이미지 난이도 미확정')}</span>
+      <>
+        <span>{t('이미지 난이도 미확정')}</span>
+        {sourceChip}
+      </>
     ) : (
       <>
         <span>{t('간단한 설명')}</span>
-        <span>{t('로컬 규칙')}</span>
+        {sourceChip ?? <span>{t('로컬 규칙')}</span>}
       </>
     )
   const autoModelName = autoModel ? <b>{autoModel}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>

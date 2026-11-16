@@ -39,6 +39,7 @@ import './mindmap-layout.test'
 import './capture.test'
 import './prompts.test'
 import './habits.test'
+import './jev.test'
 import {
   answerJustCompleted,
   applyDelta,
