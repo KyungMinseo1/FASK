@@ -4,6 +4,8 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-16
+
 ### ✨ Added
 - **Jev connection**: Settings → AI → Jev 연결 connects TypeSafe's decision model Jev with a TypeSafe key (default) or an OpenRouter key; no environment variables needed. 연결 확인 checks the key with one minimal request. The key is encrypted with the OS keystore (as the local access key is), stays on this PC, and is never sent to the screen, backups or the phone. Two switches, both on by default and active only with a saved key: model routing and knowledge search.
 - **Jev model routing**: while you type, the composer shows the local rule; once typing pauses for 1 second, Jev judges whether the question is simple or needs multi-step reasoning and the recommendation shows a "Jev 판단" chip. The verdict is cached, so sending the same text makes no second request. In Auto, sending without a cached verdict asks Jev and falls back to the local rule after 3 seconds; Manual never asks Jev. Linked-PC and phone composers keep the local-rule preview.
