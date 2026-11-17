@@ -32,7 +32,7 @@
 > **Mark** the screen &nbsp;→&nbsp; **Ask** in place &nbsp;→&nbsp; **Keep** the answer with its context.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/ea88b747-0927-43ba-a9c5-570e3fc3de7d" alt="FASK demo" width="800" />
+  <img src="https://github.com/user-attachments/assets/1e9c6a8b-c50e-402d-bfc1-bf172c52e052" alt="FASK demo" width="800" />
 </p>
 
 ---
