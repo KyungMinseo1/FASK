@@ -573,6 +573,9 @@ button.danger {
   flex: none;
   display: block;
   border-radius: 50%;
+  /* Light palettes stay visible on light surfaces. */
+  outline: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  outline-offset: -1px;
 }
 .fask-app .fask-sidebar .profile-card {
   width: 100%;
@@ -3661,6 +3664,38 @@ button.memo-saved:disabled {
 :is(.settings-body, .export-options) input[type='checkbox']:disabled::after {
   background: var(--dis-ink);
 }
+:is(.settings-body, .export-options) label.tick input[type='checkbox'] {
+  /* Consent and pick-from-a-list items are checkboxes, not on/off switches. */
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--hairline-tertiary);
+  border-radius: var(--r-xs);
+  background: var(--surface-1);
+}
+:is(.settings-body, .export-options) label.tick input[type='checkbox']::after {
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--on-primary);
+  border-width: 0 2px 2px 0;
+  border-radius: 0;
+  background: none;
+  transform: rotate(45deg) scale(0);
+  transition: transform 0.12s ease-out;
+}
+:is(.settings-body, .export-options) label.tick input[type='checkbox']:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+:is(.settings-body, .export-options) label.tick input[type='checkbox']:checked::after {
+  transform: rotate(45deg) scale(1);
+  background: none;
+}
+:is(.settings-body, .export-options) label.tick input[type='checkbox']:disabled {
+  border-color: var(--dis-bg);
+  background: var(--dis-bg);
+}
 .settings-body label.check {
   padding: 6px 8px;
   margin: 4px -8px;
@@ -4845,60 +4880,95 @@ button.memo-saved:disabled {
   margin-left: 2px;
 }
 
-/* Profile page (ProfilePage.tsx): same frame as the settings page. */
+/* Profile page (ProfilePage.tsx): same frame as the settings page, wider so a year of usage fits. */
+.settings-page.profile-page .settings-body {
+  max-width: 880px;
+}
 .profile-hero {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin: 12px 0 16px;
+  margin: 12px 0 20px;
+}
+.profile-hero > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.profile-hero b {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .profile-styles,
 .profile-colors {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 12px 0;
+  margin: 8px 0 16px;
+}
+.settings-page .settings-body :is(.profile-styles, .profile-colors) button {
+  margin: 0;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 .settings-page .settings-body .profile-styles button {
-  margin: 0;
-  padding: 4px;
-  border-radius: var(--r-md);
-}
-.settings-page .settings-body .profile-styles button.active {
-  border-color: var(--primary);
-  outline: 1px solid var(--primary);
+  flex-direction: column;
+  width: 84px;
+  padding: 10px 6px 8px;
 }
 .settings-page .settings-body .profile-colors button {
-  margin: 0;
+  padding: 6px 12px 6px 6px;
+}
+.settings-page .settings-body :is(.profile-styles, .profile-colors) button:hover {
+  border-color: var(--hairline-strong);
+  color: var(--ink);
+}
+.settings-page .settings-body :is(.profile-styles, .profile-colors) button.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--ink);
+  outline: 1px solid var(--primary);
+  outline-offset: -2px;
+}
+/* Theme palette chip: background with its ink and accent marks. */
+.profile-swatch {
+  flex: none;
   width: 28px;
   height: 28px;
-  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   border-radius: 50%;
-  border: 2px solid var(--surface-1);
-  outline: 1px solid var(--hairline-strong);
+  outline: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  outline-offset: -1px;
 }
-.settings-page .settings-body .profile-colors button.active {
-  outline: 2px solid var(--ink);
-}
-.settings-page .settings-body .profile-colors button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+.profile-swatch i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
 }
 
-/* Usage heatmap: 53 weekly columns of 7 days, Sunday first. */
+/* Usage heatmap: 53 weekly columns of 7 days, Sunday first; cells scale with the column. */
 .usage-summary {
   font-variant-numeric: tabular-nums;
 }
-.usage-scroll {
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
 .usage-grid {
   display: grid;
-  grid-template-columns: auto repeat(53, 11px);
-  grid-template-rows: auto repeat(7, 11px);
+  grid-template-columns: auto repeat(53, minmax(0, 1fr));
   gap: 3px;
-  width: max-content;
+  width: 100%;
+  margin: 8px 0 4px;
   font-size: 11px;
   line-height: 1;
   color: var(--ink-muted);
@@ -4913,6 +4983,7 @@ button.memo-saved:disabled {
   align-self: center;
 }
 .usage-cell {
+  aspect-ratio: 1;
   border-radius: 2px;
   background: var(--surface-3);
 }
