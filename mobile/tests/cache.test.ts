@@ -4,7 +4,7 @@ import { createSnapshotCache, type SnapshotCacheIo } from '../src/cache'
 
 const fp1 = 'A'.repeat(43),
   fp2 = 'B'.repeat(43)
-const snapshot = { activeProfileId: 'p', questions: [{ id: '비밀 질문 원문' }] } as unknown as Snapshot
+const snapshot = { profile: { id: 'p', name: '프로필' }, questions: [{ id: '비밀 질문 원문' }] } as unknown as Snapshot
 
 function memoryIo(): SnapshotCacheIo & { state: { key: string | null; file: string | null } } {
   const state = { key: null as string | null, file: null as string | null }
@@ -26,7 +26,7 @@ describe('snapshot cache', () => {
     await cache.save(snapshot, { epoch: cache.epoch(), fingerprint: fp1 })
     expect((await cache.load(fp1))?.snapshot).toEqual(snapshot)
     expect(io.state.file).not.toContain('비밀 질문 원문')
-    expect(io.state.file).not.toContain('activeProfileId')
+    expect(io.state.file).not.toContain('프로필')
   })
   it('tampered ciphertext is discarded together with its key', async () => {
     const io = memoryIo()

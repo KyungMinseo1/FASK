@@ -17,14 +17,17 @@ import type {
   Habit,
   LocalSettings,
   Profile,
+  ProfileMergeInfo,
   Project,
   Question,
   Relation,
   Snapshot,
   Turn,
+  UsageDay,
   Workspace
 } from '../preload/personal'
 import { mergeLegacyQuestions, questionImages, type LegacyQuestion } from '../shared/questions'
+import { defaultAvatar, validAvatar, type AvatarSpec } from '../shared/avatar'
 import { t } from '../shared/i18n'
 import {
   KnowledgeSearch,
@@ -190,6 +193,11 @@ function freshReview(c: Concept): Concept {
   return next
 }
 
+/** Local calendar day as YYYY-MM-DD (usage rows). */
+function localDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export class PersonalStore {
   readonly db: DatabaseSync
   private readonly index: KnowledgeSearch
@@ -210,6 +218,7 @@ export class PersonalStore {
     this.migrateLevels()
     this.migrateHierarchyRelations()
     this.migrateHabitWatermark()
+    this.migrateUsageAndHabitScope()
     if (!this.list<Profile>('profile', '*').length) {
       const id = this.put('profile', '*', { id: randomUUID(), name: '기본 프로필' })
       this.pref('active', id)
@@ -421,6 +430,145 @@ export class PersonalStore {
       this.db.close()
       throw e
     }
+  }
+  /**
+   * Schema 7: daily token usage, per-question habit marks for other PCs' questions, and habit
+   * scopes 'profile' | 'project' (a former workspace habit applies to every project).
+   */
+  private migrateUsageAndHabitScope(): void {
+    if (this.db.prepare('SELECT version FROM schema_migrations WHERE version=7').get()) return
+    if (
+      this.db
+        .prepare("SELECT 1 FROM records WHERE kind='habit' AND json_extract(data,'$.scope')='workspace' LIMIT 1")
+        .get()
+    )
+      this.backupBefore('fask-pre-habit-scope.sqlite')
+    this.db.exec('BEGIN')
+    try {
+      this.db.exec(`CREATE TABLE IF NOT EXISTS usage(day TEXT NOT NULL, source TEXT NOT NULL, input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, estimated INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(day, source));
+        CREATE TABLE IF NOT EXISTS habit_marks(question_id TEXT PRIMARY KEY, turns INTEGER NOT NULL);`)
+      this.db.exec(
+        "UPDATE records SET data=json_set(json_remove(data,'$.workspaceId'),'$.scope',CASE WHEN json_extract(data,'$.scope')='workspace' THEN 'profile' ELSE json_extract(data,'$.scope') END,'$.projectOwner',NULL,'$.projectId',NULL,'$.overrides',NULL) WHERE kind='habit'"
+      )
+      this.db.exec('INSERT INTO schema_migrations VALUES(7); COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      this.db.close()
+      throw e
+    }
+  }
+  /** This PC's single profile; a missing or broken avatar is filled in (not saved). */
+  profile(): Profile {
+    const p = this.record<Profile>('profile', this.active, '*')
+    return validAvatar(p.avatar) ? p : { ...p, avatar: defaultAvatar(p.id) }
+  }
+  updateProfile(patch: { name?: string; avatar?: AvatarSpec }): void {
+    const next = this.profile()
+    if (patch.name !== undefined) {
+      const name = typeof patch.name === 'string' ? patch.name.trim() : ''
+      if (name.length < 1 || name.length > 40) throw new Error('프로필 이름은 1~40자로 입력해 주세요.')
+      next.name = name
+    }
+    if (patch.avatar !== undefined) {
+      if (!validAvatar(patch.avatar)) throw new Error('요청 형식이 잘못되었습니다.')
+      next.avatar = { style: patch.avatar.style, seed: patch.avatar.seed, background: patch.avatar.background }
+    }
+    this.put('profile', '*', next)
+  }
+  /** Profiles other than the active one (left from multi-profile builds), or null when none. */
+  mergeInfo(): ProfileMergeInfo | null {
+    const others = this.list<Profile>('profile', '*').filter((p) => p.id !== this.active)
+    if (!others.length) return null
+    return {
+      current: this.profile().name,
+      others: others.map((p) => ({
+        name: p.name,
+        workspaces: this.list('workspace', p.id).length,
+        questions: this.list('question', p.id).length
+      }))
+    }
+  }
+  /**
+   * Moves every other profile's records into the active one (clashing workspace names get the
+   * old profile's name appended) and deletes those profiles with their settings and keys.
+   */
+  mergeProfiles(): void {
+    const target = this.active
+    const others = this.list<Profile>('profile', '*').filter((p) => p.id !== target)
+    if (!others.length) return
+    this.backupBefore('fask-pre-profile-merge.sqlite')
+    this.db.exec('BEGIN')
+    try {
+      const taken = new Set(this.list<Workspace>('workspace', target).map((w) => w.name))
+      for (const other of others) {
+        for (const w of this.list<Workspace>('workspace', other.id)) {
+          let name = w.name
+          if (taken.has(name)) name = `${w.name} (${other.name})`
+          taken.add(name)
+          this.put('workspace', target, { ...w, name, profileId: target })
+        }
+        this.db.prepare('UPDATE records SET profile=? WHERE profile=?').run(target, other.id)
+        this.db.prepare("DELETE FROM records WHERE kind='profile' AND id=?").run(other.id)
+        for (const key of [`settings:${other.id}`, `key:${other.id}`, `jev-key:${other.id}`])
+          this.db.prepare('DELETE FROM preferences WHERE key=?').run(key)
+      }
+      this.index.clear()
+      for (const row of this.db
+        .prepare("SELECT rowid,kind,profile,data FROM records WHERE kind IN ('concept','question')")
+        .all())
+        this.indexRecord(String(row.kind), String(row.profile), Number(row.rowid), JSON.parse(String(row.data)))
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+  }
+  /** Leading turns of another PC's question already checked for this profile's habit feedback. */
+  habitMark(questionId: string): number {
+    return Number(this.db.prepare('SELECT turns FROM habit_marks WHERE question_id=?').get(questionId)?.turns ?? 0)
+  }
+  setHabitMark(questionId: string, turns: number): void {
+    this.db
+      .prepare('INSERT INTO habit_marks VALUES(?,?) ON CONFLICT(question_id) DO UPDATE SET turns=excluded.turns')
+      .run(questionId, turns)
+  }
+  clearHabitMarks(questionIds: string[]): void {
+    const stmt = this.db.prepare('DELETE FROM habit_marks WHERE question_id=?')
+    for (const id of questionIds) stmt.run(id)
+  }
+  /** Workspace id a record belongs to; throws like record() when it does not exist. */
+  scopeOf(kind: 'workspace' | 'project' | 'concept' | 'relation' | 'question', id: string): string {
+    if (kind === 'workspace') return this.record<Workspace>('workspace', id).id
+    if (kind === 'question') return this.workspaceOf(this.record<Question>('question', id).projectId)
+    return this.record<{ workspaceId: string }>(kind, id).workspaceId
+  }
+  addUsage(source: 'model' | 'jev', input: number, output: number, cost: number, estimated: boolean): void {
+    const n = (v: number): number => (Number.isFinite(v) && v > 0 ? v : 0)
+    this.db
+      .prepare(
+        'INSERT INTO usage VALUES(?,?,?,?,?,?) ON CONFLICT(day,source) DO UPDATE SET input=input+excluded.input, output=output+excluded.output, cost=cost+excluded.cost, estimated=max(estimated,excluded.estimated)'
+      )
+      .run(localDay(new Date()), source, Math.round(n(input)), Math.round(n(output)), n(cost), estimated ? 1 : 0)
+  }
+  /** Days with use among the last `days` days (today included), oldest first. */
+  usage(days = 371): UsageDay[] {
+    const from = new Date()
+    from.setDate(from.getDate() - (days - 1))
+    const out = new Map<string, UsageDay>()
+    for (const row of this.db
+      .prepare('SELECT day,source,input,output,cost,estimated FROM usage WHERE day>=? ORDER BY day')
+      .all(localDay(from))) {
+      const day = String(row.day)
+      const d = out.get(day) ?? { day, model: 0, jev: 0, jevCost: 0, estimated: false }
+      const tokens = Number(row.input) + Number(row.output)
+      if (row.source === 'jev') {
+        d.jev += tokens
+        d.jevCost += Number(row.cost)
+      } else d.model += tokens
+      d.estimated ||= Number(row.estimated) === 1
+      out.set(day, d)
+    }
+    return [...out.values()]
   }
   findRun(
     requestId: string
@@ -681,7 +829,6 @@ export class PersonalStore {
     name = name.trim().slice(0, 200)
     if (!name) throw new Error('이름을 입력해 주세요.')
     const id = randomUUID()
-    if (kind === 'profile') return this.put(kind, '*', { id, name } as Profile)
     if (kind === 'workspace')
       return this.put(kind, this.active, { id, name, profileId: this.active } as Workspace)
     if (kind === 'project') {
@@ -825,23 +972,15 @@ export class PersonalStore {
     }
     this.put('concept', profile, next)
   }
-  switchProfile(id: string): void {
-    this.record('profile', id, '*')
-    this.pref('active', id)
-    if (!this.list('workspace').length) {
-      const workspace = this.create('workspace', '내 워크스페이스')
-      this.create('project', '첫 프로젝트', workspace)
-    }
-  }
   rename(kind: string, id: string, name: string): void {
     if (
-      !['profile', 'workspace', 'project', 'concept', 'question'].includes(kind) ||
+      !['workspace', 'project', 'concept', 'question'].includes(kind) ||
       typeof name !== 'string' ||
       !name.trim() ||
       name.trim().length > 200
     )
       throw new Error('이름은 1~200자로 입력해 주세요.')
-    const profile = kind === 'profile' ? '*' : this.active
+    const profile = this.active
     const record = this.record<{ id: string }>(kind, id, profile)
     if (kind === 'concept') return this.editConcept(id, name, (record as Concept).parentId)
     this.put(kind, profile, {
@@ -850,15 +989,14 @@ export class PersonalStore {
     })
   }
   remove(kind: string, id: string): void {
-    if (!['profile', 'workspace', 'project', 'concept', 'question'].includes(kind))
+    if (!['workspace', 'project', 'concept', 'question'].includes(kind))
       throw new Error('지원하지 않는 항목입니다.')
-    const profile = kind === 'profile' ? id : this.active
-    this.record(kind, id, kind === 'profile' ? '*' : profile)
+    const profile = this.active
+    this.record(kind, id, profile)
     const projects = new Set(
       this.list<Project>('project', profile)
         .filter(
           (p) =>
-            kind === 'profile' ||
             (kind === 'workspace' && p.workspaceId === id) ||
             (kind === 'project' && p.id === id)
         )
@@ -901,27 +1039,31 @@ export class PersonalStore {
         else if (r.questionId && removedQuestions.has(r.questionId))
           // Provenance is gone; the relation itself stays.
           this.put('relation', profile, { ...r, questionId: null, turnIds: [] })
-      for (const h of this.list<Habit>('habit', profile))
-        if (kind === 'workspace' && h.workspaceId === id) this.drop(h.id, profile)
-        else if (h.sources.some((s) => removedQuestions.has(s.questionId)))
-          // Evidence is gone; the habit itself stays.
-          this.put('habit', profile, { ...h, sources: h.sources.filter((s) => !removedQuestions.has(s.questionId)) })
+      const habits = this.list<Habit>('habit', profile)
+      const dropped = new Set(
+        habits
+          .filter(
+            (h) =>
+              h.scope === 'project' && h.projectOwner === profile && !!h.projectId && projects.has(h.projectId)
+          )
+          .map((h) => h.id)
+      )
+      for (const h of habits) {
+        if (dropped.has(h.id)) {
+          this.drop(h.id, profile)
+          continue
+        }
+        const sources = h.sources.filter((s) => !removedQuestions.has(s.questionId))
+        const overrides = h.overrides && dropped.has(h.overrides) ? null : h.overrides
+        // Evidence is gone; the habit itself stays.
+        if (sources.length !== h.sources.length || overrides !== h.overrides)
+          this.put('habit', profile, { ...h, sources, overrides })
+      }
       if (kind === 'workspace')
         for (const c of this.list<Concept>('concept', profile))
           if (c.workspaceId === id) this.drop(c.id, profile)
       for (const project of projects) this.drop(project, profile)
-      this.drop(id, kind === 'profile' ? '*' : profile)
-      if (kind === 'profile') {
-        this.db.prepare('DELETE FROM records WHERE profile=?').run(profile)
-        this.index.removeProfile(profile)
-        for (const key of [`settings:${profile}`, `key:${profile}`, `jev-key:${profile}`])
-          this.db.prepare('DELETE FROM preferences WHERE key=?').run(key)
-        if (this.active === profile) {
-          const next =
-            this.list<Profile>('profile', '*')[0]?.id ?? this.create('profile', '기본 프로필')
-          this.switchProfile(next)
-        }
-      }
+      this.drop(id, profile)
       this.db.exec('COMMIT')
     } catch (e) {
       this.db.exec('ROLLBACK')
@@ -929,7 +1071,7 @@ export class PersonalStore {
     }
     for (const image of images) if (!this.isImageReferenced(image)) this.deleteImage(image)
   }
-  snapshot(): Snapshot {
+  snapshot(): Omit<Snapshot, 'device'> {
     const questions = this.list<Question>('question').sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt)
     )
@@ -939,8 +1081,7 @@ export class PersonalStore {
       for (const file of [this.imagePath(path), this.displayPath(path)])
         if (existsSync(file)) storageBytes += statSync(file).size
     return {
-      profiles: this.list('profile', '*'),
-      activeProfileId: this.active,
+      profile: this.profile(),
       workspaces: this.list('workspace'),
       projects: this.list('project'),
       concepts: this.list('concept'),

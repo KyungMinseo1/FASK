@@ -2,14 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AskInput,
   LocalSettings,
-  ModelSettings,
   ReasoningEffort,
   Reference,
   RouteResult,
   Question,
   TextAttachment,
-  TurnState,
-  Workspace
+  TurnState
 } from '../../../preload/personal'
 import {
   applyDelta,
@@ -32,7 +30,7 @@ import { useT } from '../../../shared/i18n/react'
 // treated as "result unknown" (the hub wraps handler errors as HTTP 400 either way).
 const REJECTED = [
   '요청 ID가 잘못되었습니다.',
-  '프로필이 변경되었습니다. 다시 열어 주세요.',
+  '연결된 PC를 최신 버전으로 업데이트해 주세요.',
   '질문이나 첨부를 추가해 주세요.',
   '질문은 50,000자 이내로 입력해 주세요.',
   '텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.',
@@ -76,11 +74,6 @@ interface Props {
   submitOnEnter?: boolean
   /** Opens a "참고한 지식" chip of the shown answer; chips are hidden when omitted. */
   onReference?: (ref: Reference) => void
-  /**
-   * Linked-PC project: that PC answers, so models come from its shared settings. A PC on an older
-   * build shares none; it then picks the model itself and no picker is shown.
-   */
-  host?: Workspace['remote']
 }
 export default function Composer({
   projectId,
@@ -100,16 +93,13 @@ export default function Composer({
   mediaActions,
   submitOnEnter = true,
   persistDraft = true,
-  onReference,
-  host
+  onReference
 }: Props): React.JSX.Element {
   const t = useT()
   const api = useApi()
   const draftKey = `fask:draft:${profileId}:${projectId}`
   const recentTurn = recentQuestion ? lastTurn(recentQuestion) : undefined
-  // The settings that pick the answer model: the answering PC's own; undefined when it shares none.
-  const modelSettings: ModelSettings | undefined = host ? host.models : settings
-  const lastModelKey = host ? `fask:last-model:${profileId}:peer:${host.peerId}` : `fask:last-model:${profileId}`
+  const lastModelKey = `fask:last-model:${profileId}`
   const effortKey = `fask:reasoning-effort:${profileId}`
   const [raw, setRaw] = useState(
       () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
@@ -122,8 +112,7 @@ export default function Composer({
         [recentTurn?.model, localStorage.getItem(lastModelKey)].find(
           (m): m is string =>
             !!m &&
-            !!modelSettings &&
-            (!modelSettings.models.length || modelSettings.models.includes(m) || m === modelSettings.model)
+            (!settings.models.length || settings.models.includes(m) || m === settings.model)
         ) ?? ''
     ),
     // Remembered across questions and PCs; '' sends no reasoning_effort.
@@ -131,10 +120,10 @@ export default function Composer({
       const saved = localStorage.getItem(effortKey)
       return EFFORTS.find((e) => e.value === saved)?.value ?? ''
     })
-  const model = chosenModel || modelSettings?.model || ''
+  const model = chosenModel || settings.model || ''
   // Auto routing can be overridden for one question; manual mode always shows the picker.
   const [pinned, setPinned] = useState(false)
-  const manual = modelSettings?.routing === 'manual'
+  const manual = settings.routing === 'manual'
   const choosing = manual || pinned
   const [image, setImage] = useState(''),
     [error, setError] = useState(''),
@@ -166,8 +155,8 @@ export default function Composer({
   // Per-question knowledge injection; the settings scope supplies the default.
   const [useMemory, setUseMemory] = useState(settings.memoryScope !== 'off')
   const imageInput = !!image || (!!onCapture && includeCapture)
-  // Only this PC's own drafts are previewed; a linked PC (`host`) and the mobile hub route on send.
-  const remoteRoute = !!host || !api.routePreview
+  // Only this PC's own drafts are previewed; the mobile hub routes on send.
+  const remoteRoute = !api.routePreview
   const previewMs = settings.jevPreviewSec * 1000
   const jevOn =
     !remoteRoute && settings.hasJevKey && settings.jevRouting && settings.routing === 'auto' && previewMs > 0 && !pinned
@@ -447,17 +436,16 @@ export default function Composer({
       await refine()
       return
     }
-    if (modelSettings && choosing && model) localStorage.setItem(lastModelKey, model)
-    setSentModel(!modelSettings ? '' : choosing ? model : routing.source === 'jev' || !decidedOnSend ? autoModel : '')
+    if (choosing && model) localStorage.setItem(lastModelKey, model)
+    setSentModel(choosing ? model : routing.source === 'jev' || !decidedOnSend ? autoModel : '')
     // Frozen before capture: later edits or a new questionId never alter this request.
     const base: Omit<AskInput, 'requestId'> = {
-      profileId,
       projectId,
       ...(questionId ? { questionId } : {}),
       raw,
       refined,
-      // Auto sends the shown model too: a PC on 1.2 or older in recommend mode answers with it.
-      model: modelSettings && !choosing ? autoModel : model,
+      // Auto sends the shown model too; the asking PC routes again when its auto routing is on.
+      model: choosing ? model : autoModel,
       ...(pinned && !manual ? { pinModel: true } : {}),
       documents: [...documents],
       useMemory,
@@ -500,7 +488,7 @@ export default function Composer({
   const localRoute = recommend(raw, imageInput)
   const routing =
     jevRoute && jevRoute.raw === raw && jevRoute.image === imageInput ? jevRoute.route : localRoute
-  const autoModel = modelSettings ? routedModel(modelSettings, routing.complexity) : ''
+  const autoModel = routedModel(settings, routing.complexity)
   const complexityLabel =
     routing.complexity === 'complex'
       ? t('여러 단계의 추론')
@@ -671,46 +659,38 @@ export default function Composer({
           </button>
         </label>
       )}
-      {modelSettings ? (
-        <div className="model-line">
-          {host && <span>{t('{{name}} PC 모델', { name: host.name })}</span>}
-          {choosing ? (
-            <>
-              <label className="model-select answer-model">
-                <span>{t('답변 모델')}</span>
-                <select value={model} disabled={locked} onChange={(e) => setModel(e.target.value)}>
-                  <option value="">{t('모델 선택')}</option>
-                  {[...new Set([...modelSettings.models, modelSettings.model, model].filter(Boolean))].map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </select>
-              </label>
-              {!manual && (
-                <button disabled={locked} onClick={() => setPinned(false)}>
-                  {t('자동으로')}
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <span className="model-line-mode">{t('자동 선택')}</span>
-              {autoModel ? <b>{autoModel}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>}
-              <span title={t(routing.reason)}>
-                {complexityLabel} · {sourceLabel}
-              </span>
-              <button disabled={locked} onClick={() => setPinned(true)}>
-                {t('직접 선택')}
+      <div className="model-line">
+        {choosing ? (
+          <>
+            <label className="model-select answer-model">
+              <span>{t('답변 모델')}</span>
+              <select value={model} disabled={locked} onChange={(e) => setModel(e.target.value)}>
+                <option value="">{t('모델 선택')}</option>
+                {[...new Set([...settings.models, settings.model, model].filter(Boolean))].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+            {!manual && (
+              <button disabled={locked} onClick={() => setPinned(false)}>
+                {t('자동으로')}
               </button>
-            </>
-          )}
-          {effortSelect}
-        </div>
-      ) : (
-        <div className="model-line">
-          {host && <span>{t('{{name}} PC의 모델 설정으로 답변합니다', { name: host.name })}</span>}
-          {effortSelect}
-        </div>
-      )}
+            )}
+          </>
+        ) : (
+          <>
+            <span className="model-line-mode">{t('자동 선택')}</span>
+            {autoModel ? <b>{autoModel}</b> : <span>{t('설정에서 모델을 선택하세요')}</span>}
+            <span title={t(routing.reason)}>
+              {complexityLabel} · {sourceLabel}
+            </span>
+            <button disabled={locked} onClick={() => setPinned(true)}>
+              {t('직접 선택')}
+            </button>
+          </>
+        )}
+        {effortSelect}
+      </div>
       <div className="composer-actions">
         {mediaActions?.length ? (
           <div className="attach-menu-anchor" ref={attachMenu}>

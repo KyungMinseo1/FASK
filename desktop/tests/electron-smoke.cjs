@@ -223,8 +223,20 @@ app.whenReady().then(async () => {
         items
       )
     }
-    await context('[aria-label="프로필"]', 2)
-    await renameUi('.item-context-menu button', '연구 프로필')
+    await js("document.querySelector('.profile-card').click()")
+    await wait(
+      () => js("!!document.querySelector('.profile-page .usage-heatmap')"),
+      'profile card opens the profile page with the usage heatmap'
+    )
+    await shot('profile-page')
+    await js("window.fask.profileUpdate({ name: '연구 프로필' })")
+    await wait(
+      () => js("document.querySelector('.profile-card')?.textContent.includes('연구 프로필')"),
+      'profile name change shows on the sidebar card'
+    )
+    await js("document.querySelector('.profile-page .settings-back').click()")
+    await wait(() => js("!document.querySelector('.profile-page')"), 'profile page closes')
+    report.checks.push('profile page opens, renames the profile, and closes')
     await context('.question-card', 3)
     await renameUi('.item-context-menu button', '투명 오버레이에서 입력 처리 연구')
     const namedQuestion = (await js('window.fask.snapshot()')).questions.find(
@@ -273,7 +285,7 @@ app.whenReady().then(async () => {
       report.checks.push('hub certificate accepted by Electron TLS')
     }
     await js(
-      `window.fask.ask(${JSON.stringify({ requestId: 'smoke-request', profileId, projectId: project.id, raw: '간단한 질문', model: 'test-fast' })})`
+      `window.fask.ask(${JSON.stringify({ requestId: 'smoke-request', projectId: project.id, raw: '간단한 질문', model: 'test-fast' })})`
     )
     await wait(
       () =>
@@ -294,7 +306,7 @@ app.whenReady().then(async () => {
     for (const annotated of [true, false]) {
       const raw = `펜 표시 질문 ${annotated}`
       await js(
-        `window.fask.ask(${JSON.stringify({ requestId: `smoke-pen-${annotated}`, profileId, projectId: project.id, raw, model: 'test-fast', image: penImage, ...(annotated ? { annotated: true } : {}) })})`
+        `window.fask.ask(${JSON.stringify({ requestId: `smoke-pen-${annotated}`, projectId: project.id, raw, model: 'test-fast', image: penImage, ...(annotated ? { annotated: true } : {}) })})`
       )
       await wait(
         () =>
@@ -514,7 +526,7 @@ app.whenReady().then(async () => {
       await wait(
         async () =>
           (await overlay.webContents.executeJavaScript(
-            "document.querySelector('.overlay-panel header b')?.textContent"
+            "document.querySelector('.overlay-panel header small')?.textContent"
           )) === name,
         `overlay panel shows ${name}`
       )
@@ -914,7 +926,6 @@ app.whenReady().then(async () => {
     }
     const dupInput = JSON.stringify({
       requestId: 'dup-request',
-      profileId,
       projectId: project.id,
       raw: '중복 방지 질문',
       model: 'test-fast'
@@ -937,17 +948,17 @@ app.whenReady().then(async () => {
     report.checks.push('ask is idempotent by requestId')
     assert.match(
       await js(
-        `window.fask.ask(${JSON.stringify({ requestId: 'dup-request', profileId, projectId: project.id, raw: '다른 내용', model: 'test-fast' })}).then(()=>'ok',e=>e.message)`
+        `window.fask.ask(${JSON.stringify({ requestId: 'dup-request', projectId: project.id, raw: '다른 내용', model: 'test-fast' })}).then(()=>'ok',e=>e.message)`
       ),
       /같은 요청 ID로 다른 내용을 보낼 수 없습니다/
     )
     report.checks.push('request hash conflict rejected')
     const slow = await js(
-      `window.fask.ask(${JSON.stringify({ requestId: 'slow-request', profileId, projectId: project.id, questionId: dup1.questionId, raw: '느린 답변', model: 'test-fast' })})`
+      `window.fask.ask(${JSON.stringify({ requestId: 'slow-request', projectId: project.id, questionId: dup1.questionId, raw: '느린 답변', model: 'test-fast' })})`
     )
     assert.match(
       await js(
-        `window.fask.ask(${JSON.stringify({ requestId: 'slow-blocked', profileId, projectId: project.id, questionId: dup1.questionId, raw: '막힌 질문', model: 'test-fast' })}).then(()=>'ok',e=>e.message)`
+        `window.fask.ask(${JSON.stringify({ requestId: 'slow-blocked', projectId: project.id, questionId: dup1.questionId, raw: '막힌 질문', model: 'test-fast' })}).then(()=>'ok',e=>e.message)`
       ),
       /이 질문의 이전 답변이 끝난 뒤 이어서 질문해 주세요/
     )
@@ -974,13 +985,14 @@ app.whenReady().then(async () => {
       'single running turn, cancel by turnId, live revision'
     )
     await js(
-      `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', profileId, projectId: project.id, raw: '캡처 기록', image, model: 'test-fast', saveOnly: true })})`
+      `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', projectId: project.id, raw: '캡처 기록', image, model: 'test-fast', saveOnly: true })})`
     )
     const backupPath = join(dataDir, 'backup.json')
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: backupPath })
     assert.equal(await js('window.fask.backup()'), true)
     const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
-    assert.equal(backup.version, 2)
+    assert.equal(backup.version, 4)
+    assert.equal(backup.owner, profileId)
     assert.equal(backup.snapshot.questions.length, QUESTION_COUNT)
     assert.deepEqual(
       Object.keys(backup.images).sort(),
@@ -990,35 +1002,31 @@ app.whenReady().then(async () => {
         )
       ].sort()
     )
-    assert.equal(backup.snapshot.settings.hasKey, false)
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [backupPath] })
     assert.equal(await js('window.fask.restore()'), true)
     const restored = await js('window.fask.snapshot()')
-    assert.notEqual(restored.activeProfileId, profileId)
-    assert.equal(restored.questions.length, QUESTION_COUNT)
-    assert.equal(restored.profiles.length, 2)
+    assert.equal(restored.profile.id, profileId)
+    assert.equal(restored.questions.length, QUESTION_COUNT * 2)
+    const copy = restored.workspaces.find((w) => w.name.includes('(복원'))
+    assert.ok(copy)
     assert.ok(restored.storageBytes > 0)
-    report.checks.push('backup restores questions and capture into a separate profile')
+    report.checks.push('backup restores questions and capture into the same profile')
     {
       const original = new Set(backup.snapshot.questions.flatMap((q) => q.turns.map((t) => t.id)))
       assert.ok(restored.questions.every((q) => q.turns.every((t) => !original.has(t.id))))
       report.checks.push('restore remaps turn ids')
     }
-    await context('[aria-label="프로필"]')
-    await js("document.querySelector('.item-context-menu .danger').click()")
+    await js(`window.fask.remove('workspace', ${JSON.stringify(copy.id)})`)
     await wait(
-      () =>
-        js(
-          `window.fask.snapshot().then(s=>s.activeProfileId===${JSON.stringify(profileId)}&&s.profiles.length===1)`
-        ),
-      'profile context delete removes restored copy and returns to original'
+      () => js(`window.fask.snapshot().then(s=>s.questions.length===${QUESTION_COUNT})`),
+      'restored workspace deletion removes the restored copy'
     )
     await js(
       `location.hash='/personal?scope=project&workspace=${project.workspaceId}&project=${project.id}'`
     )
     await wait(
       () => js("!!document.querySelector('.view-bar')"),
-      'original project reopens after profile deletion'
+      'original project reopens after removing the restored copy'
     )
     await js(
       "[...document.querySelectorAll('.segmented button')].find(b=>b.textContent==='목록').click()"
@@ -1074,7 +1082,7 @@ app.whenReady().then(async () => {
       `window.fask.create('project','재시작 검증',${JSON.stringify(restartWorkspace)})`
     )
     await js(
-      `window.fask.ask(${JSON.stringify({ requestId: 'restart-question', profileId, projectId: restartProject, raw: '앱 종료 전에 저장한 질문', model: '', saveOnly: true })})`
+      `window.fask.ask(${JSON.stringify({ requestId: 'restart-question', projectId: restartProject, raw: '앱 종료 전에 저장한 질문', model: '', saveOnly: true })})`
     )
     report.restart = {
       dataDir,

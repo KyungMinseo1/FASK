@@ -55,6 +55,8 @@ function statusError(status: number): Error {
           : 'OpenAI compatible API의 실행 상태와 모델 연결을 확인해 주세요.'
   return new Error(t('로컬 API 오류 ({{status}}). {{hint}}', { status, hint: t(hint) }))
 }
+/** Endpoints that answered HTTP 400 to `stream_options`; asked without it for the rest of the session. */
+const noUsageOption = new Set<string>()
 export async function streamChat(
   endpoint: string,
   key: string,
@@ -63,32 +65,41 @@ export async function streamChat(
   signal: AbortSignal,
   options: { reasoningEffort?: ReasoningEffort },
   delta: (text: string, actualModel?: string) => void
-): Promise<void> {
+): Promise<{ usage: { input: number; output: number } | null }> {
   if (!model.trim()) throw new Error('설정에서 사용할 모델을 선택해 주세요.')
-  let res: Response
-  try {
-    res = await fetch(`${normalizeEndpoint(endpoint)}/chat/completions`, {
-      method: 'POST',
-      redirect: 'error',
-      signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]),
-      headers: {
-        'Content-Type': 'application/json',
-        ...(key ? { Authorization: `Bearer ${key}` } : {})
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: true,
-        ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {})
+  const base = normalizeEndpoint(endpoint)
+  const send = async (withUsage: boolean): Promise<Response> => {
+    try {
+      return await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(key ? { Authorization: `Bearer ${key}` } : {})
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          ...(withUsage ? { stream_options: { include_usage: true } } : {}),
+          ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {})
+        })
       })
-    })
-  } catch (e) {
-    if (signal.aborted) throw new Error('요청을 취소했습니다.')
-    if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'))
-      throw new Error('응답 시간이 초과되었습니다. 다시 시도해 주세요.')
-    throw new Error(
-      '로컬 API에 연결할 수 없습니다. OpenAI compatible API 실행과 endpoint를 확인해 주세요.'
-    )
+    } catch (e) {
+      if (signal.aborted) throw new Error('요청을 취소했습니다.')
+      if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'))
+        throw new Error('응답 시간이 초과되었습니다. 다시 시도해 주세요.')
+      throw new Error(
+        '로컬 API에 연결할 수 없습니다. OpenAI compatible API 실행과 endpoint를 확인해 주세요.'
+      )
+    }
+  }
+  let res = await send(!noUsageOption.has(base))
+  if (res.status === 400 && !noUsageOption.has(base)) {
+    noUsageOption.add(base)
+    await res.body?.cancel()
+    res = await send(false)
   }
   if (!res.ok) throw statusError(res.status)
   if (!res.body) throw new Error('응답 스트림이 없습니다.')
@@ -96,6 +107,7 @@ export async function streamChat(
     decoder = new TextDecoder()
   let buffer = '',
     completed = false
+  let usage: { input: number; output: number } | null = null
   const event = (block: string): void => {
     const data = block
       .split('\n')
@@ -111,6 +123,7 @@ export async function streamChat(
       error?: unknown
       model?: string
       choices?: { delta?: { content?: string }; finish_reason?: string | null }[]
+      usage?: { prompt_tokens?: number; completion_tokens?: number } | null
     }
     try {
       item = JSON.parse(data)
@@ -121,6 +134,11 @@ export async function streamChat(
       throw new Error(
         '프록시가 추론 오류를 반환했습니다. OpenAI compatible API에서 연결 상태를 확인해 주세요.'
       )
+    if (item.usage && typeof item.usage === 'object')
+      usage = {
+        input: Number(item.usage.prompt_tokens) || 0,
+        output: Number(item.usage.completion_tokens) || 0
+      }
     const choice = item.choices?.[0]
     if (typeof choice?.delta?.content === 'string') delta(choice.delta.content, item.model)
     if (choice?.finish_reason) {
@@ -149,4 +167,5 @@ export async function streamChat(
     reader.releaseLock()
   }
   if (!completed) throw new Error('완료 신호 없이 연결이 끊겼습니다. 부분 답변을 저장했습니다.')
+  return { usage }
 }

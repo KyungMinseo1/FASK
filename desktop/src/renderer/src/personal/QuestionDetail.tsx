@@ -6,6 +6,7 @@ import CopyButton from './CopyButton'
 import TurnNav from './TurnNav'
 import ReferenceChips from './ReferenceChips'
 import { Icon } from './ToolbarIcons'
+import ProfileAvatar from './ProfileAvatar'
 import { useApi } from './api'
 import { loadAttachment } from './attachment-cache'
 import { dateLabel } from './common'
@@ -431,7 +432,18 @@ function TurnView({
   }, [t.sent, expanded])
   return (
     <section className={`detail-turn${focused ? ' concept-focus' : ''}`} data-turn-id={t.id}>
-      <small className="turn-label">{tr('질문 {{n}}', { n: index + 1 })}</small>
+      <div className="turn-head">
+        <small className="turn-label">{tr('질문 {{n}}', { n: index + 1 })}</small>
+        {t.author && (
+          <span className="turn-author">
+            <ProfileAvatar avatar={t.author.avatar} name={t.author.name} size={16} />
+            <b>{t.author.name}</b>
+            <small>
+              {t.author.mobile ? tr('{{device}}에 연결된 휴대폰', { device: t.author.device }) : t.author.device}
+            </small>
+          </span>
+        )}
+      </div>
       <p
         ref={questionRef}
         className={`turn-question${expanded ? ' expanded' : clamped ? ' clamped' : ''}`}

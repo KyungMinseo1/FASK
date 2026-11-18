@@ -1,0 +1,262 @@
+import { useEffect, useState } from 'react'
+import type { LockState, ProfileMergeInfo, Snapshot } from '../../../preload/personal'
+import { AVATAR_COLORS, AVATAR_STYLES, type AvatarSpec } from '../../../shared/avatar'
+import { useT } from '../../../shared/i18n/react'
+import ProfileAvatar from './ProfileAvatar'
+import UsageHeatmap from './UsageHeatmap'
+import { Icon } from './ToolbarIcons'
+import { errorText } from './common'
+
+type Section = 'profile' | 'lock' | 'merge'
+
+/** Full-page profile screen: name and picture, token usage, PIN lock, and pending profile merge. */
+export default function ProfilePage({
+  data,
+  onClose,
+  onOpenDevices
+}: {
+  data: Snapshot
+  onClose: () => void
+  onOpenDevices: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const [name, setName] = useState(data.profile.name),
+    [avatar, setAvatar] = useState<AvatarSpec>(data.profile.avatar),
+    [lock, setLock] = useState<LockState | null>(null),
+    [merge, setMerge] = useState<ProfileMergeInfo | null>(null),
+    [pins, setPins] = useState({ current: '', next: '', confirm: '' }),
+    [pinMode, setPinMode] = useState<'change' | 'remove' | null>(null),
+    [busy, setBusy] = useState(false),
+    [status, setStatus] = useState<{ section: Section; text: string; error: boolean } | null>(null)
+  useEffect(() => {
+    const load = (): void => {
+      void window.fask
+        .lockState()
+        .then(setLock)
+        .catch(() => {})
+      void window.fask
+        .profileMergeInfo()
+        .then(setMerge)
+        .catch(() => {})
+    }
+    load()
+    return window.fask.onChanged(load)
+  }, [])
+  const act = async (section: Section, fn: () => Promise<void>, done: string): Promise<void> => {
+    setBusy(true)
+    setStatus(null)
+    try {
+      await fn()
+      setStatus({ section, text: done, error: false })
+    } catch (e) {
+      setStatus({ section, text: errorText(e), error: true })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const pinField = (field: keyof typeof pins, label: string): React.JSX.Element => (
+    <label>
+      {t(label)}
+      <input
+        type="password"
+        inputMode="numeric"
+        autoComplete="off"
+        maxLength={12}
+        value={pins[field]}
+        onChange={(e) => setPins((p) => ({ ...p, [field]: e.target.value.replace(/\D/g, '') }))}
+      />
+    </label>
+  )
+  const statusOf = (section: Section): React.JSX.Element | null =>
+    status?.section === section && status.text ? (
+      <p className={status.error ? 'error' : undefined} role="status">
+        {status.text}
+      </p>
+    ) : null
+  const mismatch = pins.next !== pins.confirm
+  const trimmed = name.trim()
+  return (
+    <div className="settings-page profile-page">
+      <aside className="settings-nav">
+        <button className="settings-back" onClick={onClose}>
+          <Icon name="back" />
+          {t('돌아가기')}
+        </button>
+        <h2>{t('프로필')}</h2>
+      </aside>
+      <section className="settings-main" aria-label={t('프로필')}>
+        <div className="settings-scroll">
+          <div className="settings-body">
+            <h2>{t('프로필')}</h2>
+            <section>
+              <h3>{t('프로필')}</h3>
+              <div className="profile-hero">
+                <ProfileAvatar avatar={avatar} name={trimmed || data.profile.name} size={96} />
+                <small>{t('이 PC: {{device}}', { device: data.device })}</small>
+              </div>
+              <label>
+                {t('이름')}
+                <input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <div className="profile-styles" role="group" aria-label={t('스타일')}>
+                {AVATAR_STYLES.map((style) => (
+                  <button
+                    key={style}
+                    type="button"
+                    aria-pressed={avatar.style === style}
+                    className={avatar.style === style ? 'active' : ''}
+                    onClick={() => setAvatar((a) => ({ ...a, style }))}
+                  >
+                    <ProfileAvatar avatar={{ ...avatar, style }} name={trimmed || data.profile.name} size={40} />
+                  </button>
+                ))}
+              </div>
+              <div className="profile-colors" role="group" aria-label={t('배경색')}>
+                {AVATAR_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={color}
+                    aria-pressed={avatar.background === color}
+                    className={avatar.background === color ? 'active' : ''}
+                    style={{ background: color }}
+                    onClick={() => setAvatar((a) => ({ ...a, background: color }))}
+                  />
+                ))}
+              </div>
+              <div className="button-row">
+                <button type="button" onClick={() => setAvatar((a) => ({ ...a, seed: crypto.randomUUID() }))}>
+                  {t('다시 뽑기')}
+                </button>
+                <button
+                  className="primary"
+                  disabled={busy || !trimmed}
+                  onClick={() =>
+                    void act('profile', () => window.fask.profileUpdate({ name: trimmed, avatar }), t('저장했습니다.'))
+                  }
+                >
+                  {t('저장')}
+                </button>
+              </div>
+              {statusOf('profile')}
+            </section>
+            <section>
+              <h3>{t('사용량')}</h3>
+              <UsageHeatmap />
+            </section>
+            <section>
+              <h3>{t('잠금')}</h3>
+              <p>
+                {t(
+                  'PIN은 이 PC의 앱 화면과 모델·Jev 키를 잠급니다. 질문 기록 파일은 암호화되지 않으며, 연결된 기기는 잠긴 동안에도 공유된 기록을 볼 수 있습니다.'
+                )}
+              </p>
+              {lock && !lock.hasPin && (
+                <>
+                  {pinField('next', '새 PIN')}
+                  {pinField('confirm', 'PIN 확인')}
+                  <button
+                    disabled={busy || !pins.next || mismatch}
+                    onClick={() =>
+                      void act(
+                        'lock',
+                        async () => {
+                          await window.fask.setPin(undefined, pins.next)
+                          setPins({ current: '', next: '', confirm: '' })
+                        },
+                        t('PIN을 설정했습니다.')
+                      )
+                    }
+                  >
+                    {t('PIN 설정')}
+                  </button>
+                </>
+              )}
+              {lock?.hasPin && (
+                <>
+                  <div className="button-row">
+                    <button disabled={busy} onClick={() => void act('lock', () => window.fask.lock(), '')}>
+                      <Icon name="lock" />
+                      {t('지금 잠그기')}
+                    </button>
+                    <button
+                      disabled={busy}
+                      aria-pressed={pinMode === 'change'}
+                      onClick={() => setPinMode(pinMode === 'change' ? null : 'change')}
+                    >
+                      {t('PIN 변경')}
+                    </button>
+                    <button
+                      className="danger"
+                      disabled={busy}
+                      aria-pressed={pinMode === 'remove'}
+                      onClick={() => setPinMode(pinMode === 'remove' ? null : 'remove')}
+                    >
+                      {t('PIN 제거')}
+                    </button>
+                  </div>
+                  {pinMode && pinField('current', '현재 PIN')}
+                  {pinMode === 'change' && (
+                    <>
+                      {pinField('next', '새 PIN')}
+                      {pinField('confirm', 'PIN 확인')}
+                    </>
+                  )}
+                  {pinMode && (
+                    <button
+                      disabled={busy || !pins.current || (pinMode === 'change' && (!pins.next || mismatch))}
+                      onClick={() =>
+                        void act(
+                          'lock',
+                          async () => {
+                            if (pinMode === 'change') await window.fask.setPin(pins.current, pins.next)
+                            else await window.fask.removePin(pins.current)
+                            setPins({ current: '', next: '', confirm: '' })
+                            setPinMode(null)
+                          },
+                          pinMode === 'change' ? t('PIN을 바꿨습니다.') : t('PIN을 제거했습니다.')
+                        )
+                      }
+                    >
+                      {pinMode === 'change' ? t('PIN 변경') : t('PIN 제거')}
+                    </button>
+                  )}
+                </>
+              )}
+              {pins.confirm && mismatch && <small>{t('두 PIN이 다릅니다.')}</small>}
+              {statusOf('lock')}
+            </section>
+            {merge && (
+              <section>
+                <h3>{t('프로필 합치기')}</h3>
+                <p>
+                  {t(
+                    '이번 버전부터 PC마다 프로필이 하나입니다. 다른 프로필({{names}})의 워크스페이스 {{workspaces}}개와 질문 {{questions}}개를 지금 프로필로 합칠 수 있습니다. 합치면 그 프로필의 설정과 API 키는 삭제되고, 합치기 전 데이터는 자동으로 백업됩니다.',
+                    {
+                      names: merge.others.map((o) => o.name).join(', '),
+                      workspaces: merge.others.reduce((n, o) => n + o.workspaces, 0),
+                      questions: merge.others.reduce((n, o) => n + o.questions, 0)
+                    }
+                  )}
+                </p>
+                <button
+                  disabled={busy}
+                  onClick={() => void act('merge', () => window.fask.profileMerge(), t('합쳤습니다.'))}
+                >
+                  {t('합치기')}
+                </button>
+                {statusOf('merge')}
+              </section>
+            )}
+            <section>
+              <button onClick={onOpenDevices}>
+                <Icon name="devices" />
+                {t('기기 연결 관리')}
+              </button>
+            </section>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}

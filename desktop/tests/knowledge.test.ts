@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto'
 import { crc32, inflateRawSync } from 'node:zlib'
 import { PersonalStore } from '../src/main/personal-store'
 import { KnowledgeExtractor, skippedSubjects, type Chat } from '../src/main/knowledge-extract'
+import { SHARE_REVOKED, type Executor } from '../src/main/compute'
+import { defaultAvatar } from '../src/shared/avatar'
 import { buildExport, zip } from '../src/main/knowledge-export'
 import { EXPORT_DEFAULTS, exportOptions } from '../src/shared/export'
 import { PARENT_LEVEL } from '../src/main/personal-backup'
@@ -245,6 +247,132 @@ test('extraction: leaving a question runs only that client’s question, not one
       mock.timers.reset()
       extractor.close()
     }
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/** Author of a turn a linked PC (grant id `px` on this PC) asked. */
+const PEER_AUTHOR: NonNullable<Turn['author']> = {
+  profileId: 'pc-x',
+  name: '연결 PC',
+  avatar: defaultAvatar('pc-x'),
+  device: 'laptop',
+  peer: 'px'
+}
+const PX: Executor = { kind: 'peer', peerId: 'px', ticket: 'a'.repeat(24) }
+
+test('extraction (추출 대기열): a linked PC’s turns wait for its resources; this PC extracts only its own', async () => {
+  const { dir, store, put } = setup()
+  try {
+    const profile = store.active
+    put('q', [
+      kTurn('t0', '고유값이 뭐야?', LONG),
+      { ...kTurn('t1', '고유벡터는?', LONG), author: PEER_AUTHOR },
+      kTurn('t2', '대각화는?', LONG)
+    ])
+    const calls: { executor: Executor; turns: number[] }[] = []
+    const chat: Chat = async (_p, executor, _i, input) => {
+      calls.push({ executor, turns: (JSON.parse(input).turns as { index: number }[]).map((t) => t.index) })
+      return '{"concepts":[],"relations":[]}'
+    }
+    const extractor = new KnowledgeExtractor(store, chat, () => {})
+    await extractor.run(profile, 'q')
+    await extractor.idle()
+    assert.deepEqual(calls.map((c) => c.executor.kind), ['local', 'local'])
+    assert.deepEqual(calls.map((c) => c.turns), [[0], [2]], 'the linked PC’s turn is never sent locally')
+    let q = store.record<Question>('question', 'q')
+    assert.deepEqual(q.deferredTurns, [{ turnId: 't1', peer: 'px' }])
+    assert.equal(q.extractedTurns, 3)
+
+    const py: Executor = { kind: 'peer', peerId: 'py', ticket: 'b'.repeat(24) }
+    assert.equal(extractor.startFor(profile, 'q', py), 'blocked')
+    assert.equal(await extractor.runFor(profile, 'q', py), 'blocked')
+    assert.equal(calls.length, 2, 'another PC has nothing to extract here')
+
+    assert.equal(await extractor.runFor(profile, 'q', PX), 'done')
+    assert.equal(calls.length, 3)
+    assert.deepEqual(calls[2], { executor: PX, turns: [1] })
+    q = store.record<Question>('question', 'q')
+    assert.equal(q.deferredTurns, undefined)
+    assert.equal(q.extractedTurns, 3)
+
+    // A new turn of that PC is queued again; dropping its queue (revoked link) ends it unextracted.
+    store.put('question', profile, { ...q, turns: [...q.turns, { ...kTurn('t3', '고유공간은?', LONG), author: PEER_AUTHOR }] })
+    await extractor.run(profile, 'q')
+    await extractor.idle()
+    assert.equal(calls.length, 3)
+    assert.deepEqual(store.record<Question>('question', 'q').deferredTurns, [{ turnId: 't3', peer: 'px' }])
+    extractor.dropDeferred(profile, 'px', new Set(['other-workspace']))
+    assert.equal(store.record<Question>('question', 'q').deferredTurns?.length, 1, 'another workspace keeps it')
+    extractor.dropDeferred(profile, 'px', null)
+    assert.equal(store.record<Question>('question', 'q').deferredTurns, undefined)
+    assert.equal(extractor.startFor(profile, 'q', PX), 'blocked')
+    assert.equal(calls.length, 3)
+    extractor.close()
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('share revoke (해제 시 진행 작업 중단): a linked PC’s tidy job and extraction stop and save nothing', async () => {
+  const { dir, store, project, put } = setup()
+  try {
+    const profile = store.active
+    const ws = project.workspaceId
+    store.createConcept(profile, ws, { name: '중심극한정리', level: 'concept', manual: true })
+    let allowed = true
+    const pending: { resolve: (s: string) => void; signal: AbortSignal }[] = []
+    const tidy = new KnowledgeExtractor(
+      store,
+      (_p, _e, _i, _input, signal) => {
+        const { promise, resolve } = Promise.withResolvers<string>()
+        pending.push({ resolve, signal })
+        return promise
+      },
+      () => {},
+      () => allowed
+    )
+    tidy.tidyStart(profile, ws, PX)
+    await settle()
+    assert.equal(pending.length, 1)
+    tidy.abortPeer('px', new Set(['other-workspace']))
+    assert.equal(tidy.tidyStatus(profile, ws)?.state, 'running', 'another workspace’s revoke leaves it')
+    tidy.abortPeer('px', new Set([ws]))
+    assert.equal(pending[0].signal.aborted, true)
+    let status = tidy.tidyStatus(profile, ws)
+    assert.equal(status?.state, 'failed')
+    assert.equal(status?.error, SHARE_REVOKED)
+    assert.equal(status?.proposal, null)
+    // A late reply from the linked PC keeps nothing.
+    pending[0].resolve(JSON.stringify({ merges: [], levels: [], parents: [], assign: [] }))
+    await settle()
+    status = tidy.tidyStatus(profile, ws)
+    assert.equal(status?.state, 'failed')
+    assert.equal(status?.proposal, null)
+    tidy.close()
+
+    put('q', [{ ...kTurn('t0', '고유값이 뭐야?', LONG), author: PEER_AUTHOR }])
+    const extractor = new KnowledgeExtractor(
+      store,
+      async () => {
+        allowed = false
+        return JSON.stringify({
+          concepts: [{ name: '고유값', level: 'concept', role: 'focus', parent: null, turns: [0], confidence: 0.9 }],
+          relations: []
+        })
+      },
+      () => {},
+      () => allowed
+    )
+    allowed = true
+    await assert.rejects(extractor.runFor(profile, 'q', PX), { message: SHARE_REVOKED })
+    const q = store.record<Question>('question', 'q')
+    assert.deepEqual(q.conceptIds, [])
+    assert.equal(q.extractedTurns, 0)
+    extractor.close()
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })

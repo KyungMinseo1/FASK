@@ -1,14 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import type { Habit, HabitInput, HabitList, HabitSource, Question, Workspace } from '../preload/personal'
+import type { Habit, HabitInput, HabitLine, HabitList, HabitSource, Project, Question } from '../preload/personal'
 import type { ExtractedHabit } from './knowledge-response'
 import { normalizeName } from './knowledge-search'
 import type { PersonalStore } from './personal-store'
 
 /**
  * Answer habits: format rules learned from the user's feedback ("앞으로 표로", "말고 짧게 다시")
- * and applied to later answers. Detection rides on the extraction call; only a habit the user
- * asked for explicitly ("앞으로", "항상"…, checked locally in the user's own words) turns on by
- * itself, everything else waits as a proposal for the user's decision. `count` never activates.
+ * and applied to later answers. Detection is its own model call on the asking profile's PC
+ * (habit-detect.ts) over that profile's turns only; only a habit the user asked for explicitly
+ * ("앞으로", "항상"…, checked locally in the user's own words) turns on by itself, everything else
+ * waits as a proposal for the user's decision. `count` never activates. A habit applies to every
+ * project (scope 'profile') or to one project (scope 'project', identified by the owning PC's
+ * profile id and the project id); a project habit wins over a profile habit only through its
+ * explicit `overrides`.
  */
 
 /** Format words; a turn needs one of these to be sent to the model as feedback. */
@@ -74,16 +78,20 @@ export function whenMatches(h: Habit, text: string): number {
   return h.when.split(', ').filter((k) => haystack.includes(normalizeName(k))).length
 }
 
-/** Feedback turns among [from, end): finished turns passing the gate, the latest HABIT_FEEDBACK_MAX. */
+/**
+ * Feedback turns among [from, end): finished turns of `own` passing the gate, the latest
+ * HABIT_FEEDBACK_MAX.
+ */
 export function feedbackTurns(
   q: Question,
   from: number,
-  end: number
+  end: number,
+  own: (t: Question['turns'][number]) => boolean = () => true
 ): { turn: number; question: string; previousAnswer?: string }[] {
   const out: { turn: number; question: string; previousAnswer?: string }[] = []
   for (let i = from; i < end; i++) {
     const t = q.turns[i]
-    if (!t || (t.status !== 'completed' && t.status !== 'saved')) continue
+    if (!t || (t.status !== 'completed' && t.status !== 'saved') || !own(t)) continue
     const text = (t.refined || t.raw).trim()
     if (!isHabitFeedback(text)) continue
     const previous = q.turns[i - 1]
@@ -101,10 +109,10 @@ export function feedbackTurns(
 const live = (store: PersonalStore, profile: string): Habit[] =>
   store.list<Habit>('habit', profile).filter((h) => !h.invalidatedAt)
 const newestFirst = (a: Habit, b: Habit): number => b.updatedAt.localeCompare(a.updatedAt)
-/** Identity of a habit's meaning: normalized rule, scope and workspace. */
-const habitKey = (rule: string, scope: Habit['scope'], workspaceId: string | null): string =>
-  `${normalizeName(rule)}\u0000${scope}\u0000${scope === 'workspace' ? workspaceId : ''}`
-const keyOf = (h: Habit): string => habitKey(h.rule, h.scope, h.workspaceId)
+/** Identity of a habit's meaning: normalized rule, scope and (for a project habit) its project. */
+const habitKey = (rule: string, scope: Habit['scope'], projectOwner: string | null, projectId: string | null): string =>
+  `${normalizeName(rule)}\u0000${scope}\u0000${scope === 'project' ? `${projectOwner}/${projectId}` : ''}`
+const keyOf = (h: Habit): string => habitKey(h.rule, h.scope, h.projectOwner, h.projectId)
 
 function findLive(store: PersonalStore, profile: string, id: string): Habit {
   const h = live(store, profile).find((x) => x.id === id)
@@ -138,12 +146,15 @@ export function activate(store: PersonalStore, profile: string, h: Habit): void 
  * the source and a count but keeps its status, except a proposal the user explicitly asked for,
  * which turns on. A new one is active when explicit, else a proposal unless HABIT_PROPOSED_MAX
  * proposals are already waiting. `explicit` holds only when a cited turn has an explicit word.
+ * A conflict whose scope the user left unclear (`scopeClear` false) is only proposed, whatever
+ * `explicit` says, and changes no existing habit until the user turns it on. `overrides` is kept
+ * only as the model gave it (a live profile habit); it is never filled in locally.
  */
 export function applyDetected(
   store: PersonalStore,
   profile: string,
   items: ExtractedHabit[],
-  ctx: { questionId: string; workspaceId: string; turns: Question['turns'] }
+  ctx: { questionId: string; project: { owner: string; id: string }; turns: Question['turns'] }
 ): void {
   for (const item of items) {
     const now = new Date().toISOString()
@@ -151,33 +162,42 @@ export function applyDetected(
       questionId: ctx.questionId,
       turnIds: [...new Set(item.turns.flatMap((i) => ctx.turns[i]?.id ?? []))]
     }
+    const unclear = item.scopeClear === false
     const explicit =
       item.explicit &&
       item.turns.some((i) => {
         const t = ctx.turns[i]
         return !!t && HABIT_EXPLICIT.test(t.refined || t.raw)
       })
-    const workspaceId = item.scope === 'workspace' ? ctx.workspaceId : null
+    const projectOwner = item.scope === 'project' ? ctx.project.owner : null
+    const projectId = item.scope === 'project' ? ctx.project.id : null
     const habits = live(store, profile)
-    const key = habitKey(item.rule, item.scope, workspaceId)
+    const key = habitKey(item.rule, item.scope, projectOwner, projectId)
     const known =
       (item.same ? habits.find((h) => h.id === item.same) : undefined) ?? habits.find((h) => keyOf(h) === key)
     if (known) {
       const next: Habit = { ...known, sources: withSource(known.sources, source), count: known.count + 1, updatedAt: now }
       // The user's own lasting request turns a waiting proposal on, still unconfirmed (reviewedAt null).
-      if (known.status === 'proposed' && explicit) activate(store, profile, { ...next, origin: 'explicit' })
+      if (known.status === 'proposed' && explicit && !unclear) activate(store, profile, { ...next, origin: 'explicit' })
       else store.put('habit', profile, next)
       continue
     }
-    if (!explicit && habits.filter((h) => h.status === 'proposed').length >= HABIT_PROPOSED_MAX) continue
+    const on = explicit && !unclear
+    if (!on && !unclear && habits.filter((h) => h.status === 'proposed').length >= HABIT_PROPOSED_MAX) continue
+    const overrides =
+      !unclear && item.scope === 'project' && habits.some((h) => h.id === item.overrides && h.scope === 'profile')
+        ? item.overrides
+        : null
     const habit: Habit = {
       id: randomUUID(),
       rule: item.rule,
       when: item.when,
       scope: item.scope,
-      workspaceId,
-      status: explicit ? 'active' : 'proposed',
-      origin: explicit ? 'explicit' : 'detected',
+      projectOwner,
+      projectId,
+      overrides,
+      status: on ? 'active' : 'proposed',
+      origin: on ? 'explicit' : 'detected',
       sources: [source],
       count: 1,
       replaces: item.replaces,
@@ -186,19 +206,62 @@ export function applyDetected(
       updatedAt: now,
       invalidatedAt: null
     }
-    if (explicit) activate(store, profile, habit)
+    if (on) activate(store, profile, habit)
     else store.put('habit', profile, habit)
   }
 }
 
+/** Rule categories two habits may conflict in; only an ordering hint for choosing `overrides`. */
+const HABIT_CATEGORIES: Record<string, RegExp> = {
+  length: /짧게|길게|간단히|간단하게|자세히|자세하게|요약|concise|shorter|longer|brief|detail/i,
+  layout: /표로|표 형식|비교표|목록|번호|줄바꿈|table|bullet|list/i,
+  notation: /latex|수식|공식|코드 ?블록|code ?block|math/i,
+  tone: /말투|반말|존댓말|tone/i,
+  language: /한국어로|영어로|in english|in korean/i
+}
+
+/**
+ * Active profile habits a project habit without `overrides` may conflict with: a shared rule
+ * category and either both every-answer rules or a shared situation keyword. Never applied
+ * automatically ("설명을 자세하게" and "예시를 자세하게" share a category without conflicting).
+ */
+export function overrideCandidates(h: Habit, globals: Habit[]): string[] {
+  if (h.scope !== 'project' || h.overrides !== null) return []
+  const categories = Object.values(HABIT_CATEGORIES).filter((re) => re.test(h.rule))
+  if (!categories.length) return []
+  const keywords = new Set(h.when ? h.when.split(', ').map(normalizeName) : [])
+  return globals
+    .filter(
+      (g) =>
+        g.status === 'active' &&
+        g.scope === 'profile' &&
+        !g.invalidatedAt &&
+        categories.some((re) => re.test(g.rule)) &&
+        ((!h.when && !g.when) || g.when.split(', ').some((k) => keywords.has(normalizeName(k))))
+    )
+    .map((g) => g.id)
+}
+
 const STATUS_ORDER: Record<Habit['status'], number> = { proposed: 0, active: 1, rejected: 2 }
 
-export function listHabits(store: PersonalStore, profile: string): HabitList {
-  return {
-    enabled: store.settings(profile).answerHabits,
-    habits: live(store, profile).sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || newestFirst(a, b)),
-    workspaces: store.list<Workspace>('workspace', profile).map((w) => ({ id: w.id, name: w.name }))
+/**
+ * The habit screen. `projects` (this PC's projects plus the visible remote ones) is passed through
+ * for the scope picker and labels.
+ */
+export function listHabits(
+  store: PersonalStore,
+  profile: string,
+  projects: { owner: string; id: string; name: string }[]
+): HabitList {
+  const habits = live(store, profile).sort(
+    (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || newestFirst(a, b)
+  )
+  const candidates: Record<string, string[]> = {}
+  for (const h of habits) {
+    const ids = overrideCandidates(h, habits)
+    if (ids.length) candidates[h.id] = ids
   }
+  return { enabled: store.settings(profile).answerHabits, habits, projects, overrideCandidates: candidates }
 }
 
 export function decideHabit(store: PersonalStore, profile: string, id: string, decision: 'active' | 'rejected'): void {
@@ -208,8 +271,16 @@ export function decideHabit(store: PersonalStore, profile: string, id: string, d
   else store.put('habit', profile, { ...h, status: 'rejected' })
 }
 
-/** A user-written habit: added active, or an existing one's rule, situation and scope edited. */
-export function saveHabit(store: PersonalStore, profile: string, input: HabitInput): string {
+/**
+ * A user-written habit: added active, or an existing one's rule, situation and scope edited. A
+ * project habit names a project `projectExists` knows; `overrides` is only what the user chose.
+ */
+export function saveHabit(
+  store: PersonalStore,
+  profile: string,
+  input: HabitInput,
+  projectExists: (owner: string, id: string) => boolean
+): string {
   function invalid(): never {
     throw new Error('습관 내용이 잘못되었습니다.')
   }
@@ -218,31 +289,55 @@ export function saveHabit(store: PersonalStore, profile: string, input: HabitInp
   if (!rule || rule.length > RULE_MAX) invalid()
   const when = normalizeWhen(input.when)
   if (input.when.trim() && !when) invalid()
-  if (input.scope !== 'profile' && input.scope !== 'workspace') invalid()
-  let workspaceId: string | null = null
-  if (input.scope === 'workspace') {
-    if (typeof input.workspaceId !== 'string') invalid()
-    try {
-      store.record('workspace', input.workspaceId, profile)
-    } catch {
-      invalid()
-    }
-    workspaceId = input.workspaceId
-  }
+  if (input.scope !== 'profile' && input.scope !== 'project') invalid()
   const id = input.id === undefined ? undefined : String(input.id)
-  const key = habitKey(rule, input.scope, workspaceId)
-  if (live(store, profile).some((h) => h.id !== id && keyOf(h) === key)) throw new Error('같은 습관이 이미 있습니다.')
+  const habits = live(store, profile)
+  let projectOwner: string | null = null
+  let projectId: string | null = null
+  let overrides: string | null = null
+  if (input.scope === 'project') {
+    if (
+      typeof input.projectOwner !== 'string' ||
+      typeof input.projectId !== 'string' ||
+      !projectExists(input.projectOwner, input.projectId)
+    )
+      invalid()
+    projectOwner = input.projectOwner
+    projectId = input.projectId
+    if (input.overrides !== null && input.overrides !== undefined) {
+      if (!habits.some((h) => h.id === input.overrides && h.id !== id && h.scope === 'profile')) invalid()
+      overrides = input.overrides
+    }
+  } else if (input.overrides !== null && input.overrides !== undefined) invalid()
+  const key = habitKey(rule, input.scope, projectOwner, projectId)
+  if (habits.some((h) => h.id !== id && keyOf(h) === key)) throw new Error('같은 습관이 이미 있습니다.')
   const now = new Date().toISOString()
   if (id !== undefined) {
     const h = findLive(store, profile, id)
-    return store.put('habit', profile, { ...h, rule, when, scope: input.scope, workspaceId, updatedAt: now, reviewedAt: now })
+    // A habit that stops being profile-wide can no longer be overridden.
+    if (input.scope === 'project')
+      for (const other of habits)
+        if (other.overrides === id) store.put('habit', profile, { ...other, overrides: null })
+    return store.put('habit', profile, {
+      ...h,
+      rule,
+      when,
+      scope: input.scope,
+      projectOwner,
+      projectId,
+      overrides,
+      updatedAt: now,
+      reviewedAt: now
+    })
   }
   return store.put<Habit>('habit', profile, {
     id: randomUUID(),
     rule,
     when,
     scope: input.scope,
-    workspaceId,
+    projectOwner,
+    projectId,
+    overrides,
     status: 'active',
     origin: 'manual',
     sources: [],
@@ -256,45 +351,91 @@ export function saveHabit(store: PersonalStore, profile: string, input: HabitInp
 }
 
 /**
- * Active habits for an answer in `workspaceId`. Habits are few and short, so all of them go when
- * they fit and the answer model judges the situation from the bracketed keywords. Only a short
- * budget ranks them: up to HABIT_ALWAYS_MAX every-answer rules first, then by keywords found in
- * `text`, count and recency; one that does not fit is skipped for the next.
+ * Active habits for an answer in `project` (owning PC's profile id and project id). Habits are
+ * few and short, so all of them go when they fit and the answer model judges the situation from
+ * the bracketed keywords. The project's own habits rank first, and a profile habit is left out
+ * only when an included project habit explicitly `overrides` it; other possible conflicts are
+ * settled by habitPrompt's section order. A short budget ranks the rest: up to HABIT_ALWAYS_MAX
+ * every-answer rules, then keywords found in `text`, count and recency; one that does not fit is
+ * skipped for the next.
  */
-export function recallHabits(store: PersonalStore, p: { profile: string; workspaceId: string; text: string }): Habit[] {
+export function recallHabits(
+  store: PersonalStore,
+  p: { profile: string; project: { owner: string; id: string }; text: string }
+): Habit[] {
   const ranked = live(store, p.profile)
-    .filter((h) => h.status === 'active' && (h.scope === 'profile' || h.workspaceId === p.workspaceId))
+    .filter(
+      (h) =>
+        h.status === 'active' &&
+        (h.scope === 'profile' || (h.projectOwner === p.project.owner && h.projectId === p.project.id))
+    )
     .map((h) => ({ h, matches: whenMatches(h, p.text) }))
     .sort((a, b) => b.matches - a.matches || b.h.count - a.h.count || newestFirst(a.h, b.h))
-  const always = new Set(ranked.filter(({ h }) => !h.when).slice(0, HABIT_ALWAYS_MAX).map(({ h }) => h.id))
-  // Array sort is stable: within each tier (first always rules, then the rest) the ranking above holds.
-  ranked.sort((a, b) => Number(!always.has(a.h.id)) - Number(!always.has(b.h.id)))
+  const tier = (h: Habit): number => (h.scope === 'project' ? 0 : 1)
+  const always = new Set(
+    [...ranked]
+      .sort((a, b) => tier(a.h) - tier(b.h))
+      .filter(({ h }) => !h.when)
+      .slice(0, HABIT_ALWAYS_MAX)
+      .map(({ h }) => h.id)
+  )
+  // Array sort is stable: project habits, then always rules, then the rest, each in the ranking above.
+  ranked.sort(
+    (a, b) => tier(a.h) - tier(b.h) || Number(!always.has(a.h.id)) - Number(!always.has(b.h.id))
+  )
   const out: Habit[] = []
+  const overridden = new Set<string>()
   let used = 0
   for (const { h } of ranked) {
+    if (overridden.has(h.id)) continue
     const size = h.rule.length + h.when.length + 4
     if (used + size > HABIT_PROMPT_CHARS) continue
     used += size
     out.push(h)
+    if (h.overrides) overridden.add(h.overrides)
   }
   return out
 }
 
-/** The active habits as a portable file; a workspace habit names its workspace. */
+/** Habit lines for the answer prompt. */
+export function toLines(habits: Habit[]): HabitLine[] {
+  return habits.map((h) => ({ rule: h.rule, when: h.when, project: h.scope === 'project' }))
+}
+
+/**
+ * The `{{habits}}` text of the answer-habits prompt: project rules first under a heading saying
+ * they win a conflict, then the every-project rules; plain lines when there is no project rule.
+ */
+export function habitPrompt(lines: HabitLine[], lang: 'ko' | 'en'): string {
+  const line = (l: HabitLine): string => `- ${l.rule}${l.when ? ` [${l.when}]` : ''}`
+  const project = lines.filter((l) => l.project).map(line)
+  const rest = lines.filter((l) => !l.project).map(line)
+  if (!project.length) return rest.join('\n')
+  const [own, every] =
+    lang === 'ko'
+      ? ['이 프로젝트 전용 규칙 (아래 규칙과 부딪히면 이 규칙을 따른다):', '모든 프로젝트 규칙:']
+      : ['Rules for this project only (they win over any rule below they conflict with):', 'Rules for every project:']
+  return [own, ...project, ...(rest.length ? [every, ...rest] : [])].join('\n')
+}
+
+/**
+ * The active habits as a portable file. A habit of one of this PC's projects names its project;
+ * a habit of another PC's project stays here (it means nothing without that PC).
+ */
 export function habitFile(store: PersonalStore, profile: string): string {
-  const names = new Map(store.list<Workspace>('workspace', profile).map((w) => [w.id, w.name]))
+  const names = new Map(store.list<Project>('project', profile).map((p) => [p.id, p.name]))
   return JSON.stringify(
     {
       format: 'fask-habits',
       version: 1,
       exportedAt: new Date().toISOString(),
       habits: live(store, profile)
-        .filter((h) => h.status === 'active')
-        .map((h) => ({
-          rule: h.rule,
-          when: h.when,
-          workspace: h.scope === 'workspace' ? (names.get(h.workspaceId ?? '') ?? null) : null
-        }))
+        .filter((h) => h.status === 'active' && (h.scope === 'profile' || h.projectOwner === profile))
+        .flatMap((h): { rule: string; when: string; project: string | null }[] => {
+          if (h.scope === 'profile') return [{ rule: h.rule, when: h.when, project: null }]
+          const name = names.get(h.projectId ?? '')
+          return name === undefined ? [] : [{ rule: h.rule, when: h.when, project: name }]
+        })
     },
     null,
     2
@@ -303,7 +444,8 @@ export function habitFile(store: PersonalStore, profile: string): string {
 
 /**
  * Adds a habit file's habits as active. A malformed file is rejected whole; an invalid entry,
- * one naming a workspace this profile lacks, or one already present is skipped.
+ * one naming a project this PC lacks, or one already present is skipped. An older file's
+ * `workspace` field is ignored: its habit applies to every project.
  */
 export function importHabitFile(store: PersonalStore, profile: string, text: string): { added: number; skipped: number } {
   function bad(): never {
@@ -320,33 +462,34 @@ export function importHabitFile(store: PersonalStore, profile: string, text: str
   if (!f || typeof f !== 'object' || f.format !== 'fask-habits' || f.version !== 1) bad()
   const entries = f.habits
   if (!Array.isArray(entries) || entries.length > FILE_HABITS_MAX) bad()
-  const workspaces = store.list<Workspace>('workspace', profile)
+  const projects = store.list<Project>('project', profile)
   const keys = new Set(live(store, profile).map(keyOf))
   let added = 0,
     skipped = 0
   store.db.exec('BEGIN')
   try {
     for (const raw of entries as unknown[]) {
-      const e = raw as { rule?: unknown; when?: unknown; workspace?: unknown } | null
+      const e = raw as { rule?: unknown; when?: unknown; project?: unknown } | null
       const rule = e && typeof e === 'object' && typeof e.rule === 'string' ? e.rule.trim() : ''
       if (!rule || rule.length > RULE_MAX || typeof e?.when !== 'string') {
         skipped++
         continue
       }
-      let workspaceId: string | null = null
-      if (typeof e.workspace === 'string') {
-        const name = normalizeName(e.workspace)
-        workspaceId = workspaces.find((w) => normalizeName(w.name) === name)?.id ?? null
-        if (!workspaceId) {
+      let projectId: string | null = null
+      if (typeof e.project === 'string') {
+        const name = normalizeName(e.project)
+        projectId = projects.find((p) => normalizeName(p.name) === name)?.id ?? null
+        if (!projectId) {
           skipped++
           continue
         }
-      } else if (e.workspace !== null && e.workspace !== undefined) {
+      } else if (e.project !== null && e.project !== undefined) {
         skipped++
         continue
       }
-      const scope: Habit['scope'] = workspaceId ? 'workspace' : 'profile'
-      const key = habitKey(rule, scope, workspaceId)
+      const scope: Habit['scope'] = projectId ? 'project' : 'profile'
+      const projectOwner = projectId ? profile : null
+      const key = habitKey(rule, scope, projectOwner, projectId)
       if (keys.has(key)) {
         skipped++
         continue
@@ -358,7 +501,9 @@ export function importHabitFile(store: PersonalStore, profile: string, text: str
         rule,
         when: normalizeWhen(e.when),
         scope,
-        workspaceId,
+        projectOwner,
+        projectId,
+        overrides: null,
         status: 'active',
         origin: 'imported',
         sources: [],
@@ -382,12 +527,19 @@ export function importHabitFile(store: PersonalStore, profile: string, text: str
 const isIso = (v: unknown): v is string => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v))
 
 /**
- * Habits of a backup. Absent (older backups): none; not an array: null (corrupt backup). Habits
- * are secondary, so a malformed one, or one scoped to a workspace missing from the backup, is
- * dropped instead of failing the restore; sources keep only questions and turns present, and a
- * `replaces` pointing at a dropped habit becomes null. Duplicate ids keep the first.
+ * Habits of a backup made on the PC whose profile id is `owner` (null for backups before v4).
+ * Absent (older backups): none; not an array: null (corrupt backup). Habits are secondary, so a
+ * malformed one, or one of the owner's projects missing from the backup, is dropped instead of
+ * failing the restore; a habit of another PC's project passes as is. A former workspace habit
+ * becomes a profile habit. Sources keep only questions and turns present, and a `replaces` or
+ * `overrides` pointing at a dropped habit becomes null. Duplicate ids keep the first.
  */
-export function backupHabits(raw: unknown, workspaceIds: Set<string>, questions: Question[]): Habit[] | null {
+export function backupHabits(
+  raw: unknown,
+  projectIds: Set<string>,
+  questions: Question[],
+  owner: string | null
+): Habit[] | null {
   if (raw === undefined) return []
   if (!Array.isArray(raw)) return null
   const turns = new Map(questions.map((q) => [q.id, new Set(q.turns.map((t) => t.id))]))
@@ -395,7 +547,8 @@ export function backupHabits(raw: unknown, workspaceIds: Set<string>, questions:
   const kept: Habit[] = []
   for (const item of raw as unknown[]) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue
-    const h = item as Habit
+    const h = item as Omit<Habit, 'scope'> & { scope: unknown }
+    const project = h.scope === 'project'
     if (
       typeof h.id !== 'string' ||
       !h.id ||
@@ -408,8 +561,12 @@ export function backupHabits(raw: unknown, workspaceIds: Set<string>, questions:
       h.when.length > WHEN_MAX ||
       !['proposed', 'active', 'rejected'].includes(h.status) ||
       !['detected', 'explicit', 'manual', 'imported'].includes(h.origin) ||
-      (h.scope !== 'profile' && h.scope !== 'workspace') ||
-      (h.scope === 'workspace' && (typeof h.workspaceId !== 'string' || !workspaceIds.has(h.workspaceId))) ||
+      (h.scope !== 'profile' && h.scope !== 'workspace' && !project) ||
+      (project &&
+        (typeof h.projectOwner !== 'string' ||
+          typeof h.projectId !== 'string' ||
+          (h.projectOwner === owner && !projectIds.has(h.projectId)))) ||
+      (h.overrides !== undefined && h.overrides !== null && typeof h.overrides !== 'string') ||
       !Number.isInteger(h.count) ||
       h.count < 0 ||
       (h.replaces !== null && typeof h.replaces !== 'string') ||
@@ -429,14 +586,31 @@ export function backupHabits(raw: unknown, workspaceIds: Set<string>, questions:
       continue
     seen.add(h.id)
     kept.push({
-      ...h,
-      workspaceId: h.scope === 'workspace' ? h.workspaceId : null,
+      id: h.id,
+      rule: h.rule,
+      when: h.when,
+      scope: project ? 'project' : 'profile',
+      projectOwner: project ? h.projectOwner : null,
+      projectId: project ? h.projectId : null,
+      overrides: project ? (h.overrides ?? null) : null,
+      status: h.status,
+      origin: h.origin,
       sources: h.sources.flatMap((s) => {
         const known = turns.get(s.questionId)
         return known ? [{ questionId: s.questionId, turnIds: s.turnIds.filter((t) => known.has(t)) }] : []
-      })
+      }),
+      count: h.count,
+      replaces: h.replaces,
+      reviewedAt: h.reviewedAt,
+      createdAt: h.createdAt,
+      updatedAt: h.updatedAt,
+      invalidatedAt: h.invalidatedAt
     })
   }
   const ids = new Set(kept.map((h) => h.id))
-  return kept.map((h) => (h.replaces && !ids.has(h.replaces) ? { ...h, replaces: null } : h))
+  return kept.map((h) => ({
+    ...h,
+    replaces: h.replaces && ids.has(h.replaces) ? h.replaces : null,
+    overrides: h.overrides && ids.has(h.overrides) ? h.overrides : null
+  }))
 }

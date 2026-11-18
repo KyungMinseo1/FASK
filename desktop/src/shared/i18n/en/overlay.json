@@ -135,8 +135,6 @@
   "복제: 놓을 개념 위로 끌어 오세요": "Copy: drag onto a concept",
   "놓을 개념 위로 끌어 오세요": "Drag onto a concept",
   "답변 모델": "Answer model",
-  "{{name}} PC의 모델 설정으로 답변합니다": "Answered with the model settings of the PC {{name}}",
-  "{{name}} PC 모델": "Models on {{name}}",
   "자동으로": "Back to auto",
   "보낼 때 확정": "Decided on send",
   "추론 강도": "Reasoning effort",

@@ -41,6 +41,8 @@ const RPC_MS = 15_000
 const RELAY_STAGGER_MS = 2_000
 const PROBE_MS = 30_000
 const RETRY_MS = [1000, 2000, 5000, 10000]
+/** A host that streams this much without an event boundary is cut off (memory exhaustion). */
+const MAX_EVENT_BUFFER = 32 * 1024 * 1024
 
 const fingerprintOf = (raw: Buffer): string => createHash('sha256').update(raw).digest('base64url')
 
@@ -215,6 +217,7 @@ export class PeerConnection {
     readonly link: PeerLink,
     private onChange: () => void,
     private onStream: (event: StreamEvent) => void,
+    private onCompute: (event: 'compute' | 'compute-cancel', data: unknown) => void,
     private port = HUB_PORT
   ) {
     this.connect()
@@ -297,6 +300,7 @@ export class PeerConnection {
     if (this.status === 'blocked') return
     this.status = 'blocked'
     this.stopTransport()
+    this.snapshot = null
     this.onChange()
   }
 
@@ -304,6 +308,7 @@ export class PeerConnection {
     if (this.status === 'revoked') return
     this.status = 'revoked'
     this.stopTransport()
+    this.snapshot = null
     this.onChange()
   }
 
@@ -433,6 +438,10 @@ export class PeerConnection {
           }
           if (data.length) this.event(event, data.join('\n'))
         }
+        if (buffer.length > MAX_EVENT_BUFFER) {
+          buffer = ''
+          req.destroy(new Error(PEER_UNREACHABLE))
+        }
       })
       res.on('close', () => {
         if (this.events === entry) this.lost()
@@ -467,6 +476,15 @@ export class PeerConnection {
 
   private event(event: string, data: string): void {
     if (event === 'changed') return void this.refresh()
+    if (event === 'compute' || event === 'compute-cancel') {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(data)
+      } catch {
+        return
+      }
+      return this.onCompute(event, parsed)
+    }
     if (event !== 'stream') return
     let parsed: StreamEvent
     try {

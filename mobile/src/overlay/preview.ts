@@ -4,6 +4,7 @@ import type { Question, Snapshot, StreamEvent, Turn, TurnState } from '@desktop/
 import type { HubClient } from '../hub'
 import type { Bootstrap } from './bridge'
 import { t } from '@desktop/shared/i18n'
+import { defaultAvatar } from '@desktop/shared/avatar'
 
 const ANSWER = (): string =>
   t(
@@ -12,8 +13,8 @@ const ANSWER = (): string =>
 
 export function createPreviewClient(boot: Bootstrap): HubClient {
   const data: Snapshot = {
-    profiles: [{ id: boot.profileId, name: t('미리보기') }],
-    activeProfileId: boot.profileId,
+    profile: { id: boot.profileId, name: t('미리보기'), avatar: defaultAvatar(boot.profileId) },
+    device: 'demo-pc',
     workspaces: [
       { id: 'preview-w1', profileId: boot.profileId, name: t('2학기') },
       { id: 'preview-w2', profileId: boot.profileId, name: t('개인') }
@@ -211,7 +212,7 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     exportArchive: async () => {
       throw new Error(t('데모에서는 내보낼 수 없습니다.'))
     },
-    habits: async () => ({ enabled: false, habits: [], workspaces: [] }),
+    habits: async () => ({ enabled: false, habits: [], projects: [], overrideCandidates: {} }),
     decideHabit: async () => {},
     onStream: (cb) => {
       streams.add(cb)

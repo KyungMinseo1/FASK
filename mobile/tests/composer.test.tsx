@@ -159,7 +159,7 @@ describe('Composer submission', () => {
 
   it('treats a pre-acceptance validation error as final and keeps the draft editable', async () => {
     const hub = fakeHub()
-    hub.plan = ['reject:프로필이 변경되었습니다. 다시 열어 주세요.']
+    hub.plan = ['reject:연결된 PC를 최신 버전으로 업데이트해 주세요.']
     mount(hub)
     type('초안')
     await send()
@@ -307,43 +307,6 @@ describe('Composer model choice', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('a linked PC on an older build hides the picker, names the host, and never remembers a model', async () => {
-    localStorage.setItem(lastKey, 'b')
-    const hub = fakeHub()
-    mount(hub, { settings: models as never, host: { peerId: 'pa', name: 'PC A', status: 'online' } })
-    expect(select()).toBeNull()
-    expect(screen.getByText('PC A PC의 모델 설정으로 답변합니다')).toBeTruthy()
-    type('원격 질문')
-    await send()
-    expect(label()).toBe('답변 작성 중')
-    expect(localStorage.getItem(lastKey)).toBe('b')
-  })
-
-  it("a linked PC's shared models are offered and remembered apart from this PC's pick", async () => {
-    localStorage.setItem(lastKey, 'b')
-    const host = {
-      peerId: 'pa',
-      name: 'PC A',
-      status: 'online' as const,
-      models: { model: 'h1', models: ['h1', 'h2'], routing: 'manual' as const, fastModel: '', deepModel: '' }
-    }
-    const hub = fakeHub()
-    mount(hub, { settings: models as never, host })
-    expect(screen.getByText('PC A PC 모델')).toBeTruthy()
-    // This PC's last pick 'b' is not on the host, so the host default is used.
-    expect(select()?.value).toBe('h1')
-    expect([...select()!.options].map((o) => o.value)).toEqual(['', 'h1', 'h2'])
-    fireEvent.change(select()!, { target: { value: 'h2' } })
-    type('원격 질문')
-    await send()
-    expect(hub.asks[0].model).toBe('h2')
-    expect(label()).toBe('답변 작성 중h2')
-    expect(localStorage.getItem(lastKey)).toBe('b')
-    cleanup()
-    mount(fakeHub(), { settings: models as never, host })
-    expect(select()?.value).toBe('h2')
   })
 })
 
