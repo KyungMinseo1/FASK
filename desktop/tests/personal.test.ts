@@ -17,7 +17,7 @@ import { PersonalStore } from '../src/main/personal-store'
 import { normalizeEndpoint, localModels, streamChat } from '../src/main/local-api'
 import type { PeerStatus, Project, Question, Snapshot, Turn, TurnState } from '../src/preload/personal'
 import { PairingHost } from '../src/main/peer-pairing'
-import { dial, pairWithHost, PeerConnection, type PeerLink } from '../src/main/personal-peers'
+import { dial, eventBuffer, pairWithHost, PeerConnection, type PeerLink } from '../src/main/personal-peers'
 import { COMPUTE_DENIED, COMPUTE_UNREACHABLE, ComputeBroker, ComputeRunner } from '../src/main/compute'
 import { validResponse } from '../src/main/jev-api'
 import {
@@ -1770,7 +1770,20 @@ test('linked PC: delegated compute runs on the asking PC and only within its tic
   }
 })
 
-test('linked PC: an event over the buffer cap without a boundary drops the stream, then it reconnects', async () => {
+test('event buffer accepts the limit, finds split boundaries and rejects oversized blocks', () => {
+  const blocks: string[] = []
+  const append = eventBuffer(4, (block) => blocks.push(block))
+  assert.equal(append('abcd'), true)
+  assert.deepEqual(blocks, [])
+  assert.equal(append('\n'), true)
+  assert.equal(append('\nef\n\n'), true)
+  assert.deepEqual(blocks, ['abcd', 'ef'])
+  assert.equal(append('abcd'), true)
+  assert.equal(append('e'), false)
+  assert.equal(eventBuffer(4, assert.fail)('abcde\n\n'), false)
+})
+
+test('linked PC: an event over the buffer cap drops the stream, then it reconnects', async () => {
   const h = await peerHost()
   try {
     const link = await linked(h)
@@ -1781,13 +1794,13 @@ test('linked PC: an event over the buffer cap without a boundary drops the strea
       () => statuses.push(conn.status),
       () => {},
       () => computes++,
-      h.port
+      h.port,
+      128
     )
     try {
       await until(() => conn.status === 'online', 5000, 'online')
       statuses.length = 0
-      // The boundary trails 33 MiB of data, so the 32 MiB cap is crossed before it arrives.
-      assert.equal(h.hub.sendTo(link.id, 'compute', 'x'.repeat(33 * 1024 * 1024)), true)
+      assert.equal(h.hub.sendTo(link.id, 'compute', 'x'.repeat(256)), true)
       await until(() => statuses.includes('offline'), 10000, 'offline')
       await until(() => conn.status === 'online', 10000, 'reconnected')
       assert.equal(computes, 0)
