@@ -44,6 +44,33 @@ const RETRY_MS = [1000, 2000, 5000, 10000]
 /** A host that streams this much without an event boundary is cut off (memory exhaustion). */
 const MAX_EVENT_BUFFER = 32 * 1024 * 1024
 
+export function eventBuffer(limit: number, onBlock: (block: string) => void): (chunk: string) => boolean {
+  const parts: string[] = []
+  let length = 0
+  let trailingNewline = false
+  return (chunk) => {
+    if (chunk.length === 0) return true
+    // Carry one newline so a delimiter split across chunks is found.
+    if (trailingNewline) chunk = '\n' + chunk
+    let start = 0
+    let end: number
+    while ((end = chunk.indexOf('\n\n', start)) !== -1) {
+      if (length + end - start > limit) return false
+      parts.push(chunk.slice(start, end))
+      onBlock(parts.join(''))
+      parts.length = 0
+      length = 0
+      start = end + 2
+    }
+    trailingNewline = start < chunk.length && chunk.endsWith('\n')
+    const tail = chunk.slice(start, trailingNewline ? -1 : undefined)
+    length += tail.length
+    if (length > limit) return false
+    if (tail) parts.push(tail)
+    return true
+  }
+}
+
 const fingerprintOf = (raw: Buffer): string => createHash('sha256').update(raw).digest('base64url')
 
 /** Waits for the relay's text `ready` before handing the socket to RelayStream (text frames are violations there). */
@@ -218,7 +245,8 @@ export class PeerConnection {
     private onChange: () => void,
     private onStream: (event: StreamEvent) => void,
     private onCompute: (event: 'compute' | 'compute-cancel', data: unknown) => void,
-    private port = HUB_PORT
+    private port = HUB_PORT,
+    private maxEventBuffer = MAX_EVENT_BUFFER
   ) {
     this.connect()
   }
@@ -422,26 +450,18 @@ export class PeerConnection {
         this.probe = null
       }
       void this.refresh()
-      let buffer = ''
+      const append = eventBuffer(this.maxEventBuffer, (block) => {
+        let event = 'message'
+        const data: string[] = []
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
+        }
+        if (data.length) this.event(event, data.join('\n'))
+      })
       res.setEncoding('utf8')
       res.on('data', (chunk: string) => {
-        buffer += chunk
-        let end: number
-        while ((end = buffer.indexOf('\n\n')) >= 0) {
-          const block = buffer.slice(0, end)
-          buffer = buffer.slice(end + 2)
-          let event = 'message'
-          const data: string[] = []
-          for (const line of block.split('\n')) {
-            if (line.startsWith('event:')) event = line.slice(6).trim()
-            else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
-          }
-          if (data.length) this.event(event, data.join('\n'))
-        }
-        if (buffer.length > MAX_EVENT_BUFFER) {
-          buffer = ''
-          req.destroy(new Error(PEER_UNREACHABLE))
-        }
+        if (!append(chunk)) req.destroy(new Error(PEER_UNREACHABLE))
       })
       res.on('close', () => {
         if (this.events === entry) this.lost()
