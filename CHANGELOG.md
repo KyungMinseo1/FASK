@@ -4,7 +4,9 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
-## 🚀 FASK v{{version}} "One of Me" is here!
+## [1.3.0] - 2026-11-19
+
+## 🚀 FASK v1.3.0 "One of Me" is here!
 
 One profile per PC, with its own keys, habits and usage. Linked PCs now see only the workspaces you share and answer with their own AI, and every question shows who asked it.
 
