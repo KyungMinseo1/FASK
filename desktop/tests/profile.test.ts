@@ -48,10 +48,10 @@ describe('profile', () => {
       assert.throws(() => store.updateProfile({ name: 'a'.repeat(41) }), /1~40자/)
       assert.throws(() => store.updateProfile({ name: '   ' }), /1~40자/)
       assert.throws(
-        () => store.updateProfile({ avatar: { style: 'bogus', seed: 'x', background: '#3b5bdb' } as never }),
+        () => store.updateProfile({ avatar: { style: 'bogus', seed: 'x', background: 'navy' } as never }),
         /요청 형식/
       )
-      const avatar = { style: 'rings', seed: 'abc', background: '#c2255c' } as const
+      const avatar = { style: 'orbit', seed: 'abc', background: 'lavender' } as const
       store.updateProfile({ name: '  새 이름 ', avatar })
       assert.equal(store.profile().name, '새 이름')
       assert.deepEqual(store.profile().avatar, avatar)

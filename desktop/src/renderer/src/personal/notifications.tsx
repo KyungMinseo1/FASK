@@ -13,7 +13,8 @@ import type {
   ProfileMergeInfo,
   TidyAccess,
   TidyEstimate,
-  TidyStatus
+  TidyStatus,
+  UpdateState
 } from '../../../preload/personal'
 
 /** What a tidy or manager request asks the notification center to follow. No-ops without a provider. */
@@ -170,6 +171,7 @@ export function NotificationsProvider({
   const [requests, setRequests] = useState<NotifyItem[]>([])
   const [habitItems, setHabitItems] = useState<NotifyItem[]>([])
   const [mergeItems, setMergeItems] = useState<NotifyItem[]>([])
+  const [updateItems, setUpdateItems] = useState<NotifyItem[]>([])
   const [deviceItems, setDeviceItems] = useState<NotifyItem[]>([])
   const [seen, setSeen] = useState<Set<string>>(() => new Set(readSeen()))
   const [history, setHistory] = useState<NotifyRecord[]>(readHistory)
@@ -448,6 +450,31 @@ export function NotificationsProvider({
         }
       ])
     }
+    const pollUpdate = async (): Promise<void> => {
+      if (typeof window.fask?.updateState !== 'function') return
+      let update: UpdateState
+      try {
+        update = await window.fask.updateState()
+      } catch {
+        return
+      }
+      if (!live) return
+      if (update.state !== 'ready' || !update.version) {
+        setUpdateItems([])
+        return
+      }
+      const text = '새 버전 {{version}}이 준비되었습니다. 업데이트하면 앱을 다시 시작합니다.'
+      const vars = { version: update.version }
+      setUpdateItems([
+        {
+          id: `app-update:${update.version}`,
+          icon: 'download',
+          text,
+          vars,
+          actions: [{ label: '업데이트하기', primary: true, run: () => window.fask.installUpdate() }]
+        }
+      ])
+    }
     const pollDevices = async (): Promise<void> => {
       if (typeof window.fask?.peerShareNotice !== 'function') return
       let notice: boolean
@@ -589,6 +616,7 @@ export function NotificationsProvider({
             pollRequests(),
             pollHabits(),
             pollMerge(),
+            pollUpdate(),
             pollDevices()
           ])
         } while (again && live)
@@ -643,8 +671,8 @@ export function NotificationsProvider({
     return () => setAttached((n) => n - 1)
   }, [])
   const items = useMemo(
-    () => [...mergeItems, ...deviceItems, ...requests, ...habitItems, ...watched.values()],
-    [mergeItems, deviceItems, requests, habitItems, watched]
+    () => [...updateItems, ...mergeItems, ...deviceItems, ...requests, ...habitItems, ...watched.values()],
+    [updateItems, mergeItems, deviceItems, requests, habitItems, watched]
   )
   const center = useMemo<Center>(
     () => ({ items, seen, markSeen, attach, history, clearHistory }),

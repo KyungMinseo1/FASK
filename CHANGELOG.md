@@ -4,6 +4,35 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+## 🚀 FASK v{{version}} "One of Me" is here!
+
+One profile per PC, with its own keys, habits and usage. Linked PCs now see only the workspaces you share and answer with their own AI, and every question shows who asked it.
+
+> [!WARNING]
+> Linked PCs share no workspaces after this update. On the host PC, open Settings → 기기 연결 and choose which workspaces each linked PC may see. Both PCs need this version to ask in each other's workspaces.
+
+### ✨ Added
+- **Profile page**: the profile card at the top of the sidebar opens it. 기본 설정 holds the name, a picture (six patterns, colors from the app themes), this PC's name and token usage; 보안 holds the PIN lock.
+- **Usage history**: a GitHub-style year of daily tokens (model plus Jev); hover a day for its numbers and Jev cost. Days where the API reported no usage are estimated from text length and marked.
+- **PIN lock** (6–12 digits): locks this PC's app screens and encrypts the model and Jev keys a second time with a key from the PIN. It locks on demand, when Windows locks and on sleep; repeated wrong PINs make you wait longer. Forgetting the PIN can reset it, which deletes the keys and keeps your questions. The question database itself is not encrypted, and linked devices can still read what is shared while the PC is locked.
+- **Who asked**: every new question turn records the asker's profile name, picture and device (or "phone connected to …"), shown on the turn, also on the host PC.
+- **Choose what each linked PC sees**: in Settings → 기기 연결, 공유 범위 picks the workspaces per linked PC; a new link shares none, and a notification asks the host to choose. Making a pairing code first asks you to confirm what a linked PC can do.
+- When a share or a link is removed, that PC's running answers, extraction and tidy stop at once, and the linked PC drops the removed workspaces from its screen and its saved drafts (on its next connection if it was offline).
+- **In-app updates (Windows)**: FASK checks GitHub Releases on start and every 6 hours, downloads a newer version in the background and shows "새 버전 … 준비되었습니다" in notifications. 업데이트하기 installs it silently and restarts the app; nothing installs without that click. Versions before this one need one manual install of the new setup file.
+
+### 🔧 Changed
+- **One profile per PC**: adding, switching and deleting profiles is gone; separate your work with workspaces. Profiles from earlier versions stay hidden until you press 합치기 in the notification, which moves their workspaces into this profile (clashing names get the old profile's name) after an automatic backup.
+- **A question uses the asking device's AI**: a question in a linked PC's workspace is routed and answered with your PC's model, keys and Jev, as are its title, search keywords, knowledge search and concept extraction; tidy by a knowledge manager runs on the manager's PC. The workspace's PC only builds the prompt from its knowledge and stores the result. Turns asked by a PC that is offline wait and are extracted when it reconnects.
+- **Answer habits are per profile and learned on the asker's device**, from that profile's own turns only, with a separate model request after concept extraction. A habit applies to every project or to one project (also another PC's project); a project habit can explicitly replace a general one there. Workspace-scoped habits from earlier versions now apply to every project. A conflicting habit whose scope you didn't state is only suggested.
+- Backups no longer contain settings, and restoring adds the backup's workspaces to this profile instead of creating a new one.
+- Settings → 기기 연결: the mobile pairing QR code and the relay server address stay hidden until you open them; the QR hides again after two minutes.
+- The phone's offline copy no longer stores other PCs' workspaces.
+
+### 🐛 Fixed
+- A linked PC could view any of the host's images and stop the host's own answers; it can now only see images of shared questions and cancel its own answers.
+- A Jev request could override the fixed Jev model.
+
+
 ## [1.2.1] - 2026-11-16
 
 ### ✨ Added

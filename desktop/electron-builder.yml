@@ -37,4 +37,9 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
+# In-app updates read latest.yml from GitHub Releases (the release workflow uploads it with the installer).
+publish:
+  provider: github
+  owner: KyungMinseo1
+  repo: FASK
 npmRebuild: false

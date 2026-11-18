@@ -59,6 +59,7 @@ import {
   type Executor
 } from './compute'
 import { ProfileLock, PROFILE_LOCKED } from './profile-lock'
+import { Updater } from './updater'
 import { validCard } from '../shared/avatar'
 import { JEV_ROUTE_TIMEOUT_MS, jevRoute, RouteCache, routeKey } from './jev-routing'
 import { cleanTitle, questionImages, recommend, routedModel } from '../shared/questions'
@@ -734,6 +735,12 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     changed()
   })
   handle('usage', () => store.usage())
+  const updater = new Updater(() => changed())
+  handle('update-state', () => updater.state())
+  handle('update-install', () => {
+    if (controllers.size) throw new Error('진행 중인 답변을 마친 뒤 업데이트해 주세요.')
+    updater.install()
+  })
   /** Locks the profile: keys become unreadable and every run on this PC's resources stops. */
   const lockNow = (): void => {
     lock.lock()
@@ -2290,6 +2297,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       powerMonitor.off('lock-screen', onLockScreen)
       powerMonitor.off('suspend', onLockScreen)
       extractor.close()
+      updater.close()
       habitDetector.close()
       runner.abortAll()
       broker.close()

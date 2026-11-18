@@ -54,6 +54,8 @@ export default function UsageHeatmap(): React.JSX.Element {
       if (w === 0 || first.getMonth() !== cells[(w - 1) * 7].date.getMonth())
         months.push({ column: w, label: first.toLocaleDateString(i18n.language, { month: 'short' }) })
     }
+    // A partial first month would sit on top of the next label.
+    if (months.length > 1 && months[1].column - months[0].column < 3) months.shift()
     return {
       cells,
       bounds,
@@ -71,14 +73,8 @@ export default function UsageHeatmap(): React.JSX.Element {
       <p className="usage-summary">
         {t('최근 1년 {{total}} 토큰, {{days}}일 사용', { total: number(view.total), days: number(view.used) })}
       </p>
-      {/* A narrow page scrolls; it opens on the latest weeks, as the last column is this week. */}
-      <div
-        className="usage-scroll"
-        ref={(el) => {
-          if (el) el.scrollLeft = el.scrollWidth
-        }}
-      >
-        <div className="usage-grid" role="img" aria-label={t('사용량')}>
+      {/* Cells scale with the column, so the whole year always fits without scrolling. */}
+      <div className="usage-grid" role="img" aria-label={t('사용량')}>
           {view.months.map((m) => (
             <span key={m.column} className="usage-month" style={{ gridColumn: m.column + 2, gridRow: 1 }}>
               {m.label}
@@ -111,7 +107,6 @@ export default function UsageHeatmap(): React.JSX.Element {
             )
           })}
         </div>
-      </div>
       {view.estimated && <small>{t('일부는 API가 사용량을 알려주지 않아 글자 수로 추정했습니다.')}</small>}
     </div>
   )

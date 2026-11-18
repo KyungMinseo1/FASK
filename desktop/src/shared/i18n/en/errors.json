@@ -142,6 +142,8 @@
   "연결된 PC를 최신 버전으로 업데이트해 주세요.": "Update the linked PC to the latest version.",
   "공유가 해제되어 작업을 중단했습니다.": "Sharing was turned off, so the task was stopped.",
   "공유할 수 없는 워크스페이스입니다.": "This workspace can't be shared.",
+  "설치할 업데이트가 없습니다.": "There is no update to install.",
+  "진행 중인 답변을 마친 뒤 업데이트해 주세요.": "Finish the running answer before updating.",
   "같은 습관이 이미 있습니다.": "The same habit already exists.",
   "습관 파일 형식이 잘못되었습니다.": "Invalid habit file format.",
   "모바일 연결 인증서가 손상되었습니다. 연결을 초기화해 주세요.": "The mobile connection certificate is damaged. Reset the connection.",

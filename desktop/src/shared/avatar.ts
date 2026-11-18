@@ -1,17 +1,21 @@
-/** Profile avatar spec, rendered with DiceBear styles by the renderer; no DiceBear import here. */
-export const AVATAR_STYLES = ['shapes', 'glass', 'thumbs', 'rings', 'identicon', 'initials'] as const
+/**
+ * Profile avatar spec: a pattern, a seed that varies it, and a palette taken from the app's themes.
+ * Drawn by the renderer's ProfileAvatar as flat SVG; shared by main, renderer and mobile.
+ */
+export const AVATAR_STYLES = ['monogram', 'bauhaus', 'eclipse', 'orbit', 'dots', 'waves'] as const
 export type AvatarStyle = (typeof AVATAR_STYLES)[number]
-export const AVATAR_COLORS = [
-  '#3b5bdb',
-  '#0c8599',
-  '#2b8a3e',
-  '#e67700',
-  '#c2255c',
-  '#7048e8',
-  '#495057',
-  '#d9480f'
-] as const
-export type AvatarColor = (typeof AVATAR_COLORS)[number]
+
+/** One palette per app theme: each theme's sidebar colors, so an avatar reads as that theme. */
+export const AVATAR_PALETTES = {
+  navy: { bg: '#14213d', fg: '#f4ede0', accent: '#ff6b5b' },
+  white: { bg: '#f6f6f5', fg: '#0b0b0c', accent: '#8fb31f' },
+  ivory: { bg: '#1f3d2b', fg: '#f3ecdd', accent: '#d9c69e' },
+  lavender: { bg: '#cbb3e8', fg: '#2a1a40', accent: '#f6f0fc' },
+  night: { bg: '#0b0b0b', fg: '#f2f2ec', accent: '#d4ff3f' }
+} as const
+export type AvatarColor = keyof typeof AVATAR_PALETTES
+export const AVATAR_COLORS = Object.keys(AVATAR_PALETTES) as AvatarColor[]
+
 export interface AvatarSpec {
   style: AvatarStyle
   seed: string
@@ -19,9 +23,7 @@ export interface AvatarSpec {
 }
 
 export function defaultAvatar(profileId: string): AvatarSpec {
-  let sum = 0
-  for (let i = 0; i < profileId.length; i++) sum += profileId.charCodeAt(i)
-  return { style: 'shapes', seed: profileId.slice(0, 64) || 'fask', background: AVATAR_COLORS[sum % AVATAR_COLORS.length] }
+  return { style: 'monogram', seed: profileId.slice(0, 64) || 'fask', background: 'navy' }
 }
 
 export function validAvatar(v: unknown): v is AvatarSpec {

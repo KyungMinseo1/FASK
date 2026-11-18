@@ -26,9 +26,7 @@ export default defineConfig({
       'd3-hierarchy',
       '@cloudflare/opaque-ts',
       'i18next',
-      'react-i18next',
-      '@dicebear/core',
-      '@dicebear/styles'
+      'react-i18next'
     ]
   },
   server: { host: '127.0.0.1', port: 5173, fs: { allow: ['..'] } },

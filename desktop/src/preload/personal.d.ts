@@ -134,6 +134,12 @@ export interface PeerAsk {
   habits: HabitLine[]
 }
 /** Remote ids a linked PC's renderer must forget (drafts, watches). */
+/** Background app update: `ready` means the installer is downloaded and verified. */
+export interface UpdateState {
+  state: 'idle' | 'downloading' | 'ready'
+  version: string | null
+  percent: number
+}
 export interface PurgeBatch {
   id: string
   projectIds: string[]
@@ -696,6 +702,9 @@ export interface PersonalApi extends KnowledgeApi {
   ackPeerShareNotice(): Promise<void>
   pendingPurges(): Promise<PurgeBatch[]>
   ackPurge(id: string): Promise<void>
+  updateState(): Promise<UpdateState>
+  /** Quits, installs the downloaded update and relaunches. */
+  installUpdate(): Promise<void>
   saveSettings(settings: LocalSettings, key?: string, jevKey?: string): Promise<void>
   /** Checks a Jev key (the saved one when `key` is undefined) with one minimal request. */
   jevTest(provider: JevProvider, key?: string): Promise<{ model: string }>
