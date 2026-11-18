@@ -1,3 +1,5 @@
+import type { AvatarSpec } from '../shared/avatar'
+
 export interface CaptureRect {
   x: number
   y: number
@@ -78,13 +80,71 @@ export interface RouteResult {
   reason: string
   source: 'local' | 'jev'
 }
-/** The settings that pick an answer model; a linked PC shares its own with this PC. */
-export type ModelSettings = Pick<LocalSettings, 'model' | 'fastModel' | 'deepModel' | 'models' | 'routing'>
+/** Who asked a turn, recorded at ask time (later renames do not change it). */
+export interface TurnAuthor {
+  profileId: string
+  name: string
+  avatar: AvatarSpec
+  /** Hostname of the device that asked. */
+  device: string
+  /** Asked from the phone paired to that device. */
+  mobile?: boolean
+  /** Set by the workspace's host: the grant id of the linked PC that asked (extraction ownership). */
+  peer?: string
+}
+export type ProfileCard = Pick<Profile, 'name' | 'avatar'>
+/** One local day of token use; model/jev = input + output tokens. */
+export interface UsageDay {
+  /** YYYY-MM-DD, local time. */
+  day: string
+  model: number
+  jev: number
+  jevCost: number
+  estimated: boolean
+}
+export interface LockState {
+  hasPin: boolean
+  locked: boolean
+  retryAt: number | null
+  profile: ProfileCard
+}
+export interface ProfileMergeInfo {
+  current: string
+  others: { name: string; workspaces: number; questions: number }[]
+}
+/** One answer-habit line for the answer prompt. */
+export interface HabitLine {
+  rule: string
+  when: string
+  project: boolean
+}
+/**
+ * Filled by a linked PC forwarding its own question: that PC routed it and runs every model and
+ * Jev call itself.
+ */
+export interface PeerAsk {
+  ticket: string
+  author: { profileId: string; name: string; avatar: AvatarSpec; mobile: boolean }
+  route: RouteResult
+  memoryScope: LocalSettings['memoryScope']
+  memoryTokens: number
+  jevRecall: boolean
+  promptLanguage: 'ko' | 'en'
+  autoTitle: boolean
+  habits: HabitLine[]
+}
+/** Remote ids a linked PC's renderer must forget (drafts, watches). */
+export interface PurgeBatch {
+  id: string
+  projectIds: string[]
+  workspaceIds: string[]
+}
 /** OpenAI-compatible `reasoning_effort`; undefined leaves it to the model's default. */
 export type ReasoningEffort = 'low' | 'medium' | 'high'
 export interface Profile {
   id: string
   name: string
+  avatar: AvatarSpec
 }
 export interface Workspace {
   id: string
@@ -95,8 +155,8 @@ export interface Workspace {
     peerId: string
     name: string
     status: PeerStatus
-    /** That PC's answer-model settings, which its answers use; absent when it runs an older build. */
-    models?: ModelSettings
+    /** The profile owning the workspace; `id` is that PC's profile id (stable across re-pairing). */
+    owner?: { id: string } & ProfileCard
   }
   /**
    * Normalized candidate names a tidy offered for promotion and the user left as candidates;
@@ -119,6 +179,10 @@ export interface PeerGrantInfo {
   createdAt: number
   manager: ManagerState
   managerAt: number | null
+  /** Ids of this PC's workspaces shared with that PC. */
+  workspaces: string[]
+  /** The host saved the share scope at least once. */
+  shareReviewed: boolean
 }
 export interface PeerCode {
   /** 8 characters, display as RRRP-PPPP. */
@@ -218,6 +282,8 @@ export interface Turn {
   revision: number
   /** Knowledge injected into this turn's prompt ("참고한 지식"). */
   references?: Reference[]
+  /** Absent on turns recorded before authors existed. */
+  author?: TurnAuthor
 }
 export interface Question {
   id: string
@@ -247,6 +313,11 @@ export interface Question {
   /** Leading turns already checked for answer-habit feedback; absent = 0. */
   habitTurns?: number
   /**
+   * Turns the owning PC skipped in its extraction run: a linked PC (`peer` = its grant id on this
+   * PC) asked them, so they are extracted with that PC's resources.
+   */
+  deferredTurns?: { turnId: string; peer: string }[]
+  /**
    * Candidate concepts: names the answers drew on that are not nodes yet (not in the tree, no
    * tags, no relations). One recurring in another question of the workspace becomes a node.
    */
@@ -267,9 +338,13 @@ export interface Habit {
   rule: string
   /** Comma-separated situation keywords (normalizeWhen); '' = every answer. */
   when: string
-  scope: 'profile' | 'workspace'
-  /** Set only when scope is 'workspace'. */
-  workspaceId: string | null
+  scope: 'profile' | 'project'
+  /** Profile id of the PC owning the project; set only when scope is 'project'. */
+  projectOwner: string | null
+  /** Set only when scope is 'project'. */
+  projectId: string | null
+  /** Id of the profile-wide habit this project habit takes the place of in that project. */
+  overrides: string | null
   status: HabitStatus
   origin: 'detected' | 'explicit' | 'manual' | 'imported'
   /** Latest 10 evidence turns, newest last. */
@@ -289,15 +364,19 @@ export interface HabitList {
   enabled: boolean
   /** Non-invalidated habits: proposed, then active, then rejected; each newest updatedAt first. */
   habits: Habit[]
-  /** Local workspaces of the active profile, for scope labels and the scope picker. */
-  workspaces: { id: string; name: string }[]
+  /** This PC's projects plus the remote projects visible now, for scope labels and the picker. */
+  projects: { owner: string; id: string; name: string }[]
+  /** Project habit id -> active profile habits it may conflict with; ordering hint only. */
+  overrideCandidates: Record<string, string[]>
 }
 export interface HabitInput {
   id?: string
   rule: string
   when: string
-  scope: 'profile' | 'workspace'
-  workspaceId: string | null
+  scope: 'profile' | 'project'
+  projectOwner: string | null
+  projectId: string | null
+  overrides: string | null
 }
 export interface AskResult {
   questionId: string
@@ -312,8 +391,9 @@ export interface TurnState {
 }
 export interface Snapshot {
   recentQuestions?: Record<string, string>
-  profiles: Profile[]
-  activeProfileId: string
+  profile: Profile
+  /** Hostname of the PC that served the snapshot. */
+  device: string
   workspaces: Workspace[]
   projects: Project[]
   concepts: Concept[]
@@ -325,7 +405,8 @@ export interface Snapshot {
 export interface AskInput {
   documents?: TextAttachment[]
   requestId: string
-  profileId: string
+  /** Set by a linked PC forwarding its own question to the workspace's host. */
+  peer?: PeerAsk
   projectId: string
   /** Question to continue; omitted for a new question. */
   questionId?: string
@@ -503,17 +584,17 @@ export interface ExportOptions {
 export interface KnowledgeApi {
   snapshot(): Promise<Snapshot>
   create(
-    kind: 'profile' | 'workspace' | 'project' | 'concept',
+    kind: 'workspace' | 'project' | 'concept',
     name: string,
     parentId?: string
   ): Promise<string>
   rename(
-    kind: 'profile' | 'workspace' | 'project' | 'concept' | 'question',
+    kind: 'workspace' | 'project' | 'concept' | 'question',
     id: string,
     name: string
   ): Promise<void>
   remove(
-    kind: 'profile' | 'workspace' | 'project' | 'concept' | 'question',
+    kind: 'workspace' | 'project' | 'concept' | 'question',
     id: string
   ): Promise<void>
   updateQuestion(
@@ -598,7 +679,23 @@ export interface PersonalApi extends KnowledgeApi {
   overlayRegions(drawing: boolean, regions: CaptureRect[], panelOpen: boolean): Promise<void>
   shortcutInfo(): Promise<ShortcutInfo>
   onTogglePanel(cb: () => void): () => void
-  switchProfile(id: string): Promise<void>
+  profileUpdate(patch: { name?: string; avatar?: AvatarSpec }): Promise<void>
+  /** Daily token use, last 371 days. */
+  usage(): Promise<UsageDay[]>
+  lockState(): Promise<LockState>
+  unlock(pin: string): Promise<void>
+  lock(): Promise<void>
+  setPin(current: string | undefined, next: string): Promise<void>
+  removePin(current: string): Promise<void>
+  /** Deletes the PIN and the saved model/Jev keys; question data stays. */
+  resetPin(): Promise<void>
+  profileMergeInfo(): Promise<ProfileMergeInfo | null>
+  profileMerge(): Promise<void>
+  peerGrantShare(id: string, workspaceIds: string[]): Promise<void>
+  peerShareNotice(): Promise<boolean>
+  ackPeerShareNotice(): Promise<void>
+  pendingPurges(): Promise<PurgeBatch[]>
+  ackPurge(id: string): Promise<void>
   saveSettings(settings: LocalSettings, key?: string, jevKey?: string): Promise<void>
   /** Checks a Jev key (the saved one when `key` is undefined) with one minimal request. */
   jevTest(provider: JevProvider, key?: string): Promise<{ model: string }>

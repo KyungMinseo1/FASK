@@ -136,10 +136,6 @@ export class KnowledgeSearch {
     this.db.prepare('DELETE FROM knowledge_fts WHERE rowid=?').run(rowid)
   }
 
-  removeProfile(profile: string): void {
-    this.db.prepare('DELETE FROM knowledge_fts WHERE profile=?').run(profile)
-  }
-
   clear(): void {
     this.db.exec('DELETE FROM knowledge_fts')
   }

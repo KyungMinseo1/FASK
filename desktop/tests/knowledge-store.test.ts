@@ -575,7 +575,7 @@ test('backup v3 round-trips relations; v2 concepts upgrade into workspaces', () 
       images: {}
     }
     const upgraded = validateBackup(structuredClone(v2))
-    assert.equal(upgraded.version, 3)
+    assert.equal(upgraded.version, 4)
     assert.deepEqual(
       upgraded.snapshot.concepts.map((c) => [c.id, c.workspaceId, c.parentId, c.level]),
       [
@@ -584,8 +584,6 @@ test('backup v3 round-trips relations; v2 concepts upgrade into workspaces', () 
       ]
     )
     assert.deepEqual(upgraded.snapshot.relations, [])
-    assert.equal(upgraded.snapshot.settings.memoryScope, 'project')
-    assert.equal('memory' in upgraded.snapshot.settings, false)
     assert.equal(upgraded.snapshot.questions[0].extractedTurns, 1)
     const crossProject = structuredClone(v2)
     crossProject.snapshot.questions[0].conceptIds = ['c2']

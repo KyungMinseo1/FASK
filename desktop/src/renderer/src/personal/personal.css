@@ -569,13 +569,44 @@ button.danger {
 .sidebar-resizer:focus-visible::after {
   background: var(--nav-hairline);
 }
-.sidebar-label {
-  font-size: 13px;
-  line-height: 1.3;
-  color: var(--nav-ink-subtle);
+.profile-avatar {
+  flex: none;
+  display: block;
+  border-radius: 50%;
+}
+.fask-app .fask-sidebar .profile-card {
+  width: 100%;
+  gap: 10px;
+  padding: 8px 10px;
+  border-color: var(--nav-hairline);
+  background: var(--nav-surface-1);
+  color: var(--nav-ink);
+  text-align: left;
+}
+.fask-app .fask-sidebar .profile-card:hover {
+  background: var(--nav-surface-2);
+}
+.fask-app .fask-sidebar .profile-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.profile-card > span {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
+  font-size: 14px;
+}
+.profile-card > span,
+.profile-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-card small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--nav-ink-subtle);
 }
 .fask-app .fask-sidebar select {
   width: 100%;
@@ -590,7 +621,6 @@ button.danger {
   background: var(--nav-surface-1);
   color: var(--nav-ink);
 }
-.fask-app .fask-sidebar .sidebar-add,
 .fask-app .fask-sidebar .sidebar-rename {
   border: 0;
   background: transparent;
@@ -598,15 +628,9 @@ button.danger {
   font-size: 13px;
   font-weight: 500;
   color: var(--nav-ink-subtle);
-}
-.fask-app .fask-sidebar .sidebar-add {
   padding: 4px 2px;
 }
-.fask-app .fask-sidebar .sidebar-rename {
-  padding: 4px 2px;
-}
-.fask-app .fask-sidebar .sidebar-rename:hover,
-.fask-app .fask-sidebar .sidebar-add:hover {
+.fask-app .fask-sidebar .sidebar-rename:hover {
   color: var(--nav-ink);
   background: transparent;
 }
@@ -1618,6 +1642,27 @@ button.memo-saved:disabled {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--ink-muted);
+}
+.turn-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.turn-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.turn-author b {
+  font-weight: 600;
+}
+.turn-author small {
+  color: var(--ink-muted);
+  font-size: 12px;
 }
 .turn-question {
   font-weight: 700;
@@ -3833,6 +3878,14 @@ button.memo-saved:disabled {
 .peer-list button {
   margin: 0;
 }
+.peer-list li:has(.peer-share) {
+  flex-wrap: wrap;
+}
+.peer-share {
+  flex-basis: 100%;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
 .peer-empty {
   padding: 12px;
   border: 1px dashed var(--hairline-strong);
@@ -4785,4 +4838,165 @@ button.memo-saved:disabled {
   border-radius: var(--r-pill);
   font-size: 12px;
   font-weight: 500;
+}
+
+/* Remote workspace owner in the sidebar chip. */
+.sidebar-remote .profile-avatar {
+  margin-left: 2px;
+}
+
+/* Profile page (ProfilePage.tsx): same frame as the settings page. */
+.profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 12px 0 16px;
+}
+.profile-styles,
+.profile-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.settings-page .settings-body .profile-styles button {
+  margin: 0;
+  padding: 4px;
+  border-radius: var(--r-md);
+}
+.settings-page .settings-body .profile-styles button.active {
+  border-color: var(--primary);
+  outline: 1px solid var(--primary);
+}
+.settings-page .settings-body .profile-colors button {
+  margin: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--surface-1);
+  outline: 1px solid var(--hairline-strong);
+}
+.settings-page .settings-body .profile-colors button.active {
+  outline: 2px solid var(--ink);
+}
+.settings-page .settings-body .profile-colors button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Usage heatmap: 53 weekly columns of 7 days, Sunday first. */
+.usage-summary {
+  font-variant-numeric: tabular-nums;
+}
+.usage-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.usage-grid {
+  display: grid;
+  grid-template-columns: auto repeat(53, 11px);
+  grid-template-rows: auto repeat(7, 11px);
+  gap: 3px;
+  width: max-content;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.usage-month {
+  white-space: nowrap;
+  padding-bottom: 4px;
+}
+.usage-weekday {
+  padding-right: 6px;
+  align-self: center;
+}
+.usage-cell {
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+.usage-cell.l1 {
+  background: color-mix(in srgb, var(--primary) 25%, var(--surface-1));
+}
+.usage-cell.l2 {
+  background: color-mix(in srgb, var(--primary) 50%, var(--surface-1));
+}
+.usage-cell.l3 {
+  background: color-mix(in srgb, var(--primary) 75%, var(--surface-1));
+}
+.usage-cell.l4 {
+  background: var(--primary);
+}
+
+/* Lock screen (LockScreen.tsx): replaces the dashboard while the profile is locked. */
+.lock-screen {
+  align-items: center;
+  justify-content: center;
+}
+.lock-card {
+  width: min(360px, calc(100% - 48px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 28px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  text-align: center;
+}
+.lock-card h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.lock-card > input {
+  width: 100%;
+  height: 40px;
+  text-align: center;
+  font-size: 18px;
+  letter-spacing: 0.3em;
+}
+.lock-card > button.primary {
+  width: 100%;
+  justify-content: center;
+}
+.lock-card p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.lock-card .error {
+  color: var(--danger);
+}
+.fask-app .lock-card .lock-forgot {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+.fask-app .lock-card .lock-forgot:hover {
+  color: var(--ink);
+}
+.lock-reset {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+  text-align: left;
+}
+.lock-reset label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.lock-reset .button-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }

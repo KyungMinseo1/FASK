@@ -20,6 +20,8 @@ import QuestionDetail from './QuestionDetail'
 import ConceptPanel from './ConceptPanel'
 import TidyBar from './TidyBar'
 import Settings, { type SettingsCategory } from './Settings'
+import ProfilePage from './ProfilePage'
+import ProfileAvatar from './ProfileAvatar'
 import ExportOptionsFields from './ExportOptionsFields'
 import { Icon } from './ToolbarIcons'
 import { NotificationBell } from './notifications'
@@ -38,7 +40,7 @@ import { useT } from '../../../shared/i18n/react'
 import { i18n } from '../../../shared/i18n'
 import './personal.css'
 
-type ItemKind = 'profile' | 'workspace' | 'project' | 'concept' | 'question'
+type ItemKind = 'workspace' | 'project' | 'concept' | 'question'
 
 const SIDEBAR_MIN = 200
 const SIDEBAR_MAX = 360
@@ -100,6 +102,20 @@ export default function Dashboard(): React.JSX.Element {
     [query, setQuery] = useState(''),
     [filter, setFilter] = useState('all')
   const [settingsSection, setSettingsSection] = useState<SettingsCategory | null>(null)
+  const [profileOpen, setProfileOpen] = useState(false)
+  // Notifications open a settings page (linked devices) by name.
+  useEffect(() => {
+    const open = (e: Event): void => {
+      const detail = (e as CustomEvent<unknown>).detail
+      if (detail === 'devices') {
+        setProfileOpen(false)
+        setSettingsSection('devices')
+      }
+    }
+    window.addEventListener('fask:open-settings', open)
+    return () => window.removeEventListener('fask:open-settings', open)
+  }, [])
+  const covered = !!settingsSection || profileOpen
   const [captureIssue, setCaptureIssue] = useState<CaptureSetupReason>()
   const [captureNotice, setCaptureNotice] = useState<CaptureSetupReason>()
   useEffect(() => window.fask.onCaptureSetupRequired((issue) => {
@@ -267,10 +283,7 @@ export default function Dashboard(): React.JSX.Element {
     setNotice('')
     setCaptureNotice(undefined)
   }
-  const beginCreate = (
-    kind: 'profile' | 'workspace' | 'project' | 'concept',
-    parent?: string
-  ): void => {
+  const beginCreate = (kind: 'workspace' | 'project' | 'concept', parent?: string): void => {
     setCreate({ kind, parent })
     setName('')
   }
@@ -323,7 +336,7 @@ export default function Dashboard(): React.JSX.Element {
         <aside
           ref={sidebarRef}
           className="fask-sidebar"
-          inert={!!settingsSection}
+          inert={covered}
           style={sidebarWidth ? ({ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties) : undefined}
         >
           <div className="fask-wordmark">
@@ -340,39 +353,12 @@ export default function Dashboard(): React.JSX.Element {
               <Icon name="sidebar" />
             </button>
           </div>
-          <label className="sidebar-label">
-            {t('프로필')}
-            <select
-              aria-label={t('프로필')}
-              onContextMenu={(e) =>
-                openContext(
-                  e,
-                  'profile',
-                  data.activeProfileId,
-                  data.profiles.find((p) => p.id === data.activeProfileId)!.name
-                )
-              }
-              value={data.activeProfileId}
-              onChange={(e) => {
-                const id = e.target.value
-                void run(async () => {
-                  await window.fask.switchProfile(id)
-                  setSearch({ scope: 'home' })
-                  setCompose(false)
-                  setSelectedId('')
-                })
-              }}
-            >
-              {data.profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="sidebar-add" onClick={() => beginCreate('profile')}>
-            <Icon name="plus" size={14} />
-            {t('프로필 추가')}
+          <button className="profile-card" aria-label={t('프로필')} onClick={() => setProfileOpen(true)}>
+            <ProfileAvatar avatar={data.profile.avatar} name={data.profile.name} size={28} />
+            <span>
+              {data.profile.name}
+              <small>{data.device}</small>
+            </span>
           </button>
           <div className="sidebar-heading">
             {t('워크스페이스')}
@@ -401,6 +387,12 @@ export default function Dashboard(): React.JSX.Element {
           {workspace?.remote && (
             <span className="sidebar-remote">
               <Icon name="globe" size={14} />
+              {workspace.remote.owner && (
+                <>
+                  <ProfileAvatar avatar={workspace.remote.owner.avatar} name={workspace.remote.owner.name} size={16} />
+                  <span>{workspace.remote.owner.name}</span>
+                </>
+              )}
               <span>{workspace.remote.name}</span>
               <small>
                 {t(
@@ -512,7 +504,7 @@ export default function Dashboard(): React.JSX.Element {
           />
         </aside>
       )}
-      <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`} inert={!!settingsSection}>
+      <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`} inert={covered}>
         <nav className="breadcrumb" aria-label={t('상위 경로')}>
           {sidebarCollapsed && (
             <>
@@ -751,9 +743,8 @@ export default function Dashboard(): React.JSX.Element {
                 <Composer
                   key={project.id}
                   projectId={project.id}
-                  profileId={data.activeProfileId}
+                  profileId={data.profile.id}
                   settings={data.settings}
-                  host={workspace?.remote}
                   onSaved={(id) => {
                     setSelectedId(id)
                     void refresh()
@@ -1106,7 +1097,7 @@ export default function Dashboard(): React.JSX.Element {
               setContext(null)
               void run(async () => {
                 await window.fask.remove(kind, id)
-                if (kind === 'profile' || kind === 'workspace' || kind === 'project') {
+                if (kind === 'workspace' || kind === 'project') {
                   setSearch({ scope: 'home' })
                   setCompose(false)
                 }
@@ -1127,6 +1118,16 @@ export default function Dashboard(): React.JSX.Element {
           onClose={() => setSettingsSection(null)}
         />
       )}
+      {profileOpen && (
+        <ProfilePage
+          data={data}
+          onClose={() => setProfileOpen(false)}
+          onOpenDevices={() => {
+            setProfileOpen(false)
+            setSettingsSection('devices')
+          }}
+        />
+      )}
       {create && (
         <div className="modal-backdrop">
           <form
@@ -1143,7 +1144,6 @@ export default function Dashboard(): React.JSX.Element {
                 const id = await window.fask.create(create.kind, name, create.parent)
                 if (create.kind === 'project') setProjectId(id)
                 if (create.kind === 'workspace') setWorkspaceId(id)
-                if (create.kind === 'profile') await window.fask.switchProfile(id)
                 setCreate(null)
               })
             }}
@@ -1152,7 +1152,6 @@ export default function Dashboard(): React.JSX.Element {
               {t(create.id ? '{{kind}} 이름 변경' : '{{kind}} 만들기', {
                 kind: t(
                   {
-                    profile: '프로필',
                     workspace: '워크스페이스',
                     project: '프로젝트',
                     concept: '개념',
