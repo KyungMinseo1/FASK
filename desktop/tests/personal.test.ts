@@ -18,7 +18,18 @@ import { normalizeEndpoint, localModels, streamChat } from '../src/main/local-ap
 import type { PeerStatus, Project, Question, Snapshot, Turn, TurnState } from '../src/preload/personal'
 import { PairingHost } from '../src/main/peer-pairing'
 import { dial, pairWithHost, PeerConnection, type PeerLink } from '../src/main/personal-peers'
-import { checkPeerCall, checkPeerManager, RemoteRouter } from '../src/main/personal-routing'
+import { COMPUTE_DENIED, COMPUTE_UNREACHABLE, ComputeBroker, ComputeRunner } from '../src/main/compute'
+import { validResponse } from '../src/main/jev-api'
+import {
+  checkPeerCall,
+  checkPeerManager,
+  peerSnapshot,
+  removedIds,
+  RemoteRouter,
+  seenIds
+} from '../src/main/personal-routing'
+import { defaults } from '../src/main/personal-store'
+import { defaultAvatar } from '../src/shared/avatar'
 import { EXPORT_TRANSFER_MAX } from '../src/main/knowledge-export'
 import { EXPORT_DEFAULTS } from '../src/shared/export'
 import { pairConfig, pairRelayKey, runPairClient, type PairPayload, type PairPost } from '../src/shared/pair-code'
@@ -40,6 +51,8 @@ import './capture.test'
 import './prompts.test'
 import './habits.test'
 import './jev.test'
+import './profile.test'
+import './compute.test'
 import {
   answerJustCompleted,
   applyDelta,
@@ -140,6 +153,14 @@ function question(id: string, projectId: string, turns: Turn[]): Question {
   }
 }
 
+/** Simulates a pre-1.2.2 extra profile: a hidden profile record that becomes active with its own workspace. */
+function legacyProfile(store: PersonalStore, name: string): string {
+  const id = store.put('profile', '*', { id: `legacy-${name}`, name })
+  store.pref('active', id)
+  store.create('project', '첫 프로젝트', store.create('workspace', '내 워크스페이스'))
+  return id
+}
+
 test('rename preserves prompts; deletion cascades with shared images and concept children intact', () => {
   const path = mkdtempSync(join(tmpdir(), 'fask-delete-'))
   const store = new PersonalStore(path)
@@ -161,19 +182,18 @@ test('rename preserves prompts; deletion cascades with shared images and concept
     store.db
       .prepare('INSERT INTO runs(id,question_id,created_at,status,model) VALUES(?,?,?,?,?)')
       .run('run', q.id, q.createdAt, 'completed', '')
-    store.rename('profile', profile, '새 이름')
+    store.updateProfile({ name: '새 이름' })
     store.rename('question', q.id, '기록 제목')
     assert.equal(store.record<Question>('question', q.id).title, '기록 제목')
     assert.equal(store.record<Question>('question', q.id).turns[0].sent, '전송 질문')
     store.remove('concept', concept)
     assert.deepEqual(store.record<Question>('question', q.id).conceptIds, [child])
     assert.equal(store.snapshot().concepts.find((c) => c.id === child)?.parentId, null)
-    const otherProfile = store.create('profile', '다른 사용자')
-    store.switchProfile(otherProfile)
+    const otherProfile = legacyProfile(store, '다른 사용자')
     const other = store.list<Project>('project')[0]
     store.put('question', otherProfile, { ...q, id: 'shared', projectId: other.id, conceptIds: [] })
     assert.throws(() => store.remove('question', q.id), /프로필/)
-    store.switchProfile(profile)
+    store.pref('active', profile)
     store.remove('project', project.id)
     assert.equal(store.snapshot().questions.length, 0)
     // Concepts belong to the workspace and outlive the project.
@@ -183,23 +203,7 @@ test('rename preserves prompts; deletion cascades with shared images and concept
     store.remove('workspace', project.workspaceId)
     assert.equal(store.snapshot().workspaces.length, 0)
     assert.equal(store.snapshot().concepts.length, 0)
-    store.remove('profile', otherProfile)
-    assert.equal(store.image(image), null)
-    store.remove('profile', profile)
-    assert.notEqual(store.active, profile)
-    assert.equal(store.snapshot().profiles.length, 1)
-    assert.equal(store.snapshot().projects.length, 1)
-    const last = store.snapshot().projects[0]
-    store.put('question', store.active, {
-      ...q,
-      id: 'last',
-      projectId: last.id,
-      conceptIds: [],
-      turns: [turn({ id: 'last-t' })]
-    })
-    store.remove('question', 'last')
-    assert.equal(store.snapshot().questions.length, 0)
-    assert.equal(store.snapshot().projects.length, 1)
+    assert.ok(store.image(image), 'hidden profile still references shared image')
   } finally {
     store.close()
     rmSync(path, { recursive: true, force: true })
@@ -248,12 +252,11 @@ test('records survive restart; restart recovery bumps revision; profile and proj
     assert.equal(store.snapshot().questions[0].turns[0].status, 'failed')
     assert.equal(store.snapshot().questions[0].turns[0].revision, 4)
     assert.equal(store.snapshot().questions[0].turns[0].answer, '부분 답변')
-    const secondProfile = store.create('profile', '다른 사용자')
-    store.switchProfile(secondProfile)
+    legacyProfile(store, '다른 사용자')
     assert.equal(store.snapshot().questions.length, 0)
     assert.throws(() => store.record('question', q.id), /프로필/)
     assert.throws(() => store.rename('project', project.id, '다른 사용자 변경'), /프로필/)
-    store.switchProfile(profile)
+    store.pref('active', profile)
     store.updateQuestion(q.id, { memo: '중요한 결정' })
     assert.equal(store.record<Question>('question', q.id).memo, '중요한 결정')
   } finally {
@@ -349,7 +352,7 @@ test('backup validation rejects cyclic concepts and cross-workspace references b
     const a = store.create('concept', '부모', project.id),
       b = store.create('concept', '자식', project.id)
     const backup = { version: 3, snapshot: store.snapshot(), images: {} }
-    assert.equal(validateBackup(backup).version, 3)
+    assert.equal(validateBackup(backup).version, 4)
     backup.snapshot.concepts.find((c) => c.id === a)!.parentId = b
     backup.snapshot.concepts.find((c) => c.id === b)!.parentId = a
     assert.throws(() => validateBackup(backup), /백업/)
@@ -394,7 +397,7 @@ test('backup validation accepts tag roles, sources and tidy marks and rejects ma
     Object.assign(snapshot.concepts.find((c) => c.id === a)!, { tidyKept: 'key', tidyNamed: '엔트로피' })
     snapshot.workspaces.find((w) => w.id === project.workspaceId)!.tidyCandidates = ['정보량']
     // validateBackup repairs its input in place, so every call gets its own copy.
-    const check = (s: Snapshot): Snapshot => validateBackup({ version: 3, snapshot: s, images: {} }).snapshot
+    const check = (s: Snapshot) => validateBackup({ version: 3, snapshot: s, images: {} }).snapshot
     const restored = check(structuredClone(snapshot))
     assert.deepEqual(restored.questions.find((x) => x.id === q.id)?.conceptRoles, { [a]: 'focus', [b]: 'support' })
     assert.equal(restored.relations.find((r) => r.id === 'r-roles')?.evidence, '엔트로피는 로그로 정의된다.')
@@ -630,7 +633,7 @@ test('backup v1 conversations import as one question', () => {
       },
       images: {}
     })
-    assert.equal(backup.version, 3)
+    assert.equal(backup.version, 4)
     assert.equal(backup.snapshot.questions.length, 1)
     assert.deepEqual(
       backup.snapshot.questions[0].turns.map((t) => t.id),
@@ -1390,6 +1393,8 @@ interface PeerHost {
    * Resolves once a read is waiting at the gate.
    */
   holdSnapshot: (gate: Promise<void> | null) => Promise<void>
+  /** Receives `compute-reply` RPCs from linked PCs. */
+  compute: { reply: (peerId: string, raw: unknown) => void }
 }
 async function peerHost(isTailscale: (address: string) => boolean = () => true): Promise<PeerHost> {
   const tls = await createHubCertificate()
@@ -1398,6 +1403,7 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
   const grants = new Map<string, string>()
   const questions = new Map([['q1', 'first']])
   let held: { gate: Promise<void>; entered: () => void } | null = null
+  const compute: PeerHost['compute'] = { reply: () => {} }
   const mint = (name: string): PairPayload => {
     const token = randomBytes(32).toString('base64url')
     const id = `peer-${grants.size}-${name}`
@@ -1407,6 +1413,10 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
   const hub: PersonalHub = new PersonalHub(
     async (caller, name, args) => {
       assert.equal(caller.kind, 'peer')
+      if (name === 'compute-reply' && caller.kind === 'peer') {
+        compute.reply(caller.id, args[0])
+        return null
+      }
       if (name === 'snapshot') {
         const value = {
           profiles: [],
@@ -1434,7 +1444,7 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
       if (name === 'export-archive') return Buffer.alloc(EXPORT_TRANSFER_MAX, 7).toString('base64')
       throw new Error('지원하지 않는 요청입니다.')
     },
-    new Set(['snapshot', 'rename', 'export-archive']),
+    new Set(['snapshot', 'rename', 'export-archive', 'compute-reply']),
     '1.1.2',
     {
       ke1: (b) => pairing.ke1(b),
@@ -1458,6 +1468,7 @@ async function peerHost(isTailscale: (address: string) => boolean = () => true):
     tick: (ms) => {
       clock += ms
     },
+    compute,
     restart: () => hub.start(['127.0.0.1'], bound.port, auth, tls),
     holdSnapshot: (gate) => {
       const entered = Promise.withResolvers<void>()
@@ -1508,7 +1519,7 @@ test('pair code: direct pairing pins the host and is single use', async () => {
     const link = await pairWithHost({ kind: 'direct', address: '127.0.0.1', port: h.port }, code, 'client')
     assert.equal(link.fingerprint, h.tls.fingerprint)
     assert.equal(link.name, 'host-pc')
-    const conn = new PeerConnection(link, () => {}, () => {}, h.port)
+    const conn = new PeerConnection(link, () => {}, () => {}, () => {}, h.port)
     try {
       const snapshot = (await conn.rpc('snapshot', [])) as Snapshot
       assert.equal(snapshot.workspaces[0].name, 'Host WS')
@@ -1618,7 +1629,7 @@ test('pair code: a different channel fingerprint fails; a changed certificate bl
     await assert.rejects(runPairClient(forged, code, 'pc', 'c'), /연결 코드가 올바르지 않습니다/)
     const link = await linked(h)
     let changes = 0
-    const conn = new PeerConnection({ ...link, fingerprint: 'tampered' }, () => changes++, () => {}, h.port)
+    const conn = new PeerConnection({ ...link, fingerprint: 'tampered' }, () => changes++, () => {}, () => {}, h.port)
     try {
       await until(() => conn.status === 'blocked', 5000, 'blocked status')
       await assert.rejects(conn.rpc('snapshot', []), /상대 PC 인증서가 바뀌었습니다/)
@@ -1643,6 +1654,7 @@ test('pair code: direct pairing and peer tokens are limited to Tailscale', async
       { id: 'peer-x', name: 'h', fingerprint: h.tls.fingerprint, certPem: h.tls.cert, token: 'peer-token', addresses: ['127.0.0.1'], relay: null },
       () => {},
       () => {},
+      () => {},
       h.port
     )
     try {
@@ -1659,12 +1671,13 @@ test('linked PC: revoking the grant ends the event stream and the token', async 
   const h = await peerHost()
   try {
     const link = await linked(h)
-    const conn = new PeerConnection(link, () => {}, () => {}, h.port)
+    const conn = new PeerConnection(link, () => {}, () => {}, () => {}, h.port)
     try {
       await until(() => conn.status === 'online', 5000, 'online')
       for (const [token, id] of h.grants) if (id === link.id) h.grants.delete(token)
       h.hub.disconnect(link.id)
       await until(() => conn.status === 'revoked', 5000, 'revoked')
+      assert.equal(conn.snapshot, null)
       await assert.rejects(conn.rpc('snapshot', []), /외부 PC에서 연결이 해제되었습니다/)
       const raw = await new Promise<number>((resolve, reject) => {
         const req = httpsRequest(
@@ -1690,6 +1703,149 @@ test('linked PC: revoking the grant ends the event stream and the token', async 
     }
   } finally {
     await h.hub.stop()
+  }
+})
+
+test('linked PC: delegated compute runs on the asking PC and only within its ticket', async () => {
+  const h = await peerHost()
+  try {
+    const link = await linked(h)
+    const broker = new ComputeBroker((peerId, event, data) => h.hub.sendTo(peerId, event, data), validResponse)
+    h.compute.reply = (peerId, raw) => broker.reply(peerId, raw)
+    const models: string[] = []
+    const runner = new ComputeRunner({
+      chat: async () => '',
+      stream: async (model, _messages, _effort, _signal, delta) => {
+        models.push(model)
+        delta('a')
+        // Real delay: replies batch deltas over 100 ms, so separate deltas need separate batches.
+        await new Promise((r) => setTimeout(r, 150))
+        delta('b')
+      },
+      jev: () => undefined,
+      reply: (_peerId, reply) => conn.rpc('compute-reply', [reply], { retry: true }).then(() => {})
+    })
+    const conn: PeerConnection = new PeerConnection(
+      link,
+      () => {},
+      () => {},
+      (event, data) => (event === 'compute' ? runner.handle(link.id, data) : runner.cancel(link.id, data)),
+      h.port
+    )
+    try {
+      await until(() => conn.status === 'online', 5000, 'online')
+      const messages = [{ role: 'user' as const, content: 'hello there' }]
+      const deltas: string[] = []
+      const ticket = runner.issue(link.id, 'ask', { model: 'm1', question: 'hello' })
+      const result = await broker.run(
+        { kind: 'peer', peerId: link.id, ticket },
+        { kind: 'stream', model: 'm1', messages },
+        AbortSignal.timeout(5000),
+        (d) => deltas.push(d)
+      )
+      assert.equal(result.text, 'ab')
+      assert.deepEqual(deltas, ['a', 'b'])
+      assert.deepEqual(models, ['m1'])
+
+      const other = runner.issue(link.id, 'ask', { model: 'm1', question: 'hello' })
+      await assert.rejects(
+        broker.run({ kind: 'peer', peerId: link.id, ticket: other }, { kind: 'stream', model: 'm2', messages }, AbortSignal.timeout(5000)),
+        (e: Error) => e.message === COMPUTE_DENIED
+      )
+      await assert.rejects(
+        broker.run({ kind: 'peer', peerId: link.id, ticket: 'A'.repeat(24) }, { kind: 'stream', model: 'm1', messages }, AbortSignal.timeout(5000)),
+        (e: Error) => e.message === COMPUTE_DENIED
+      )
+      assert.deepEqual(models, ['m1'])
+      await assert.rejects(
+        broker.run({ kind: 'peer', peerId: 'nobody', ticket }, { kind: 'stream', model: 'm1', messages }, AbortSignal.timeout(5000)),
+        (e: Error) => e.message === COMPUTE_UNREACHABLE
+      )
+    } finally {
+      conn.close()
+      broker.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('linked PC: an event over the buffer cap without a boundary drops the stream, then it reconnects', async () => {
+  const h = await peerHost()
+  try {
+    const link = await linked(h)
+    const statuses: PeerStatus[] = []
+    let computes = 0
+    const conn: PeerConnection = new PeerConnection(
+      link,
+      () => statuses.push(conn.status),
+      () => {},
+      () => computes++,
+      h.port
+    )
+    try {
+      await until(() => conn.status === 'online', 5000, 'online')
+      statuses.length = 0
+      // The boundary trails 33 MiB of data, so the 32 MiB cap is crossed before it arrives.
+      assert.equal(h.hub.sendTo(link.id, 'compute', 'x'.repeat(33 * 1024 * 1024)), true)
+      await until(() => statuses.includes('offline'), 10000, 'offline')
+      await until(() => conn.status === 'online', 10000, 'reconnected')
+      assert.equal(computes, 0)
+    } finally {
+      conn.close()
+    }
+  } finally {
+    await h.hub.stop()
+  }
+})
+
+test('hub broadcast: an allow filter limits which peers receive an event; sendTo targets one peer', async () => {
+  const tls = await createHubCertificate()
+  const hub = new PersonalHub(async () => null, new Set(), '1.1.0', NO_PAIR, undefined, () => true)
+  const tokens: Record<string, string> = { t1: 'p1', t2: 'p2' }
+  const auth = (bearer: string): HubCaller | null => (tokens[bearer] ? { kind: 'peer', id: tokens[bearer] } : null)
+  const [bound] = await hub.start(['127.0.0.1'], 0, auth, tls)
+  const open: { destroy: () => void }[] = []
+  const listen = (token: string): Promise<() => string> => {
+    const { promise, resolve, reject } = Promise.withResolvers<() => string>()
+    let text = ''
+    const req = httpsRequest(
+      {
+        host: '127.0.0.1',
+        port: bound.port,
+        path: '/events',
+        headers: { Authorization: `Bearer ${token}` },
+        rejectUnauthorized: false,
+        agent: false
+      },
+      (res) => {
+        res.on('data', (c) => {
+          text += c
+          if (text.includes(': connected')) resolve(() => text)
+        })
+      }
+    )
+    req.on('error', (e) => (e.message.includes('socket hang up') ? undefined : reject(e)))
+    req.end()
+    open.push(req)
+    return promise
+  }
+  try {
+    const p1 = await listen('t1')
+    const p2 = await listen('t2')
+    hub.broadcast('stream', { turnId: 'only-p1' }, 'local', (c) => c.kind !== 'peer' || c.id === 'p1')
+    assert.equal(hub.sendTo('p2', 'compute', { id: 'for-p2' }), true)
+    assert.equal(hub.sendTo('p3', 'compute', { id: 'nobody' }), false)
+    hub.broadcast('stream', { turnId: 'all' })
+    // Each stream keeps write order, so seeing `all` means every earlier event already arrived.
+    await until(() => p1().includes('"all"') && p2().includes('"all"'), 5000, 'both received')
+    assert.match(p1(), /only-p1/)
+    assert.doesNotMatch(p2(), /only-p1/)
+    assert.match(p2(), /event: compute\ndata: \{"id":"for-p2"\}/)
+    assert.doesNotMatch(p1(), /for-p2/)
+  } finally {
+    for (const req of open) req.destroy()
+    await hub.stop()
   }
 })
 
@@ -1749,7 +1905,7 @@ test('peer rules: tidying or exporting needs the knowledge-manager grant', () =>
 test('linked PC: a maximum-size export archive arrives intact over the pinned TLS RPC', async () => {
   const h = await peerHost()
   try {
-    const conn = new PeerConnection(await linked(h), () => {}, () => {}, h.port)
+    const conn = new PeerConnection(await linked(h), () => {}, () => {}, () => {}, h.port)
     try {
       await until(() => conn.status === 'online', 5000, 'online')
       const data = await conn.rpc('export-archive', ['pr1', EXPORT_DEFAULTS])
@@ -1769,7 +1925,7 @@ test('linked PC: offline keeps the last snapshot, refuses edits, and reconnects'
   const h = await peerHost()
   try {
     const link = await linked(h)
-    const conn = new PeerConnection(link, () => router.rebuild(), () => {}, h.port)
+    const conn = new PeerConnection(link, () => router.rebuild(), () => {}, () => {}, h.port)
     const router = new RemoteRouter(() => [conn], () => false, () => 'local')
     try {
       await until(() => conn.status === 'online' && !!conn.snapshot, 5000, 'online')
@@ -1788,24 +1944,20 @@ test('linked PC: offline keeps the last snapshot, refuses edits, and reconnects'
   }
 })
 
+const hostProfile = { id: 'host-profile', name: 'Host', avatar: defaultAvatar('host-profile') }
+
 test('linked PC routing: merged snapshot marks remote workspaces; calls go to their owner only', async () => {
   const calls: unknown[][] = []
   const remote: Snapshot = {
-    profiles: [],
-    activeProfileId: 'host-profile',
+    profile: hostProfile,
+    device: 'host-pc',
     workspaces: [{ id: 'rw', profileId: 'host-profile', name: 'Remote' }],
     projects: [{ id: 'rp', workspaceId: 'rw', name: 'P', description: '' }],
     concepts: [],
     relations: [],
     questions: [question('rq', 'rp', [turn()])],
-    settings: {
-      model: 'host-a',
-      fastModel: 'host-fast',
-      deepModel: '',
-      models: ['host-a', 'host-fast'],
-      routing: 'manual',
-      endpoint: ''
-    } as unknown as Snapshot['settings'],
+    recentQuestions: {},
+    settings: { ...defaults, endpoint: '', regions: [] },
     storageBytes: 0
   }
   const peer = {
@@ -1813,49 +1965,63 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
     status: 'online' as PeerStatus,
     snapshot: remote,
     rpc: async (name: string, args: unknown[]) => {
+      if (name === 'tidy-start') throw new Error('boom')
       calls.push([name, ...args])
       return name === 'ask' ? { questionId: 'rq', turnId: 't1' } : null
     }
   }
   const local: unknown[][] = []
-  const asked: string[][] = []
+  const asked: unknown[][] = []
+  const prepared: unknown[][] = []
+  const failed: unknown[][] = []
   let linkedPeers = [peer]
   const router = new RemoteRouter(
     () => linkedPeers,
     (id) => id === 'lq' || id === 'lp',
     (name, args) => local.push([name, ...args]),
-    (p, q) => asked.push([p, q])
+    {
+      onAsked: (p, q, t, owner) => asked.push([p, q, t, owner]),
+      prepare: async (name, args, peerId, ctx) => {
+        prepared.push([name, peerId, ctx.mobile])
+        if (name === 'ask') return [{ ...(args[0] as object), model: 'mine-m', peer: 'ticketed' }]
+        if (name === 'tidy-start') return [args[0], 'TICKET']
+        return args
+      },
+      onForwardFailed: (name, args) => failed.push([name, ...args])
+    }
   )
   router.rebuild()
-  const merged = router.merge({ ...remote, activeProfileId: 'mine', workspaces: [], projects: [], questions: [] })
-  // This PC's composer picks from the host's models; endpoint and other settings stay private.
+  const merged = router.merge({ ...remote, profile: { ...hostProfile, id: 'mine' }, workspaces: [], projects: [], questions: [] })
+  // The owner card comes from the host's profile; host model settings are never exposed.
   assert.deepEqual(merged.workspaces[0].remote, {
     peerId: 'peer-a',
     name: 'PC A',
     status: 'online',
-    models: { model: 'host-a', fastModel: 'host-fast', deepModel: '', models: ['host-a', 'host-fast'], routing: 'manual' }
+    owner: { id: 'host-profile', name: 'Host', avatar: hostProfile.avatar }
   })
-  // A PC on 1.2 or older may share 'recommend'; it answers with the model this PC sends, like auto.
-  remote.settings = { ...remote.settings, routing: 'recommend' as never }
-  router.rebuild()
-  assert.equal(router.merge({ ...remote, workspaces: [], projects: [], questions: [] }).workspaces[0].remote?.models?.routing, 'auto')
-  remote.settings = { ...remote.settings, routing: 'manual' }
-  router.rebuild()
+  assert.equal('models' in (merged.workspaces[0].remote ?? {}), false)
+  assert.equal(router.remoteOwner('rp'), 'host-profile')
+  assert.equal(router.remoteOwner('lp'), undefined)
+  assert.deepEqual(router.remoteQuestions().map((q) => q.id), ['rq'])
   assert.equal(merged.questions[0].id, 'rq')
   await router.route('rename', ['question', 'rq', 'renamed'])
   await router.route('rename', ['question', 'lq', 'local'])
-  await router.route('ask', [{ requestId: 'r1', profileId: 'mine', projectId: 'rp', raw: 'q', model: 'host-fast', reasoningEffort: 'high', annotated: true }])
+  await router.route('ask', [{ requestId: 'r1', projectId: 'rp', raw: 'q', model: 'x', reasoningEffort: 'high', annotated: true }], { mobile: true })
   await router.route('cancel', ['r1'])
   assert.deepEqual(calls[0], ['rename', 'question', 'rq', 'renamed'])
-  assert.deepEqual(calls[1], ['ask', { requestId: 'r1', profileId: 'host-profile', projectId: 'rp', raw: 'q', model: 'host-fast', reasoningEffort: 'high', annotated: true }])
+  // Forwarded exactly as prepared: no host profileId is injected.
+  assert.deepEqual(calls[1], ['ask', { requestId: 'r1', projectId: 'rp', raw: 'q', model: 'mine-m', reasoningEffort: 'high', annotated: true, peer: 'ticketed' }])
   assert.deepEqual(calls[2], ['cancel', 'r1'])
+  assert.deepEqual(prepared[1], ['ask', 'peer-a', true])
   assert.deepEqual(local, [['rename', 'question', 'lq', 'local']])
   await assert.rejects(router.route('move-question', ['rq', 'lp']), /로컬과 외부 워크스페이스 사이/)
   await router.route('export-archive', ['rp', EXPORT_DEFAULTS])
   assert.deepEqual(calls[3], ['export-archive', 'rp', EXPORT_DEFAULTS])
+  await assert.rejects(router.route('tidy-start', ['rw']), /boom/)
+  assert.deepEqual(failed, [['tidy-start', 'rw', 'TICKET']])
   // Saving happens on this PC: `export` itself always runs locally and fetches through export-archive.
   await router.route('export', ['rp', EXPORT_DEFAULTS])
-  assert.deepEqual(asked, [['rp', 'rq']])
+  assert.deepEqual(asked, [['rp', 'rq', 't1', 'peer-a']])
   // The overlay and its recent conversation live on this PC, even for linked-PC projects.
   await router.route('open-overlay', ['rp', 'rq'])
   await router.route('active-project', ['rp'])
@@ -1870,7 +2036,13 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
   ])
   assert.equal(router.remoteProject('rp')?.id, 'rp')
   assert.equal(router.remoteQuestion('rq')?.projectId, 'rp')
+  assert.equal(router.ownerOf('rq'), 'peer-a')
   assert.equal(router.remoteProject('lp'), undefined)
+  // A host without a valid profile card gets no owner.
+  router.rebuild()
+  remote.profile = { ...hostProfile, name: '' }
+  assert.equal(router.merge({ ...remote, workspaces: [], projects: [], questions: [] }).workspaces[0].remote?.owner, undefined)
+  remote.profile = hostProfile
   // An id collision with local data hides the remote workspace instead of mixing owners.
   const colliding = new RemoteRouter(() => [peer], (id) => id === 'rq', () => null)
   colliding.rebuild()
@@ -1886,13 +2058,14 @@ test('linked PC routing: merged snapshot marks remote workspaces; calls go to th
 test('linked PC routing: a question created by a forwarded ask routes to its owner before the next snapshot', async () => {
   const calls: unknown[][] = []
   const remote: Snapshot = {
-    profiles: [],
-    activeProfileId: 'host-profile',
+    profile: hostProfile,
+    device: 'host-pc',
     workspaces: [{ id: 'rw', profileId: 'host-profile', name: 'Remote' }],
     projects: [{ id: 'rp', workspaceId: 'rw', name: 'P', description: '' }],
     concepts: [],
     relations: [],
     questions: [question('rq', 'rp', [turn()])],
+    recentQuestions: {},
     settings: {} as Snapshot['settings'],
     storageBytes: 0
   }
@@ -1913,7 +2086,7 @@ test('linked PC routing: a question created by a forwarded ask routes to its own
     (name, args) => local.push([name, ...args])
   )
   router.rebuild()
-  await router.route('ask', [{ requestId: 'r9', profileId: 'mine', projectId: 'rp', raw: 'q', model: '' }])
+  await router.route('ask', [{ requestId: 'r9', projectId: 'rp', raw: 'q', model: '' }])
   await router.route('turn-state', ['new-q', 't9'])
   assert.deepEqual(calls.at(-1), ['turn-state', 'new-q', 't9'])
   // Stream events can name a new question before the ask reply arrives.
@@ -1921,16 +2094,110 @@ test('linked PC routing: a question created by a forwarded ask routes to its own
   await router.route('turn-state', ['stream-q', 't10'])
   assert.deepEqual(calls.at(-1), ['turn-state', 'stream-q', 't10'])
   assert.deepEqual(local, [])
+  // forget() drops the peer's forwarded bookkeeping.
+  router.forget('peer-a')
+  assert.equal(router.ownerOf('new-q'), undefined)
+  await router.route('cancel', ['r10'])
+  assert.deepEqual(local, [['cancel', 'r10']])
   linkedPeers = []
   router.rebuild()
-  assert.equal(router.ownerOf('new-q'), undefined)
+  assert.equal(router.ownerOf('stream-q'), undefined)
+})
+
+function sharingFixture(): Snapshot {
+  const ws = (id: string) => ({ id, profileId: 'host-profile', name: id })
+  const relation = (id: string, workspaceId: string) => ({
+    id,
+    workspaceId,
+    from: `c-${workspaceId}`,
+    to: `c-${workspaceId}`,
+    type: 'uses' as const,
+    questionId: null,
+    turnIds: [],
+    confidence: 1,
+    approved: true,
+    createdAt: new Date().toISOString(),
+    invalidatedAt: null
+  })
+  return {
+    profile: hostProfile,
+    device: 'host-pc',
+    workspaces: [ws('w1'), ws('w2')],
+    projects: [
+      { id: 'p1', workspaceId: 'w1', name: 'P1', description: '' },
+      { id: 'p2', workspaceId: 'w2', name: 'P2', description: '' }
+    ],
+    concepts: [
+      { id: 'c-w1', workspaceId: 'w1', name: 'a' },
+      { id: 'c-w2', workspaceId: 'w2', name: 'b' }
+    ] as unknown as Snapshot['concepts'],
+    relations: [relation('r1', 'w1'), relation('r2', 'w2')],
+    questions: [question('q1', 'p1', [turn()]), question('q2', 'p2', [turn()])],
+    recentQuestions: { p1: 'q1', p2: 'q2' },
+    settings: { ...defaults, endpoint: 'http://127.0.0.1:1/v1', model: 'secret-model', regions: [] },
+    storageBytes: 123
+  }
+}
+
+test('peerSnapshot exposes only shared workspaces and default settings', () => {
+  const s = peerSnapshot(sharingFixture(), new Set(['w1']))
+  assert.deepEqual(s.workspaces.map((w) => w.id), ['w1'])
+  assert.deepEqual(s.projects.map((p) => p.id), ['p1'])
+  assert.deepEqual(s.concepts.map((c) => c.id), ['c-w1'])
+  assert.deepEqual(s.relations.map((r) => r.id), ['r1'])
+  assert.deepEqual(s.questions.map((q) => q.id), ['q1'])
+  assert.deepEqual(s.recentQuestions, {})
+  assert.equal(s.storageBytes, 0)
+  assert.deepEqual(s.settings, { ...defaults, endpoint: '', regions: [] })
+  assert.equal(s.profile.id, 'host-profile')
+  assert.equal(s.device, 'host-pc')
+  assert.equal(peerSnapshot(sharingFixture(), new Set()).workspaces.length, 0)
+})
+
+test('checkPeerCall with a share-checking own limits a peer to shared workspaces', () => {
+  const s = sharingFixture()
+  const shared = new Set(['w1'])
+  const scope = (kind: string, id: string): string => {
+    if (kind === 'workspace') return s.workspaces.find((w) => w.id === id)!.id
+    if (kind === 'project') return s.projects.find((p) => p.id === id)!.workspaceId
+    const q = s.questions.find((x) => x.id === id)!
+    return s.projects.find((p) => p.id === q.projectId)!.workspaceId
+  }
+  const own = (kind: string, id: string): void => {
+    if (!shared.has(scope(kind, id))) throw new Error('not shared')
+  }
+  for (const [name, args] of [
+    ['update-question', ['q2', {}]],
+    ['ask', [{ projectId: 'p2' }]],
+    ['turn-state', ['q2', 't']],
+    ['extract-run', ['q2', 'ticket']]
+  ] as [string, unknown[]][])
+    assert.throws(() => checkPeerCall(own, name, args), /권한이 없는 요청입니다/, name)
+  checkPeerCall(own, 'update-question', ['q1', {}])
+  checkPeerCall(own, 'ask', [{ projectId: 'p1' }])
+  checkPeerCall(own, 'turn-state', ['q1', 't'])
+  checkPeerCall(own, 'extract-run', ['q1', 'ticket'])
+  // Refining would spend the host's key: not peer-callable.
+  assert.throws(() => checkPeerCall(own, 'refine', ['x']), /지원하지 않는 요청입니다/)
+})
+
+test('seenIds/removedIds list what a linked PC no longer shows', () => {
+  const prev = sharingFixture()
+  const next = peerSnapshot(prev, new Set(['w2']))
+  assert.deepEqual(removedIds(seenIds(prev), seenIds(next)), { workspaceIds: ['w1'], projectIds: ['p1'], questionIds: ['q1'] })
+  assert.deepEqual(removedIds(seenIds(prev), seenIds(null)), {
+    workspaceIds: ['w1', 'w2'],
+    projectIds: ['p1', 'p2'],
+    questionIds: ['q1', 'q2']
+  })
+  assert.deepEqual(seenIds(null), { workspaceIds: [], projectIds: [], questionIds: [] })
 })
 
 test('linked PC: concurrent renames from two PCs converge on both', async () => {
   const h = await peerHost()
   try {
-    const a = new PeerConnection(await linked(h, 'a'), () => {}, () => {}, h.port)
-    const b = new PeerConnection(await linked(h, 'b'), () => {}, () => {}, h.port)
+    const a = new PeerConnection(await linked(h, 'a'), () => {}, () => {}, () => {}, h.port)
+    const b = new PeerConnection(await linked(h, 'b'), () => {}, () => {}, () => {}, h.port)
     try {
       await until(() => a.status === 'online' && b.status === 'online', 5000, 'both online')
       await Promise.all([a.rpc('rename', ['question', 'q1', 'A']), b.rpc('rename', ['question', 'q1', 'B'])])
@@ -1948,7 +2215,7 @@ test('linked PC: concurrent renames from two PCs converge on both', async () => 
 test('linked PC: a change during a snapshot read is re-read, not dropped', async () => {
   const h = await peerHost()
   try {
-    const conn = new PeerConnection(await linked(h), () => {}, () => {}, h.port)
+    const conn = new PeerConnection(await linked(h), () => {}, () => {}, () => {}, h.port)
     try {
       await until(() => conn.status === 'online' && !!conn.snapshot, 5000, 'online')
       const gate = Promise.withResolvers<void>()

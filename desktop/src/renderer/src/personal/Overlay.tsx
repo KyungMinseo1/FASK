@@ -896,7 +896,6 @@ export default function Overlay(): React.JSX.Element {
                 projectId={projectId}
                 profileId={profileId}
                 settings={data.settings}
-                host={host}
                 questionId={questionId}
                 recentQuestion={recent}
                 onReference={openReference}

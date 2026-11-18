@@ -37,7 +37,7 @@ export function jevClient(baseUrl: string, key: string): JevCall {
         redirect: 'error',
         signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ model: JEV_MODEL, ...request })
+        body: JSON.stringify({ model: JEV_MODEL, state: request.state, questions: request.questions })
       })
     } catch (e) {
       if (signal.aborted) throw new Error('요청을 취소했습니다.')
@@ -60,7 +60,7 @@ export function jevClient(baseUrl: string, key: string): JevCall {
   }
 }
 
-function validResponse(body: unknown, request: JevRequest): body is JevResponse {
+export function validResponse(body: unknown, request: JevRequest): body is JevResponse {
   if (!isObject(body) || !isObject(body.answers)) return false
   const answers = body.answers
   return Object.entries(request.questions).every(([name, question]) => {

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { jevClient, type JevAnswer, type JevCall, type JevRequest } from '../src/main/jev-api'
+import { jevClient, JEV_MODEL, type JevAnswer, type JevCall, type JevRequest } from '../src/main/jev-api'
 import { jevRoute, RouteCache } from '../src/main/jev-routing'
 import { BATCH_CHARS, BATCH_MAX, jevRecall } from '../src/main/jev-recall'
 import type { Project, RouteResult } from '../src/preload/personal'
@@ -69,6 +69,28 @@ test('jevClient posts the TypeSafe shape with a Bearer key and maps failures', a
   } finally {
     server.closeAllConnections()
     server.close()
+  }
+})
+
+test('jevClient sends only state and questions; a request model never replaces the fixed model', async () => {
+  const original = globalThis.fetch
+  let sent: Record<string, unknown> = {}
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    sent = JSON.parse(String(init.body))
+    return new Response(
+      JSON.stringify({ model: JEV_MODEL, answers: { ok: { type: 'noul', noul: 1 } }, usage: { input_tokens: 1, output_tokens: 0 } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    )
+  }) as typeof fetch
+  try {
+    await jevClient('https://jev.invalid', 'k')(
+      { state: 1, questions: { ok: { type: 'noul', instructions: 'x' } }, model: 'x', url: 'http://evil' } as never,
+      AbortSignal.timeout(5000)
+    )
+    assert.equal(sent.model, JEV_MODEL)
+    assert.deepEqual(Object.keys(sent).sort(), ['model', 'questions', 'state'])
+  } finally {
+    globalThis.fetch = original
   }
 })
 

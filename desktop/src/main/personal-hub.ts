@@ -250,11 +250,30 @@ export class PersonalHub {
     stream.once('close', () => this.injected.delete(stream))
     relay.emit('connection', stream)
   }
-  /** Peers never receive events that this PC itself relays from its own linked PCs. */
-  broadcast(event: 'stream' | 'changed', data: unknown, origin: 'local' | 'remote' = 'local'): void {
+  /**
+   * Peers never receive events that this PC itself relays from its own linked PCs.
+   * `allow`, when given, further limits which callers receive the event (shared workspaces).
+   */
+  broadcast(
+    event: 'stream' | 'changed',
+    data: unknown,
+    origin: 'local' | 'remote' = 'local',
+    allow?: (caller: HubCaller) => boolean
+  ): void {
     const chunk = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
     for (const [res, caller] of this.events)
-      if (origin === 'local' || caller.kind !== 'peer') res.write(chunk)
+      if ((origin === 'local' || caller.kind !== 'peer') && (!allow || allow(caller))) res.write(chunk)
+  }
+  /** Writes a delegated-compute event to every event stream of one linked PC; false when none is open. */
+  sendTo(peerId: string, event: 'compute' | 'compute-cancel', data: unknown): boolean {
+    const chunk = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    let sent = false
+    for (const [res, caller] of this.events)
+      if (caller.kind === 'peer' && caller.id === peerId) {
+        res.write(chunk)
+        sent = true
+      }
+    return sent
   }
   /** Ends a revoked peer's event streams; its token already fails auth. */
   disconnect(peerId: string): void {

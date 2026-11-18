@@ -27,7 +27,6 @@ import { CHILD_LEVEL, PARENT_LEVEL } from './personal-backup'
 import {
   conceptName,
   parseExtraction,
-  parseHabits,
   parseRetag,
   parseTidy,
   type ExtractedConcept,
@@ -38,16 +37,42 @@ import {
 import { normalizeName, questionText, type SearchHit } from './knowledge-search'
 import { addSuggestions, mentionTurns, placementKey, type PersonalStore } from './personal-store'
 import { prompt } from './prompts'
-import { applyDetected, feedbackTurns, habitContext } from './habits'
+import { LOCAL, SHARE_REVOKED, type Executor } from './compute'
 
-/** One non-streaming completion; `model` is already resolved. */
+/** One non-streaming completion on `executor`'s resources; the executing device picks the model. */
 export type Chat = (
   profile: string,
-  model: string,
+  executor: Executor,
   instruction: string,
   input: string,
   signal: AbortSignal
 ) => Promise<string>
+
+/** Who asked a turn, for extraction: this PC, or the linked PC whose grant id is in the author. */
+export function turnOwner(t: Turn): string {
+  return t.author?.peer ? `peer:${t.author.peer}` : 'local'
+}
+
+/** First index after `start` (below `end`) whose turn has another owner than `start`'s, else `end`. */
+function ownerStop(q: Question, start: number, end: number): number {
+  const owner = turnOwner(q.turns[start])
+  for (let i = start + 1; i < end; i++) if (turnOwner(q.turns[i]) !== owner) return i
+  return end
+}
+
+/** Turns extraction reads: finished ones (running, cancelled and failed turns carry no answer to learn from). */
+const extractable = (t: Turn): boolean => t.status === 'completed' || t.status === 'saved'
+
+/** `q` with `deferred` as its extraction queue; an empty queue drops the field. */
+function withDeferred(q: Question, deferred: NonNullable<Question['deferredTurns']>): Question {
+  const next: Question = { ...q, deferredTurns: deferred }
+  if (!deferred.length) delete next.deferredTurns
+  return next
+}
+
+/** A timeout signal that `controller` (a revoked share) also aborts. */
+const timed = (ms: number, controller?: AbortController): AbortSignal =>
+  controller ? AbortSignal.any([controller.signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms)
 
 const APPLY_CONFIDENCE = 0.7
 /** Below this much new user/answer text, extraction only advances the watermark. */
@@ -440,30 +465,42 @@ export class KnowledgeExtractor {
   /** Open question per client (a window, the phone, a linked PC's client). */
   private readonly focused = new Map<string, string>()
   private closed = false
+  /** Extractions running on a linked PC's resources, per question; abortPeer stops them. */
+  private readonly peerRuns = new Map<string, { peerId: string; workspaceId: string; controller: AbortController }>()
   /** The latest tidy preview per workspace (tidyKey); tidyRetag extends it and tidyApply consumes it. */
   private readonly proposals = new Map<string, Proposal>()
   /** The tidy job per workspace (tidyKey), in memory only: a restart loses it. */
   private readonly jobs = new Map<string, TidyJob>()
+  /** Tidy jobs running on a linked PC's resources, per workspace (tidyKey); abortPeer stops them. */
+  private readonly peerTidies = new Map<
+    string,
+    { job: TidyJob; peerId: string; workspaceId: string; controller: AbortController }
+  >()
   /** Id of the last job applied per workspace (tidyKey) since this extractor started. */
   private readonly lastApplied = new Map<string, string>()
   constructor(
     private readonly store: PersonalStore,
     private readonly chat: Chat,
-    private readonly changed: () => void
+    private readonly changed: () => void,
+    /** Whether the linked PC still has the workspace shared; checked again right before its result is saved. */
+    private readonly peerAllowed: (peerId: string, workspaceId: string) => boolean = () => true
   ) {}
 
   /** A turn of the question finished; restarts its debounce. */
   completed(profile: string, questionId: string): void {
     const settings = this.store.settings(profile)
-    if ((!settings.organize && !settings.answerHabits) || this.closed) return
+    if (!settings.organize) return
+    this.schedule(profile, questionId, Math.max(0, settings.extractDelaySec) * 1000)
+  }
+
+  /** (Re)starts the question's debounce: a local run after `ms`. */
+  private schedule(profile: string, questionId: string, ms: number): void {
+    if (this.closed) return
     clearTimeout(this.timers.get(questionId)?.timer)
-    const timer = setTimeout(
-      () => {
-        this.timers.delete(questionId)
-        void this.run(profile, questionId)
-      },
-      Math.max(0, settings.extractDelaySec) * 1000
-    )
+    const timer = setTimeout(() => {
+      this.timers.delete(questionId)
+      void this.run(profile, questionId)
+    }, ms)
     this.timers.set(questionId, { timer, profile })
   }
 
@@ -486,8 +523,7 @@ export class KnowledgeExtractor {
   /** Startup: questions with completed turns past their watermark get a debounce. */
   scan(profiles: string[]): void {
     for (const profile of profiles) {
-      const settings = this.store.settings(profile)
-      if (!settings.organize && !settings.answerHabits) continue
+      if (!this.store.settings(profile).organize) continue
       for (const q of this.store.list<Question>('question', profile)) {
         const { start, end } = pendingRange(q)
         if (q.turns.slice(start, end).some((t) => t.status === 'completed')) this.completed(profile, q.id)
@@ -495,17 +531,54 @@ export class KnowledgeExtractor {
     }
   }
 
-  /** Runs extraction now; a call during a running one queues exactly one follow-up run. */
+  /** Runs extraction now on this PC; a call during a running one queues exactly one follow-up run. */
   run(profile: string, questionId: string): Promise<void> {
     const current = this.running.get(questionId)
     if (current) {
       this.again.set(questionId, profile)
       return current
     }
-    const job = this.extract(profile, questionId)
-      .catch(() => {
-        /* The watermark stays; the next completed turn or restart retries. */
-      })
+    return this.track(profile, questionId, LOCAL).job
+  }
+
+  /**
+   * Runs extraction on `executor` once the question's running run (and its follow-ups) settled.
+   * A failed call rejects; the watermark and queue stay for the next request.
+   */
+  async runFor(profile: string, questionId: string, executor: Executor): Promise<'done' | 'blocked'> {
+    for (let current = this.running.get(questionId); current; current = this.running.get(questionId)) await current
+    return this.track(profile, questionId, executor).result
+  }
+
+  /**
+   * Hub RPC form of runFor: returns at once (a peer RPC times out before an extraction call).
+   * 'blocked' when nothing is running on the question and `executor` has nothing to extract.
+   */
+  startFor(profile: string, questionId: string, executor: Executor): 'started' | 'blocked' {
+    if (
+      !this.running.has(questionId) &&
+      executor.kind === 'peer' &&
+      !this.peerBatch(this.store.record<Question>('question', questionId, profile), executor.peerId).turns.length
+    )
+      return 'blocked'
+    void this.runFor(profile, questionId, executor).catch(() => {})
+    return 'started'
+  }
+
+  /** Registers one extraction as the question's running run; a follow-up queued meanwhile runs locally after it. */
+  private track(
+    profile: string,
+    questionId: string,
+    executor: Executor
+  ): { job: Promise<void>; result: Promise<'done' | 'blocked'> } {
+    const result = this.extract(profile, questionId, executor)
+    const job = result
+      .then(
+        () => undefined,
+        () => {
+          /* The watermark and queue stay; the next completed turn, request or restart retries. */
+        }
+      )
       .finally(() => {
         this.running.delete(questionId)
         const next = this.again.get(questionId)
@@ -513,7 +586,7 @@ export class KnowledgeExtractor {
         if (next !== undefined && !this.closed) void this.run(next, questionId)
       })
     this.running.set(questionId, job)
-    return job
+    return { job, result }
   }
 
   /** Resolves when every running and queued extraction has settled (tests, shutdown). */
@@ -527,105 +600,180 @@ export class KnowledgeExtractor {
     this.timers.clear()
   }
 
-  private advance(profile: string, questionId: string, end: number): void {
-    const fresh = this.store.record<Question>('question', questionId, profile)
-    if (fresh.extractedTurns >= end) return
-    this.store.put('question', profile, { ...fresh, extractedTurns: end })
+  /**
+   * What a run on `peerId`'s resources extracts: its queued turns still in the question, then its
+   * run of pending turns at the watermark. `front` ends that run; null when the watermark's turn
+   * is not that PC's.
+   */
+  private peerBatch(q: Question, peerId: string): { turns: { turn: Turn; index: number }[]; front: number | null } {
+    const queued = new Set((q.deferredTurns ?? []).filter((d) => d.peer === peerId).map((d) => d.turnId))
+    const { start, end } = pendingRange(q)
+    const front = start < end && turnOwner(q.turns[start]) === `peer:${peerId}` ? ownerStop(q, start, end) : null
+    const turns = q.turns
+      .map((turn, index) => ({ turn, index }))
+      .filter(
+        ({ turn, index }) =>
+          extractable(turn) && (queued.has(turn.id) || (front !== null && index >= start && index < front))
+      )
+    return { turns, front }
   }
 
-  private markHabits(profile: string, questionId: string, end: number): void {
-    const fresh = this.store.record<Question>('question', questionId, profile)
-    if ((fresh.habitTurns ?? 0) >= end) return
-    this.store.put('question', profile, { ...fresh, habitTurns: end })
+  /** `q` with the watermark at least `end` and, on a linked PC's run, the queued turns it covered removed. */
+  private release(q: Question, peer: string | null, queued: ReadonlySet<string>, end: number): Question {
+    const kept =
+      peer === null ? q : withDeferred(q, (q.deferredTurns ?? []).filter((d) => d.peer !== peer || !queued.has(d.turnId)))
+    return { ...kept, extractedTurns: Math.max(q.extractedTurns, end) }
   }
 
   /**
-   * One model call per run: concept extraction of the pending turns and, when feedback turns past
-   * `habitTurns` pass the habit gate, the answer-habit judgment riding on it (or alone when concept
-   * extraction is off or has nothing to send). A failed call leaves both watermarks for a retry.
+   * One concept-extraction call per run, on `executor`'s resources. Locally a run covers the turns
+   * at the watermark that share one owner: this PC's are extracted (organize on); a linked PC's are
+   * queued in `deferredTurns` unread, for that PC's resources. The turns after the run get a
+   * follow-up run. On a linked PC's executor a run covers that PC's queued turns and its run at the
+   * watermark ('blocked' when there are none); queued turns alone leave the watermark. A failed call
+   * leaves the watermark and the queue for a retry.
    */
-  private async extract(profile: string, questionId: string): Promise<void> {
+  private async extract(profile: string, questionId: string, executor: Executor = LOCAL): Promise<'done' | 'blocked'> {
     const settings = this.store.settings(profile)
-    if (!settings.organize && !settings.answerHabits) return
     const q = this.store.record<Question>('question', questionId, profile)
     const { start, end } = pendingRange(q)
-    const lang = settings.promptLanguage
-    const batch = q.turns
-      .map((turn, index) => ({ turn, index }))
-      .slice(start, end)
-      .filter(({ turn }) => turn.status === 'completed' || turn.status === 'saved')
-    const signal = batch.map(({ turn }) => `${userText(turn)}\n${turn.answer}`).join('\n')
-    let doConcepts = settings.organize && end > start
-    if (doConcepts && signal.replace(/\s/g, '').length < MIN_TEXT) {
-      this.advance(profile, questionId, end)
-      doConcepts = false
+    let batch: { turn: Turn; index: number }[]
+    /** Watermark after this run. */
+    let stop: number
+    /** This run ends at a turn a follow-up run picks up. */
+    let more: boolean
+    let peer: string | null = null
+    let queued = new Set<string>()
+    if (executor.kind === 'local') {
+      if (start >= end) return 'done'
+      stop = ownerStop(q, start, end)
+      more = stop < end
+      const owner = turnOwner(q.turns[start])
+      if (owner !== 'local') {
+        const peerId = owner.slice('peer:'.length)
+        const deferred = [...(q.deferredTurns ?? [])]
+        for (const turn of q.turns.slice(start, stop))
+          if (extractable(turn) && !deferred.some((d) => d.turnId === turn.id))
+            deferred.push({ turnId: turn.id, peer: peerId })
+        this.store.put('question', profile, {
+          ...withDeferred(q, deferred),
+          extractedTurns: Math.max(q.extractedTurns, stop)
+        })
+        if (more) this.again.set(questionId, profile)
+        this.changed()
+        return 'done'
+      }
+      if (!settings.organize) return 'done'
+      batch = q.turns
+        .map((turn, index) => ({ turn, index }))
+        .slice(start, stop)
+        .filter(({ turn }) => extractable(turn))
+    } else {
+      peer = executor.peerId
+      const found = this.peerBatch(q, peer)
+      if (!found.turns.length) return 'blocked'
+      queued = new Set((q.deferredTurns ?? []).filter((d) => d.peer === peer).map((d) => d.turnId))
+      batch = found.turns
+      stop = found.front ?? q.extractedTurns
+      more = found.front !== null && found.front < end
     }
-    const feedback = settings.answerHabits ? feedbackTurns(q, Math.min(q.habitTurns ?? 0, end), end) : []
-    if (!doConcepts && !feedback.length) {
-      if (settings.answerHabits) this.markHabits(profile, questionId, end)
-      return
+    const lang = settings.promptLanguage
+    const signal = batch.map(({ turn }) => `${userText(turn)}\n${turn.answer}`).join('\n')
+    if (signal.replace(/\s/g, '').length < MIN_TEXT) {
+      this.store.put('question', profile, this.release(q, peer, queued, stop))
+      if (more) this.again.set(questionId, profile)
+      return 'done'
     }
     const workspaceId = this.store.record<Project>('project', q.projectId, profile).workspaceId
-    const sent = feedback.length ? habitContext(this.store, profile) : []
-    const habitInput = feedback.length
-      ? { feedback, habits: sent.map((h) => ({ id: h.id, rule: h.rule, when: h.when, status: h.status })) }
-      : {}
-    let instruction = prompt(lang, 'habits')
-    let input = JSON.stringify(habitInput)
-    let concepts: { graph: Graph; known: Set<string> } | undefined
-    if (doConcepts) {
-      const graph = new Graph(this.store, profile, workspaceId)
-      const linked = q.conceptIds.flatMap((id) => graph.get(id) ?? [])
-      const candidates = this.store.search(profile, signal.slice(0, 4000), {
-        workspaceId,
-        kinds: ['concept'],
-        limit: CANDIDATES
-      }).flatMap((hit) => (q.conceptIds.includes(hit.id) ? [] : (graph.get(hit.id) ?? [])))
-      const describe = (c: Concept): Record<string, unknown> => ({
-        id: c.id,
-        name: c.name,
-        aliases: c.aliases,
-        level: c.level,
-        parent: c.parentId ? (graph.get(c.parentId)?.name ?? null) : null
-      })
-      input = JSON.stringify({
-        title: questionHeading(q),
-        turns: batch.map(({ turn, index }) => ({
-          index,
-          question: userText(turn),
-          ...(turn.documents.length ? { files: turn.documents.map((d) => d.name) } : {}),
-          answer: turn.answer.slice(0, 6000)
-        })),
-        candidates: candidates.map(describe),
-        linked: linked.map((c) => ({
-          ...describe(c),
-          role: roleOf(q, c.id),
-          ...(q.conceptSources?.[c.id] === 'user' ? { user: true } : {})
-        })),
-        ...habitInput
-      })
-      instruction = prompt(lang, 'extract') + (feedback.length ? `\n\n${prompt(lang, 'habits')}` : '')
-      concepts = { graph, known: new Set([...candidates, ...linked].map((c) => c.id)) }
+    const graph = new Graph(this.store, profile, workspaceId)
+    const linked = q.conceptIds.flatMap((id) => graph.get(id) ?? [])
+    const candidates = this.store.search(profile, signal.slice(0, 4000), {
+      workspaceId,
+      kinds: ['concept'],
+      limit: CANDIDATES
+    }).flatMap((hit) => (q.conceptIds.includes(hit.id) ? [] : (graph.get(hit.id) ?? [])))
+    const describe = (c: Concept): Record<string, unknown> => ({
+      id: c.id,
+      name: c.name,
+      aliases: c.aliases,
+      level: c.level,
+      parent: c.parentId ? (graph.get(c.parentId)?.name ?? null) : null
+    })
+    const input = JSON.stringify({
+      title: questionHeading(q),
+      turns: batch.map(({ turn, index }) => ({
+        index,
+        question: userText(turn),
+        ...(turn.documents.length ? { files: turn.documents.map((d) => d.name) } : {}),
+        answer: turn.answer.slice(0, 6000)
+      })),
+      candidates: candidates.map(describe),
+      linked: linked.map((c) => ({
+        ...describe(c),
+        role: roleOf(q, c.id),
+        ...(q.conceptSources?.[c.id] === 'user' ? { user: true } : {})
+      }))
+    })
+    const known = new Set([...candidates, ...linked].map((c) => c.id))
+    const controller = peer === null ? undefined : new AbortController()
+    if (peer !== null && controller) this.peerRuns.set(questionId, { peerId: peer, workspaceId, controller })
+    let text: string
+    try {
+      text = await this.chat(profile, executor, prompt(lang, 'extract'), input, timed(120000, controller))
+    } finally {
+      if (controller) this.peerRuns.delete(questionId)
     }
-    const text = await this.chat(profile, organizeModel(settings), instruction, input, AbortSignal.timeout(120000))
-    if (concepts) {
-      const parsed = parseExtraction(text, concepts.known)
-      const fresh = this.store.record<Question>('question', questionId, profile)
-      // Moved to another workspace meanwhile: this result belongs to the old graph.
-      if (this.store.record<Project>('project', fresh.projectId, profile).workspaceId !== workspaceId)
-        this.advance(profile, questionId, end)
-      else this.apply(concepts.graph, fresh, parsed, batch, end, profile)
-    }
-    // Habits belong to the workspace the feedback was given in, even if the question moved since.
-    if (feedback.length)
-      applyDetected(
-        this.store,
-        profile,
-        parseHabits(text, new Set(sent.map((h) => h.id)), new Set(feedback.map((f) => f.turn))),
-        { questionId, workspaceId, turns: q.turns }
-      )
-    if (settings.answerHabits) this.markHabits(profile, questionId, end)
+    if (peer !== null && (controller?.signal.aborted || !this.peerAllowed(peer, workspaceId)))
+      throw new Error(SHARE_REVOKED)
+    const parsed = parseExtraction(text, known)
+    const fresh = this.release(this.store.record<Question>('question', questionId, profile), peer, queued, stop)
+    // Moved to another workspace meanwhile: this result belongs to the old graph.
+    if (this.store.record<Project>('project', fresh.projectId, profile).workspaceId !== workspaceId)
+      this.store.put('question', profile, fresh)
+    else this.apply(graph, fresh, parsed, batch, stop, profile)
+    if (more) this.again.set(questionId, profile)
     this.changed()
+    return 'done'
+  }
+
+  /** Drops `peerId`'s queued turns (all, or those of questions in `workspaceIds`) without extracting them. */
+  dropDeferred(profile: string, peerId: string, workspaceIds: ReadonlySet<string> | null): void {
+    const workspaceOf = new Map(this.store.list<Project>('project', profile).map((p) => [p.id, p.workspaceId]))
+    let dropped = false
+    for (const q of this.store.list<Question>('question', profile)) {
+      if (!q.deferredTurns?.some((d) => d.peer === peerId)) continue
+      if (workspaceIds && !workspaceIds.has(workspaceOf.get(q.projectId) ?? '')) continue
+      this.store.put('question', profile, withDeferred(q, q.deferredTurns.filter((d) => d.peer !== peerId)))
+      dropped = true
+    }
+    if (dropped) this.changed()
+  }
+
+  /**
+   * Stops `peerId`'s running extractions and tidy jobs (all, or those in `workspaceIds`): a revoked
+   * share or link. A stopped tidy job fails without a proposal.
+   */
+  abortPeer(peerId: string, workspaceIds: ReadonlySet<string> | null): void {
+    const hit = (workspaceId: string): boolean => workspaceIds === null || workspaceIds.has(workspaceId)
+    for (const run of this.peerRuns.values())
+      if (run.peerId === peerId && hit(run.workspaceId)) run.controller.abort(new Error(SHARE_REVOKED))
+    let stopped = false
+    for (const [slot, run] of this.peerTidies)
+      if (run.peerId === peerId && hit(run.workspaceId)) {
+        run.controller.abort(new Error(SHARE_REVOKED))
+        this.revokeTidy(slot, run.job)
+        stopped = true
+      }
+    if (stopped) this.changed()
+  }
+
+  /** Fails a tidy job whose share was revoked; its (partial) proposal is dropped, not kept for review. */
+  private revokeTidy(slot: string, job: TidyJob): void {
+    job.state = 'failed'
+    job.proposal = null
+    job.error = SHARE_REVOKED
+    job.finishedAt = Date.now()
+    if (this.jobs.get(slot) === job) this.proposals.delete(slot)
   }
 
   /**
@@ -1098,13 +1246,16 @@ export class KnowledgeExtractor {
    * queued for tidyRetag. Only the latest proposal per workspace is kept, in memory: a new preview
    * of the same workspace or a restart expires the previous one.
    */
-  async tidyPreview(profile: string, workspaceId: string): Promise<TidyProposal> {
+  async tidyPreview(profile: string, workspaceId: string, executor: Executor = LOCAL): Promise<TidyProposal> {
     const plan = this.plan(profile, workspaceId)
     const changes: TidyChange[] = []
     if (plan.input) {
       const settings = this.store.settings(profile)
+      const controller =
+        executor.kind === 'peer' ? this.peerTidies.get(tidyKey(profile, workspaceId))?.controller : undefined
+      const instruction = prompt(settings.promptLanguage, 'tidy')
       const parsed = parseTidy(
-        await this.chat(profile, organizeModel(settings), prompt(settings.promptLanguage, 'tidy'), plan.input, AbortSignal.timeout(180000)),
+        await this.chat(profile, executor, instruction, plan.input, timed(180000, controller)),
         new Set(plan.known),
         new Set(plan.relations)
       )
@@ -1147,7 +1298,8 @@ export class KnowledgeExtractor {
   async tidyRetag(
     profile: string,
     workspaceId: string,
-    id: string
+    id: string,
+    executor: Executor = LOCAL
   ): Promise<{ changes: TidyChange[]; remaining: number }> {
     const proposal = this.current(profile, workspaceId, id)
     const changes: TidyChange[] = []
@@ -1164,11 +1316,12 @@ export class KnowledgeExtractor {
         continue
       }
       const settings = this.store.settings(profile)
-      const model = organizeModel(settings)
+      const controller =
+        executor.kind === 'peer' ? this.peerTidies.get(tidyKey(profile, workspaceId))?.controller : undefined
       const instruction = prompt(settings.promptLanguage, 'retag')
       const ask = async (input: unknown): Promise<RetagJudgment[]> =>
         parseRetag(
-          await this.chat(profile, model, instruction, JSON.stringify(input), AbortSignal.timeout(120000)),
+          await this.chat(profile, executor, instruction, JSON.stringify(input), timed(120000, controller)),
           ctx.judged,
           ctx.known
         )
@@ -1195,10 +1348,11 @@ export class KnowledgeExtractor {
 
   /**
    * Starts a background tidy of the workspace (tidyPreview, then tidyRetag until the queue is
-   * empty) and returns the job; a running one is returned as it is. Progress and the end are
-   * announced through `changed`; the job is read with tidyStatus. Jobs live in memory only.
+   * empty) on `executor`'s resources and returns the job; a running one is returned as it is.
+   * Progress and the end are announced through `changed`; the job is read with tidyStatus. Jobs
+   * live in memory only.
    */
-  tidyStart(profile: string, workspaceId: string): TidyJob {
+  tidyStart(profile: string, workspaceId: string, executor: Executor = LOCAL): TidyJob {
     const slot = tidyKey(profile, workspaceId)
     const current = this.jobs.get(slot)
     if (current?.state === 'running') return structuredClone(current)
@@ -1212,28 +1366,39 @@ export class KnowledgeExtractor {
       error: ''
     }
     this.jobs.set(slot, job)
+    if (executor.kind === 'peer')
+      this.peerTidies.set(slot, { job, peerId: executor.peerId, workspaceId, controller: new AbortController() })
     this.changed()
-    void this.runTidy(profile, workspaceId, job)
+    void this.runTidy(profile, workspaceId, job, executor)
     return structuredClone(job)
   }
 
   /**
    * Runs a started job. A failed re-tag keeps the partial proposal reviewable (ready with the
-   * error); a failed preview fails the job. Only a job still current is announced.
+   * error); a failed preview fails the job. A linked PC's job whose share was revoked fails without
+   * a proposal; its results are re-checked against the share right before each is kept. Only a job
+   * still current is announced.
    */
-  private async runTidy(profile: string, workspaceId: string, job: TidyJob): Promise<void> {
+  private async runTidy(profile: string, workspaceId: string, job: TidyJob, executor: Executor): Promise<void> {
     const slot = tidyKey(profile, workspaceId)
+    const peer = executor.kind === 'peer' ? this.peerTidies.get(slot) : undefined
     const announce = (): void => {
       if (this.jobs.get(slot) === job && !this.closed) this.changed()
     }
+    const allowed = (): void => {
+      if (peer && (peer.controller.signal.aborted || !this.peerAllowed(peer.peerId, workspaceId)))
+        throw new Error(SHARE_REVOKED)
+    }
     try {
-      const proposal = await this.tidyPreview(profile, workspaceId)
+      const proposal = await this.tidyPreview(profile, workspaceId, executor)
+      allowed()
       job.proposal = proposal
       job.progress.total = proposal.retag
       announce()
       let remaining = proposal.retag
       while (remaining > 0) {
-        const r = await this.tidyRetag(profile, workspaceId, proposal.id)
+        const r = await this.tidyRetag(profile, workspaceId, proposal.id, executor)
+        allowed()
         proposal.changes.push(...r.changes)
         remaining = r.remaining
         // A question gone from the workspace is dropped without a call: count it as done.
@@ -1242,8 +1407,14 @@ export class KnowledgeExtractor {
       }
       job.state = 'ready'
     } catch (e) {
-      job.state = job.proposal ? 'ready' : 'failed'
-      job.error = e instanceof Error ? e.message : String(e)
+      if (peer && (peer.controller.signal.aborted || (e instanceof Error && e.message === SHARE_REVOKED)))
+        this.revokeTidy(slot, job)
+      else {
+        job.state = job.proposal ? 'ready' : 'failed'
+        job.error = e instanceof Error ? e.message : String(e)
+      }
+    } finally {
+      if (peer && this.peerTidies.get(slot) === peer) this.peerTidies.delete(slot)
     }
     job.finishedAt = Date.now()
     announce()
