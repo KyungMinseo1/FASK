@@ -2,20 +2,24 @@ import type {
   Habit,
   Concept,
   ConceptLevel,
-  LocalSettings,
   Project,
   Question,
   RelationType,
   Snapshot,
   TextAttachment
 } from '../preload/personal'
+import { validCard } from '../shared/avatar'
 import { mergeLegacyQuestions, type LegacyQuestion } from '../shared/questions'
 import { normalizeName } from './knowledge-search'
 import { backupHabits } from './habits'
 
+export type BackupData = Pick<Snapshot, 'workspaces' | 'projects' | 'concepts' | 'relations' | 'questions'>
+
 export interface Backup {
-  version: 3
-  snapshot: Snapshot
+  version: 4
+  /** Profile id of the PC that made the backup; null for v1~3. */
+  owner: string | null
+  snapshot: BackupData
   images: Record<string, string>
   habits: Habit[]
 }
@@ -103,7 +107,6 @@ export const RELATION_TYPES: readonly RelationType[] = [
   'contrast',
   'example'
 ]
-const MEMORY_SCOPES: readonly LocalSettings['memoryScope'][] = ['off', 'project', 'workspace']
 
 /** A concept as stored before schema 3 / backup v3: owned by a project, without aliases or level. */
 export interface LegacyConcept {
@@ -195,23 +198,32 @@ export function upgradeConcepts(
 }
 
 /**
- * Validates a v1, v2 or v3 backup and always returns v3 (v1 conversations merge into one question).
- * Concept levels and parents are repaired to the 3-level hierarchy (see repairHierarchy).
+ * Validates a v1~v4 backup and always returns v4 (v1 conversations merge into one question).
+ * Settings in older backups are ignored. Concept levels and parents are repaired to the 3-level
+ * hierarchy (see repairHierarchy).
  */
 export function validateBackup(input: unknown): Backup {
   const fail = (): never => {
     throw new Error('백업 형식이나 프로젝트 참조가 잘못되었습니다.')
   }
   if (!input || typeof input !== 'object') fail()
-  const value = input as { version: unknown; snapshot: Snapshot; images: Record<string, string>; habits?: unknown }
+  const value = input as {
+    version: unknown
+    owner?: unknown
+    snapshot: BackupData
+    images: Record<string, string>
+    habits?: unknown
+  }
   if (
-    (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
+    (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4) ||
     !value.snapshot ||
     typeof value.snapshot !== 'object' ||
     !value.images ||
     typeof value.images !== 'object'
   )
     fail()
+  const owner = value.version === 4 ? value.owner : null
+  if (owner !== null && typeof owner !== 'string') fail()
   const { snapshot: s } = value
   const strings = (v: unknown): v is string[] =>
     Array.isArray(v) && v.every((x) => typeof x === 'string')
@@ -288,7 +300,7 @@ export function validateBackup(input: unknown): Backup {
   for (const q of s.questions)
     if (!q || !projectWorkspace.has(q.projectId) || !strings(q.conceptIds) || !Array.isArray(q.turns))
       fail()
-  if (value.version !== 3) {
+  if ((value.version as number) < 3) {
     // v1/v2 concepts belong to a project; checked as such, then moved into the workspace.
     const legacy = s.concepts as unknown as LegacyConcept[]
     const byLegacy = new Map(legacy.map((c) => [c.id, c]))
@@ -310,10 +322,6 @@ export function validateBackup(input: unknown): Backup {
     s.concepts = upgraded.concepts
     s.questions = upgraded.questions
     s.relations = []
-    if (s.settings && typeof s.settings === 'object') {
-      const { memory, ...settings } = s.settings as LocalSettings & { memory?: unknown }
-      s.settings = { ...settings, memoryScope: memory === false ? 'off' : 'project' }
-    }
   }
   if (!Array.isArray(s.relations)) fail()
   const byConcept = new Map(s.concepts.map((c) => [c.id, c]))
@@ -361,6 +369,11 @@ export function validateBackup(input: unknown): Backup {
       !Number.isInteger(q.extractedTurns) ||
       q.extractedTurns < 0 ||
       q.extractedTurns > q.turns.length ||
+      (q.deferredTurns !== undefined &&
+        !(
+          Array.isArray(q.deferredTurns) &&
+          q.deferredTurns.every((d) => d && typeof d.turnId === 'string' && typeof d.peer === 'string')
+        )) ||
       (q.habitTurns !== undefined &&
         (!Number.isInteger(q.habitTurns) || q.habitTurns < 0 || q.habitTurns > q.turns.length)) ||
       !q.conceptTurns ||
@@ -396,6 +409,17 @@ export function validateBackup(input: unknown): Backup {
         !COMPLEXITIES.includes(t.complexity) ||
         badDocuments(t.documents) ||
         badImage(t.attachment)
+      )
+        fail()
+      if (
+        t.author !== undefined &&
+        !(
+          validCard(t.author) &&
+          typeof t.author.profileId === 'string' &&
+          typeof t.author.device === 'string' &&
+          (t.author.mobile === undefined || typeof t.author.mobile === 'boolean') &&
+          (t.author.peer === undefined || typeof t.author.peer === 'string')
+        )
       )
         fail()
       if (
@@ -444,60 +468,20 @@ export function validateBackup(input: unknown): Backup {
     )
       fail()
   }
-  if (
-    !s.settings ||
-    typeof s.settings.endpoint !== 'string' ||
-    !Array.isArray(s.settings.models) ||
-    !Array.isArray(s.settings.regions)
-  )
-    fail()
-  for (const key of ['model', 'fastModel', 'deepModel'] as const)
-    if (typeof s.settings[key] !== 'string') fail()
-  if (
-    s.settings.models.some((m) => typeof m !== 'string') ||
-    // 'recommend' comes from backups made until 1.2; settings() reads it as 'auto'.
-    !['manual', 'recommend', 'auto'].includes(s.settings.routing) ||
-    !['minimal', 'balanced', 'preserve'].includes(s.settings.retention) ||
-    !MEMORY_SCOPES.includes(s.settings.memoryScope)
-  )
-    fail()
-  if (s.settings.autoTitle !== undefined && typeof s.settings.autoTitle !== 'boolean') fail()
-  if (s.settings.answerHabits !== undefined && typeof s.settings.answerHabits !== 'boolean') fail()
-  if (s.settings.jevProvider !== undefined && !['typesafe', 'openrouter'].includes(s.settings.jevProvider)) fail()
-  for (const key of ['jevRouting', 'jevRecall'] as const)
-    if (s.settings[key] !== undefined && typeof s.settings[key] !== 'boolean') fail()
-  if (s.settings.jevPreviewSec !== undefined && ![0, 1, 2, 3].includes(s.settings.jevPreviewSec)) fail()
-  for (const key of ['memoryTokens', 'extractDelaySec'] as const)
-    if (
-      s.settings[key] !== undefined &&
-      (!Number.isFinite(s.settings[key]) || s.settings[key] < 0)
-    )
-      fail()
-  if (s.settings.organizeModel !== undefined && typeof s.settings.organizeModel !== 'string')
-    fail()
-  if (s.settings.promptLanguage !== undefined && !['ko', 'en'].includes(s.settings.promptLanguage)) fail()
-  for (const region of s.settings.regions) {
-    if (
-      !region ||
-      !region.rect ||
-      !Number.isFinite(region.displayId) ||
-      !Number.isFinite(region.screenWidth) ||
-      !Number.isFinite(region.screenHeight)
-    )
-      fail()
-    const { x, y, width, height } = region.rect
-    if (
-      ![x, y, width, height].every(Number.isFinite) ||
-      x < 0 ||
-      y < 0 ||
-      width <= 0 ||
-      height <= 0 ||
-      x + width > 1.000001 ||
-      y + height > 1.000001
-    )
-      fail()
-  }
   // Every version is v3-shaped by now; v1/v2 backups have no habits.
-  const habits = backupHabits(value.habits, new Set(s.workspaces.map((w) => w.id)), s.questions) ?? fail()
-  return { version: 3, snapshot: s, images: value.images, habits }
+  const habits =
+    backupHabits(value.habits, new Set(s.projects.map((p) => p.id)), s.questions, owner as string | null) ?? fail()
+  // Deferred extraction belongs to the source PC's links; restored copies get new ids.
+  const questions = s.questions.map((q) => {
+    const copy = { ...q }
+    delete copy.deferredTurns
+    return copy
+  })
+  return {
+    version: 4,
+    owner: owner as string | null,
+    snapshot: { workspaces: s.workspaces, projects: s.projects, concepts: s.concepts, relations: s.relations, questions },
+    images: value.images,
+    habits
+  }
 }

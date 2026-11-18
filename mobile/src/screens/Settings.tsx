@@ -18,6 +18,7 @@ import {
   type ThemePref
 } from '@desktop/renderer/src/personal/theme'
 import { readAnswerBlink, setAnswerBlink } from '@desktop/renderer/src/personal/answer-blink'
+import ProfileAvatar from '@desktop/renderer/src/personal/ProfileAvatar'
 import {
   LANGUAGE_OPTIONS,
   readLanguage,
@@ -69,7 +70,7 @@ export default function Settings(): React.JSX.Element {
   const [language, setLanguageState] = useState<LanguagePref>(readLanguage)
   const [fontScale, setFontScaleState] = useState(readFontScale)
   const [previewError, setPreviewError] = useState('')
-  const profile = data.profiles.find((p) => p.id === data.activeProfileId)
+  const profile = data.profile
   const relayed = client.address() === RELAY_ADDRESS
   return (
     <>
@@ -175,7 +176,9 @@ export default function Settings(): React.JSX.Element {
             </div>
             <div>
               <dt>{t('PC 프로필')}</dt>
-              <dd>{profile?.name ?? '-'}</dd>
+              <dd>
+                <ProfileAvatar avatar={profile.avatar} name={profile.name} size={16} /> {profile.name}
+              </dd>
             </div>
             <div>
               <dt>{t('AI 모델')}</dt>

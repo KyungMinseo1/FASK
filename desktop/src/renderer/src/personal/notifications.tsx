@@ -5,7 +5,16 @@ import { Icon, type IconName } from './ToolbarIcons'
 import TidyDialog from './TidyDialog'
 import { dateLabel, errorText } from './common'
 import { useT } from '../../../shared/i18n/react'
-import type { Habit, HabitList, PeerGrantInfo, TidyAccess, TidyEstimate, TidyStatus } from '../../../preload/personal'
+import type {
+  Habit,
+  HabitList,
+  PeerGrantInfo,
+  PeerLinkInfo,
+  ProfileMergeInfo,
+  TidyAccess,
+  TidyEstimate,
+  TidyStatus
+} from '../../../preload/personal'
 
 /** What a tidy or manager request asks the notification center to follow. No-ops without a provider. */
 export interface Notifications {
@@ -94,6 +103,20 @@ function updateWatches(fn: (w: Watches) => void): void {
   fn(w)
   localStorage.setItem(WATCH_KEY, JSON.stringify(w))
 }
+/** Forgets tidy and manager watches of workspaces this device can no longer see (unshared, unlinked). */
+export function dropWatches(workspaceIds: string[]): void {
+  if (!workspaceIds.length) return
+  updateWatches((w) => {
+    for (const id of workspaceIds) {
+      delete w.tidy[id]
+      delete w.manager[id]
+    }
+  })
+}
+/** Opens the dashboard's settings on the linked devices page. */
+function openDevices(): void {
+  window.dispatchEvent(new CustomEvent('fask:open-settings', { detail: 'devices' }))
+}
 function readSeen(): string[] {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]')
@@ -146,6 +169,8 @@ export function NotificationsProvider({
   const [watched, setWatched] = useState<Map<string, NotifyItem>>(new Map())
   const [requests, setRequests] = useState<NotifyItem[]>([])
   const [habitItems, setHabitItems] = useState<NotifyItem[]>([])
+  const [mergeItems, setMergeItems] = useState<NotifyItem[]>([])
+  const [deviceItems, setDeviceItems] = useState<NotifyItem[]>([])
   const [seen, setSeen] = useState<Set<string>>(() => new Set(readSeen()))
   const [history, setHistory] = useState<NotifyRecord[]>(readHistory)
   const [open, setOpen] = useState<{ workspaceId: string; name: string } | null>(null)
@@ -356,24 +381,127 @@ export function NotificationsProvider({
               record({ icon: 'devices', text, vars, outcome: decision === 'grant' ? '수락함' : '거절함' })
             )
             .finally(() => pollRef.current())
-      setRequests(
-        grants
-          .filter((g) => g.manager === 'pending')
-          .map((g) => {
-            const text = '{{name}} PC가 지식 관리자 등록을 요청했습니다.'
-            const vars = { name: g.name }
-            return {
-              id: `request:${g.id}:${g.managerAt ?? 0}`,
-              icon: 'devices',
-              text,
-              vars,
-              actions: [
-                { label: '수락', primary: true, run: decide(text, vars, g.id, 'grant') },
-                { label: '거절', run: decide(text, vars, g.id, 'reject') }
-              ]
+      const items: NotifyItem[] = grants
+        .filter((g) => g.manager === 'pending')
+        .map((g) => {
+          const text = '{{name}} PC가 지식 관리자 등록을 요청했습니다.'
+          const vars = { name: g.name }
+          return {
+            id: `request:${g.id}:${g.managerAt ?? 0}`,
+            icon: 'devices',
+            text,
+            vars,
+            actions: [
+              { label: '수락', primary: true, run: decide(text, vars, g.id, 'grant') },
+              { label: '거절', run: decide(text, vars, g.id, 'reject') }
+            ]
+          }
+        })
+      // Until the host saves a share selection the PC sees none of this PC's workspaces.
+      for (const g of grants.filter((x) => !x.shareReviewed))
+        items.push({
+          id: `share-pick:${g.id}`,
+          icon: 'devices',
+          text: '{{name}} PC가 연결되었습니다. 공유할 워크스페이스를 선택해 주세요.',
+          vars: { name: g.name },
+          actions: [{ label: '설정 열기', primary: true, run: () => openDevices() }]
+        })
+      setRequests(items)
+    }
+    const pollMerge = async (): Promise<void> => {
+      if (typeof window.fask?.profileMergeInfo !== 'function') return
+      let info: ProfileMergeInfo | null
+      try {
+        info = await window.fask.profileMergeInfo()
+      } catch {
+        return
+      }
+      if (!live) return
+      if (!info) {
+        setMergeItems([])
+        return
+      }
+      const text =
+        '이번 버전부터 PC마다 프로필이 하나입니다. 다른 프로필({{names}})의 워크스페이스 {{workspaces}}개와 질문 {{questions}}개를 지금 프로필로 합칠 수 있습니다. 합치면 그 프로필의 설정과 API 키는 삭제되고, 합치기 전 데이터는 자동으로 백업됩니다.'
+      const vars = {
+        names: info.others.map((o) => o.name).join(', '),
+        workspaces: info.others.reduce((n, o) => n + o.workspaces, 0),
+        questions: info.others.reduce((n, o) => n + o.questions, 0)
+      }
+      setMergeItems([
+        {
+          id: 'profile-merge',
+          icon: 'user',
+          text,
+          vars,
+          actions: [
+            {
+              label: '합치기',
+              primary: true,
+              run: () =>
+                window.fask
+                  .profileMerge()
+                  .then(() => record({ icon: 'user', text, vars, outcome: '합침' }))
+                  .finally(() => pollRef.current())
             }
-          })
-      )
+          ]
+        }
+      ])
+    }
+    const pollDevices = async (): Promise<void> => {
+      if (typeof window.fask?.peerShareNotice !== 'function') return
+      let notice: boolean
+      let links: PeerLinkInfo[]
+      try {
+        ;[notice, links] = await Promise.all([window.fask.peerShareNotice(), window.fask.peerLinks()])
+      } catch {
+        return
+      }
+      if (!live) return
+      const items: NotifyItem[] = []
+      if (notice) {
+        const text =
+          '보안 업데이트로 연결된 PC의 워크스페이스 공유를 모두 해제했습니다. PC마다 공유할 워크스페이스를 다시 선택해 주세요.'
+        items.push({
+          id: 'peer-share-reset',
+          icon: 'devices',
+          text,
+          vars: {},
+          actions: [
+            { label: '설정 열기', primary: true, run: () => openDevices() },
+            {
+              label: '확인',
+              run: () =>
+                window.fask
+                  .ackPeerShareNotice()
+                  .then(() => record({ icon: 'devices', text, vars: {}, outcome: '확인함' }))
+                  .finally(() => pollRef.current())
+            }
+          ]
+        })
+      }
+      for (const l of links.filter((x) => x.status === 'revoked')) {
+        const text = '{{name}} PC가 연결을 해제했습니다.'
+        const vars = { name: l.name }
+        items.push({
+          id: `link-revoked:${l.id}`,
+          icon: 'devices',
+          text,
+          vars,
+          actions: [
+            {
+              label: '목록에서 삭제',
+              primary: true,
+              run: () =>
+                window.fask
+                  .peerUnlink(l.id)
+                  .then(() => record({ icon: 'devices', text, vars, outcome: '삭제함' }))
+                  .finally(() => pollRef.current())
+            }
+          ]
+        })
+      }
+      setDeviceItems(items)
     }
     const pollHabits = async (): Promise<void> => {
       let list: HabitList
@@ -459,7 +587,9 @@ export function NotificationsProvider({
             ...Object.entries(w.tidy).map(([ws, v]) => pollTidy(ws, v.jobId, v.name, version)),
             ...Object.entries(w.manager).map(([ws, v]) => pollManager(ws, v.name, v.last, version)),
             pollRequests(),
-            pollHabits()
+            pollHabits(),
+            pollMerge(),
+            pollDevices()
           ])
         } while (again && live)
       } finally {
@@ -512,7 +642,10 @@ export function NotificationsProvider({
     setAttached((n) => n + 1)
     return () => setAttached((n) => n - 1)
   }, [])
-  const items = useMemo(() => [...requests, ...habitItems, ...watched.values()], [requests, habitItems, watched])
+  const items = useMemo(
+    () => [...mergeItems, ...deviceItems, ...requests, ...habitItems, ...watched.values()],
+    [mergeItems, deviceItems, requests, habitItems, watched]
+  )
   const center = useMemo<Center>(
     () => ({ items, seen, markSeen, attach, history, clearHistory }),
     [items, seen, markSeen, attach, history, clearHistory]

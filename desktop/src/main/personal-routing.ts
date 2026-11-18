@@ -1,11 +1,11 @@
 // Linked-PC routing: merges remote workspaces into this PC's snapshot, forwards calls on remote ids,
 // and authorizes what a peer PC may do on this host.
+import { validCard } from '../shared/avatar'
 import { questionImages } from '../shared/questions'
 import type {
   AskInput,
   AskResult,
   ManagerState,
-  ModelSettings,
   Project,
   Question,
   Snapshot,
@@ -13,6 +13,7 @@ import type {
   PeerStatus
 } from '../preload/personal'
 import { PEER_BLOCKED, PEER_REVOKED } from './personal-peers'
+import { defaults } from './personal-store'
 
 export const NOT_ALLOWED = '권한이 없는 요청입니다.'
 export const UNSUPPORTED = '지원하지 않는 요청입니다.'
@@ -91,8 +92,9 @@ export function checkPeerCall(own: (kind: string, id: string) => unknown, name: 
       return owned('project', a)
     case 'attachment':
     case 'cancel':
-    case 'refine':
       return
+    case 'extract-run':
+      return owned('question', a)
     case 'ask': {
       const input = a as Partial<AskInput> | null
       if (!input || typeof input !== 'object') throw new Error(NOT_ALLOWED)
@@ -112,29 +114,61 @@ export interface RemotePeer {
   rpc(name: string, args: unknown[], options?: { retry?: boolean }): Promise<unknown>
 }
 
-/** A linked PC's answer-model settings from its snapshot; undefined when malformed. */
-function hostModels(s: Snapshot): ModelSettings | undefined {
-  const v = s.settings as Partial<ModelSettings> | undefined
-  if (
-    !v ||
-    typeof v.model !== 'string' ||
-    typeof v.fastModel !== 'string' ||
-    typeof v.deepModel !== 'string' ||
-    !Array.isArray(v.models) ||
-    !['manual', 'recommend', 'auto'].includes(v.routing as string)
-  )
-    return undefined
+/**
+ * What a linked PC sees of this host: only the workspaces shared with it (and their records),
+ * no recent-question state, and default settings instead of the host's own.
+ */
+export function peerSnapshot(s: Snapshot, shared: ReadonlySet<string>): Snapshot {
+  const workspaces = s.workspaces.filter((w) => shared.has(w.id))
+  const projects = s.projects.filter((p) => shared.has(p.workspaceId))
+  const projectIds = new Set(projects.map((p) => p.id))
   return {
-    model: v.model,
-    fastModel: v.fastModel,
-    deepModel: v.deepModel,
-    models: v.models.filter((m): m is string => typeof m === 'string'),
-    // A PC on 1.2 or older may still share 'recommend'; it answers with the model this PC sends.
-    routing: v.routing === 'manual' ? 'manual' : 'auto'
+    ...s,
+    workspaces,
+    projects,
+    concepts: s.concepts.filter((c) => shared.has(c.workspaceId)),
+    relations: s.relations.filter((r) => shared.has(r.workspaceId)),
+    questions: s.questions.filter((q) => projectIds.has(q.projectId)),
+    recentQuestions: {},
+    storageBytes: 0,
+    settings: { ...defaults, endpoint: '', regions: [] }
+  }
+}
+
+/** Remote ids a linked PC last showed this PC; compared to find what to purge locally. */
+export type SeenIds = { workspaceIds: string[]; projectIds: string[]; questionIds: string[] }
+
+export function seenIds(s: Snapshot | null): SeenIds {
+  if (!s) return { workspaceIds: [], projectIds: [], questionIds: [] }
+  return {
+    workspaceIds: s.workspaces.map((w) => w.id),
+    projectIds: s.projects.map((p) => p.id),
+    questionIds: s.questions.map((q) => q.id)
+  }
+}
+
+/** Ids in `prev` that `next` no longer has. */
+export function removedIds(prev: SeenIds, next: SeenIds): SeenIds {
+  const gone = (a: string[], b: string[]): string[] => {
+    const keep = new Set(b)
+    return a.filter((id) => !keep.has(id))
+  }
+  return {
+    workspaceIds: gone(prev.workspaceIds, next.workspaceIds),
+    projectIds: gone(prev.projectIds, next.projectIds),
+    questionIds: gone(prev.questionIds, next.questionIds)
   }
 }
 
 type Part = Pick<Snapshot, 'workspaces' | 'projects' | 'concepts' | 'relations' | 'questions'> & { peer: RemotePeer }
+
+export interface RouterHooks {
+  onAsked?: (projectId: string, questionId: string, turnId: string, peerId: string, args: unknown[]) => void
+  /** Rewrites the args of a call about to be forwarded to `peerId` (e.g. attaches a compute ticket). */
+  prepare?: (name: string, args: unknown[], peerId: string, ctx: { mobile: boolean }) => Promise<unknown[]>
+  /** The forwarded call with these (prepared) args failed. */
+  onForwardFailed?: (name: string, args: unknown[]) => void
+}
 
 // Which argument names the record a call acts on.
 const ROUTE_KEY: Record<string, (args: unknown[]) => unknown> = {
@@ -179,8 +213,8 @@ export class RemoteRouter {
   constructor(
     private peers: () => Iterable<RemotePeer>,
     private localHas: (id: string) => boolean,
-    private local: (name: string, args: unknown[]) => unknown,
-    private onAsked: (projectId: string, questionId: string) => void = () => {}
+    private local: (name: string, args: unknown[], ctx: { mobile: boolean }) => unknown,
+    private hooks: RouterHooks = {}
   ) {}
 
   /** Recomputes ownership from the latest remote snapshots; colliding remote workspaces are dropped. */
@@ -230,9 +264,16 @@ export class RemoteRouter {
     out.relations = [...local.relations]
     out.questions = [...local.questions]
     for (const part of this.parts) {
-      const remote = { peerId: part.peer.link.id, name: part.peer.link.name, status: part.peer.status }
-      const models = part.peer.snapshot ? hostModels(part.peer.snapshot) : undefined
-      out.workspaces.push(...part.workspaces.map((w) => ({ ...w, remote: models ? { ...remote, models } : remote })))
+      const s = part.peer.snapshot
+      const remote = {
+        peerId: part.peer.link.id,
+        name: part.peer.link.name,
+        status: part.peer.status,
+        ...(s && typeof s.profile?.id === 'string' && validCard(s.profile)
+          ? { owner: { id: s.profile.id, name: s.profile.name, avatar: s.profile.avatar } }
+          : {})
+      }
+      out.workspaces.push(...part.workspaces.map((w) => ({ ...w, remote })))
       out.projects.push(...part.projects)
       out.concepts.push(...part.concepts)
       out.relations.push(...part.relations)
@@ -267,6 +308,24 @@ export class RemoteRouter {
     return undefined
   }
 
+  /** Every question in the visible linked-PC workspaces. */
+  remoteQuestions(): Question[] {
+    return this.parts.flatMap((part) => part.questions)
+  }
+
+  /** Profile id of the linked PC owning a visible remote project; undefined for older hosts. */
+  remoteOwner(projectId: string): string | undefined {
+    const part = this.parts.find((p) => p.projects.some((project) => project.id === projectId))
+    const id = part?.peer.snapshot?.profile?.id
+    return typeof id === 'string' ? id : undefined
+  }
+
+  /** Drops forwarded-ask bookkeeping for a peer whose link ended. */
+  forget(peerId: string): void {
+    for (const [id, owner] of this.created) if (owner === peerId) this.created.delete(id)
+    for (const [id, owner] of this.runs) if (owner === peerId) this.runs.delete(id)
+  }
+
   noteStream(peerId: string, event: StreamEvent): void {
     // Stream events can arrive before the forwarded ask's reply names the new question.
     if (!this.owners.has(event.questionId) && !this.localHas(event.questionId)) this.created.set(event.questionId, peerId)
@@ -287,17 +346,17 @@ export class RemoteRouter {
     return peer
   }
 
-  async route(name: string, args: unknown[]): Promise<unknown> {
+  async route(name: string, args: unknown[], ctx: { mobile: boolean } = { mobile: false }): Promise<unknown> {
     if (name === 'cancel') {
       const owner = typeof args[0] === 'string' ? this.runs.get(args[0]) : undefined
-      return owner ? this.peer(owner).rpc('cancel', args) : this.local(name, args)
+      return owner ? this.peer(owner).rpc('cancel', args) : this.local(name, args, ctx)
     }
     const owner = this.ownerOf(ROUTE_KEY[name]?.(args))
     const other =
       name === 'move-question' || name === 'merge-concept' ? args[1] : name === 'edit-concept' ? args[2] : undefined
     if (typeof other === 'string' && other && (this.ownerOf(other) ?? 'local') !== (owner ?? 'local'))
       throw new Error(CROSS_BOUNDARY)
-    if (!owner) return this.local(name, args)
+    if (!owner) return this.local(name, args, ctx)
     // The overlay window and its recent-conversation state live on this PC, even for linked-PC projects.
     if (
       name === 'active-project' ||
@@ -305,21 +364,30 @@ export class RemoteRouter {
       name === 'continue-question' ||
       name === 'open-overlay'
     )
-      return this.local(name, args)
+      return this.local(name, args, ctx)
     const peer = this.peer(owner)
+    args = (await this.hooks.prepare?.(name, args, owner, ctx)) ?? args
+    const forward = async (call: () => Promise<unknown>): Promise<unknown> => {
+      try {
+        return await call()
+      } catch (error) {
+        this.hooks.onForwardFailed?.(name, args)
+        throw error
+      }
+    }
     if (name === 'ask') {
-      // The host answers with its own endpoint and active profile; the model is picked from its list.
-      const input = { ...(args[0] as AskInput), profileId: peer.snapshot?.activeProfileId ?? '' }
+      // Forwarded as prepared: this PC's profile runs every model and Jev call (see prepare).
+      const input = args[0] as AskInput
       this.runs.set(input.requestId, owner)
-      const result = (await peer.rpc('ask', [input], { retry: true })) as AskResult
+      const result = (await forward(() => peer.rpc('ask', args, { retry: true }))) as AskResult
       if (result?.turnId) this.runs.set(result.turnId, owner)
       if (result?.questionId) {
         // Registered before onAsked: it triggers the renderer resync that calls turn-state on this id.
         this.created.set(result.questionId, owner)
-        this.onAsked(input.projectId, result.questionId)
+        this.hooks.onAsked?.(input.projectId, result.questionId, result.turnId, owner, args)
       }
       return result
     }
-    return peer.rpc(name, args, { retry: RETRY.has(name) })
+    return forward(() => peer.rpc(name, args, { retry: RETRY.has(name) }))
   }
 }
