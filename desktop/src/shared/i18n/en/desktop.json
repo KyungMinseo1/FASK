@@ -119,6 +119,8 @@
   "모바일 연결 QR 코드": "Mobile pairing QR code",
   "모바일 연결 QR 코드 보기": "Show mobile pairing QR code",
   "QR 코드 숨기기": "Hide QR code",
+  "새 버전 {{version}}이 준비되었습니다. 업데이트하면 앱을 다시 시작합니다.": "Version {{version}} is ready. Updating restarts the app.",
+  "업데이트하기": "Update",
   "중계 서버 주소 바꾸기": "Change relay server address",
   "연결 초기화하고 모든 기기 해제": "Reset pairing and disconnect all devices",
   "QR에는 연결 키가 들어 있습니다. 다른 사람에게 보여 주지 마세요. 통신은 TLS로 암호화됩니다. Tailscale 주소나 중계 서버를 쓰면 집 밖에서도 연결할 수 있고, 중계 서버는 암호화된 데이터만 전달합니다. Windows 방화벽 창이 뜨면 허용하세요.": "The QR code contains the connection key. Don't show it to others. Traffic is encrypted with TLS. With a Tailscale address or the relay server you can connect from outside your home; the relay only forwards encrypted data. If a Windows Firewall prompt appears, allow it.",

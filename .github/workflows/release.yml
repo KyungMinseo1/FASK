@@ -59,7 +59,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: desktop/dist/*-setup.exe
+          # latest.yml and the blockmap let installed apps find, verify and patch-download this version.
+          path: |
+            desktop/dist/*-setup.exe
+            desktop/dist/*-setup.exe.blockmap
+            desktop/dist/latest.yml
           if-no-files-found: error
           retention-days: 7
 
@@ -167,7 +171,9 @@ jobs:
           shopt -s nullglob
           windows=(release-assets/*-setup.exe)
           android=(release-assets/*-android.apk)
+          updates=(release-assets/latest.yml release-assets/*-setup.exe.blockmap)
           [[ ${#windows[@]} == 1 && ${#android[@]} == 1 ]] || { echo '::error::Expected one Windows installer and one Android APK'; exit 1; }
+          [[ -f release-assets/latest.yml && ${#updates[@]} == 2 ]] || { echo '::error::Expected latest.yml and one installer blockmap'; exit 1; }
           node .github/scripts/changelog.cjs "$RELEASE_TAG" "${windows[0]}" "${android[0]}" > "$RUNNER_TEMP/release-notes.md"
           if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
             node -e 'if (!JSON.parse(require("fs").readFileSync("release-state.json")).isDraft) { console.error("Refusing to overwrite a published release"); process.exit(1) }'
@@ -175,5 +181,5 @@ jobs:
             gh release delete "$RELEASE_TAG" --yes
           fi
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "FASK $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --generate-notes
-          gh release upload "$RELEASE_TAG" "${windows[@]}" "${android[@]}" --clobber
+          gh release upload "$RELEASE_TAG" "${windows[@]}" "${android[@]}" "${updates[@]}" --clobber
           gh release edit "$RELEASE_TAG" --draft=false
