@@ -311,7 +311,11 @@ export function parseRetag(text: string, linked: ReadonlySet<string>, known: Rea
 export interface ExtractedHabit {
   rule: string
   when: string
-  scope: 'profile' | 'workspace'
+  scope: 'profile' | 'project'
+  /** Profile habit (a sent id) this project habit takes the place of in its project. */
+  overrides: string | null
+  /** False: it conflicts with a known habit and the user did not say where it applies. */
+  scopeClear: boolean
   explicit: boolean
   same: string | null
   replaces: string | null
@@ -319,9 +323,10 @@ export interface ExtractedHabit {
 }
 
 /**
- * Answer-habit part of a response; `known` holds the habit ids sent, `feedbackTurns` the turn
- * indexes sent as feedback. An item citing no feedback turn, naming an unsent id, or claiming both
- * `same` and `replaces` is dropped. Unparseable output finds nothing.
+ * Answer-habit response; `known` holds the habit ids sent, `feedbackTurns` the turn indexes sent
+ * as feedback. An item citing no feedback turn, naming an unsent id, claiming both `same` and
+ * `replaces` or both `replaces` and `overrides`, or overriding from a non-project habit is
+ * dropped. A missing or non-boolean `scopeClear` counts as true. Unparseable output finds nothing.
  */
 export function parseHabits(text: string, known: ReadonlySet<string>, feedbackTurns: ReadonlySet<number>): ExtractedHabit[] {
   const parsed = parseObject(text)
@@ -336,15 +341,19 @@ export function parseHabits(text: string, known: ReadonlySet<string>, feedbackTu
       const rule = typeof raw.rule === 'string' ? raw.rule.trim() : ''
       const same = raw.same === null ? null : knownId(raw.same, known) ? raw.same : BAD
       const replaces = raw.replaces === null ? null : knownId(raw.replaces, known) ? raw.replaces : BAD
+      const overrides =
+        raw.overrides === null ? null : raw.scope === 'project' && knownId(raw.overrides, known) ? raw.overrides : BAD
       if (
         !rule ||
         rule.length > 300 ||
         typeof raw.when !== 'string' ||
-        (raw.scope !== 'profile' && raw.scope !== 'workspace') ||
+        (raw.scope !== 'profile' && raw.scope !== 'project') ||
         typeof raw.explicit !== 'boolean' ||
         same === BAD ||
         replaces === BAD ||
+        overrides === BAD ||
         (same !== null && replaces !== null) ||
+        (replaces !== null && overrides !== null) ||
         !Array.isArray(raw.turns) ||
         !raw.turns.length ||
         !raw.turns.every((i) => Number.isInteger(i) && feedbackTurns.has(i as number))
@@ -354,6 +363,8 @@ export function parseHabits(text: string, known: ReadonlySet<string>, feedbackTu
         rule,
         when: normalizeWhen(raw.when),
         scope: raw.scope,
+        overrides,
+        scopeClear: typeof raw.scopeClear === 'boolean' ? raw.scopeClear : true,
         explicit: raw.explicit,
         same,
         replaces,
