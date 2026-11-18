@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { App } from '@capacitor/app'
-import type { Concept, Question, Reference, Workspace } from '@desktop/preload/personal'
+import type { Concept, Question, Reference } from '@desktop/preload/personal'
 import {
   filterQuestions,
   lastTurn,
@@ -301,7 +301,6 @@ export default function ProjectScreen(): React.JSX.Element {
       questionId={questionId}
       concepts={linkable}
       shared={shared}
-      host={workspace?.remote}
       onReference={onReference}
       onContinue={isAndroidOverlay() ? () => void screen.continueQuestion(questionId, projectId) : undefined}
     />
@@ -495,8 +494,8 @@ function useScreenQuestion(projectId: string): {
       throw new Error(t('PC의 프로젝트 응답을 읽을 수 없습니다.'))
     const latest = envelope.result
     if (!latest || typeof latest !== 'object' ||
-        !('activeProfileId' in latest) || typeof latest.activeProfileId !== 'string' ||
-        !('profiles' in latest) || !Array.isArray(latest.profiles) ||
+        !('profile' in latest) || !latest.profile || typeof latest.profile !== 'object' ||
+        !('id' in latest.profile) || typeof latest.profile.id !== 'string' ||
         !('projects' in latest) || !Array.isArray(latest.projects) ||
         !('workspaces' in latest) || !Array.isArray(latest.workspaces) ||
         !('questions' in latest) || !Array.isArray(latest.questions))
@@ -505,12 +504,11 @@ function useScreenQuestion(projectId: string): {
     if (!mounted.current) return
     if (now.mobile.client !== initial.mobile.client || now.projectId !== initial.projectId ||
         now.mobile.conn.state !== 'online' ||
-        now.mobile.data.activeProfileId !== initial.mobile.data.activeProfileId)
+        now.mobile.data.profile.id !== initial.mobile.data.profile.id)
       throw new Error(t('현재 화면이나 연결이 변경되었습니다. 다시 시작해 주세요.'))
-    const profileId = latest.activeProfileId
+    const profileId = latest.profile.id
     const project = latest.projects.find((item) => item.id === targetProjectId)
-    if (profileId !== initial.mobile.data.activeProfileId ||
-        !latest.profiles.some((item) => item.id === profileId) ||
+    if (profileId !== initial.mobile.data.profile.id ||
         !project || !latest.workspaces.some(
           (item) => item.id === project.workspaceId && item.profileId === profileId
         ))
@@ -817,7 +815,6 @@ function Detail({
   questionId,
   concepts,
   shared,
-  host,
   onReference,
   onContinue
 }: {
@@ -825,8 +822,6 @@ function Detail({
   questionId: string
   concepts: Concept[]
   shared: Set<string>
-  /** Linked PC that answers this project's questions; undefined for the hub PC's own projects. */
-  host?: Workspace['remote']
   onReference: (ref: Reference) => void
   /** Android: continues this question in the screen-question overlay. */
   onContinue?: () => void
@@ -889,8 +884,7 @@ function Detail({
         submitOnEnter={false}
         autoFocus={false}
         projectId={projectId}
-        host={host}
-        profileId={data.activeProfileId}
+        profileId={data.profile.id}
         settings={data.settings}
         questionId={question.id}
         recentQuestion={running}

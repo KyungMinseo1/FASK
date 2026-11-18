@@ -5,6 +5,7 @@ import type { Question, Reference, Snapshot, Turn } from '@desktop/preload/perso
 import { ApiContext } from '@desktop/renderer/src/personal/api'
 import OverlayPanel from '../src/overlay/OverlayPanel'
 import type { Bootstrap } from '../src/overlay/bridge'
+import { defaultAvatar } from '@desktop/shared/avatar'
 
 const settings = { model: 'm', models: ['m'], routing: 'manual', refine: false, fastModel: '', deepModel: '' } as never
 const REFS: Reference[] = [
@@ -51,8 +52,8 @@ function snapshot(running = false): Snapshot {
     ? [turn('t1', { references: REFS }), turn('t2', { status: 'running', answer: '' })]
     : [turn('t1'), turn('t2', { references: REFS })]
   return {
-    profiles: [{ id: 'u', name: 'U' }],
-    activeProfileId: 'u',
+    profile: { id: 'u', name: 'U', avatar: defaultAvatar('u') },
+    device: 'demo-pc',
     workspaces: [{ id: 'w1', profileId: 'u', name: 'W' }],
     projects: [
       { id: 'p1', workspaceId: 'w1', name: 'P1', description: '' },

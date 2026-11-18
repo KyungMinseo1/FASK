@@ -197,16 +197,6 @@ function Shell({
   const navigate = useNavigate()
   const t = useT()
   const { data, refresh, error } = useSnapshot()
-  const lastProfile = useRef('')
-  useEffect(() => {
-    if (!data) return
-    // Old screens hold IDs from the previous profile; send the user back to the start.
-    if (lastProfile.current && lastProfile.current !== data.activeProfileId) {
-      navigate('/', { replace: true })
-      setNotice(t('PC에서 프로필이 바뀌어 처음 화면으로 이동했습니다.'))
-    }
-    lastProfile.current = data.activeProfileId
-  }, [data, navigate, setNotice, t])
   useEffect(() => {
     const check = async (): Promise<boolean> => {
       if (demo || !(await overlayRevoked(pairing.fingerprint))) return false
@@ -282,8 +272,8 @@ function Shell({
         <div className="fask-loading">{error || t('PC의 기록을 불러오는 중…')}</div>
       ) : (
         <MobileContext.Provider value={{ data, refresh, client, pairing, conn, share, unpair, demo, enterDemo }}>
-          {/* Remount everything when the PC switches profile so no stale draft or ID survives. */}
-          <Routes key={data.activeProfileId}>
+          {/* Remount everything if the PC's profile id changes so no stale draft or ID survives. */}
+          <Routes key={data.profile.id}>
             <Route path="/" element={<Home />} />
             <Route path="/p/:projectId" element={<ProjectScreen />} />
             <Route path="/p/:projectId/q/:questionId" element={<ProjectScreen />} />

@@ -151,6 +151,25 @@ const FAILOVER_SAFE: ReadonlySet<string> = new Set([
 ])
 const RETRY_MS = [1000, 2000, 5000, 10000]
 
+/** Disk cache copy: only the hub PC's own workspaces, never another PC's shared ones. */
+export function localOnly(s: Snapshot): Snapshot {
+  const workspaces = s.workspaces.filter((w) => !w.remote)
+  const wsIds = new Set(workspaces.map((w) => w.id))
+  const projects = s.projects.filter((p) => wsIds.has(p.workspaceId))
+  const projectIds = new Set(projects.map((p) => p.id))
+  return {
+    ...s,
+    workspaces,
+    projects,
+    concepts: s.concepts.filter((c) => wsIds.has(c.workspaceId)),
+    relations: s.relations.filter((r) => wsIds.has(r.workspaceId)),
+    questions: s.questions.filter((q) => projectIds.has(q.projectId)),
+    recentQuestions: Object.fromEntries(
+      Object.entries(s.recentQuestions ?? {}).filter(([id]) => projectIds.has(id))
+    )
+  }
+}
+
 export function createHubClient<P extends HubIdentity>(
   p: P,
   deps: {
@@ -415,7 +434,7 @@ export function createHubClient<P extends HubIdentity>(
       }
       try {
         if (deps.cache)
-          await deps.cache.save(s, { epoch: cacheEpoch!, fingerprint: p.fingerprint })
+          await deps.cache.save(localOnly(s), { epoch: cacheEpoch!, fingerprint: p.fingerprint })
       } catch {
         /* The live snapshot is still valid without a cached copy. */
       }

@@ -9,7 +9,6 @@ import QuestionDetail from '@desktop/renderer/src/personal/QuestionDetail'
 import {
   linkableConcepts,
   projectConcepts,
-  projectHost
 } from '@desktop/renderer/src/personal/questionTree'
 import TurnNav from '@desktop/renderer/src/personal/TurnNav'
 import { t } from '@desktop/shared/i18n'
@@ -27,7 +26,7 @@ export function contextProblem(
   ctx: { profileId: string; projectId: string },
   questionId: string | undefined
 ): string {
-  if (data.activeProfileId !== ctx.profileId)
+  if (data.profile.id !== ctx.profileId)
     return t('PC에서 프로필이 바뀌었습니다. 앱에서 화면 질문을 다시 시작해 주세요.')
   if (!data.projects.some((p) => p.id === ctx.projectId))
     return t('프로젝트가 삭제되었습니다. 앱에서 화면 질문을 다시 시작해 주세요.')
@@ -435,7 +434,6 @@ export default function OverlayPanel({
               submitOnEnter={false}
               key={composerKey}
               projectId={projectId}
-              host={projectHost(data, projectId)}
               profileId={boot.profileId}
               settings={data.settings}
               questionId={questionId}

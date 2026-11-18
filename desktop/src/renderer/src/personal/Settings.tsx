@@ -676,9 +676,7 @@ export default function Settings({
       <section>
         <h3>{t('백업과 복원')}</h3>
         <p>
-          {t(
-            '현재 프로필의 질문, 개념, 이미지를 백업합니다. 복원은 새 프로필에 추가하며 접속 키는 포함하지 않습니다.'
-          )}
+          {t('질문, 개념, 이미지를 백업합니다. 설정과 접속 키는 포함하지 않습니다.')}
         </p>
         <div className="button-row">
           <button disabled={busy} onClick={() => void run(() => window.fask.backup(), t('백업 창을 닫았습니다.'))}>
@@ -862,6 +860,13 @@ function usePeerCode(): PeerShare {
 function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
   const { code, now, error, busy } = share
   const t = useT()
+  // Consent is per code: cancelling or letting a code expire asks again.
+  const [understood, setUnderstood] = useState(false)
+  const [shownCode, setShownCode] = useState(code)
+  if (shownCode !== code) {
+    setShownCode(code)
+    if (!code) setUnderstood(false)
+  }
   const left = code ? Math.max(0, Math.ceil((code.expiresAt - now) / 1000)) : 0
   const urgent = left > 0 && left <= 60
   return (
@@ -894,9 +899,24 @@ function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
           </button>
         </div>
       ) : (
-        <button className="peer-code-start" disabled={busy} onClick={() => void share.begin()}>
-          {t('기기 연결 코드 만들기')}
-        </button>
+        <>
+          <p>
+            {t(
+              '연결한 PC는 이 PC에서 공유를 허용한 워크스페이스의 기록 전체를 보고 수정할 수 있습니다. 해제해도 이미 내보내거나 복사한 데이터는 회수할 수 없습니다.'
+            )}
+          </p>
+          <label className="check">
+            <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
+            {t('이해했습니다')}
+          </label>
+          <button
+            className="peer-code-start"
+            disabled={busy || !understood}
+            onClick={() => void share.begin()}
+          >
+            {t('기기 연결 코드 만들기')}
+          </button>
+        </>
       )}
       {error && <p className="error">{error}</p>}
     </div>
@@ -917,7 +937,10 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
     [address, setAddress] = useState(''),
     [code, setCode] = useState(''),
     [error, setError] = useState(''),
-    [busy, setBusy] = useState(false)
+    [busy, setBusy] = useState(false),
+    // The grant whose shared workspaces are being edited, and this PC's own workspaces to pick from.
+    [sharing, setSharing] = useState<{ id: string; ids: string[] } | null>(null),
+    [ownWorkspaces, setOwnWorkspaces] = useState<{ id: string; name: string }[]>([])
   const t = useT()
   useEffect(() => {
     const load = (): void => {
@@ -965,7 +988,20 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
                   {new Date(g.createdAt).toLocaleString()}
                   {g.manager !== 'none' && ` · ${t(MANAGER_LABELS[g.manager])}`}
                 </small>
+                <small>{t('공유 {{n}}개', { n: g.workspaces.length })}</small>
               </span>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    const s = await window.fask.snapshot()
+                    setOwnWorkspaces(s.workspaces.filter((w) => !w.remote).map(({ id, name }) => ({ id, name })))
+                    setSharing({ id: g.id, ids: g.workspaces })
+                  })
+                }
+              >
+                {t('공유 범위')}
+              </button>
               {g.manager === 'pending' ? (
                 <>
                   <button
@@ -1003,6 +1039,46 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
               >
                 {t('해제')}
               </button>
+              {sharing?.id === g.id && (
+                <div className="peer-share">
+                  {ownWorkspaces.map((w) => (
+                    <label key={w.id} className="check">
+                      <input
+                        type="checkbox"
+                        checked={sharing.ids.includes(w.id)}
+                        onChange={(e) =>
+                          setSharing({
+                            id: g.id,
+                            ids: e.target.checked
+                              ? [...sharing.ids, w.id]
+                              : sharing.ids.filter((id) => id !== w.id)
+                          })
+                        }
+                      />
+                      {w.name}
+                    </label>
+                  ))}
+                  <div className="button-row">
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void act(async () => {
+                          await window.fask.peerGrantShare(
+                            g.id,
+                            sharing.ids.filter((id) => ownWorkspaces.some((w) => w.id === id))
+                          )
+                          setSharing(null)
+                        })
+                      }
+                    >
+                      {t('저장')}
+                    </button>
+                    <button disabled={busy} onClick={() => setSharing(null)}>
+                      {t('취소')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -1259,12 +1335,19 @@ function HabitSection(): React.JSX.Element {
     void act(async () => {
       const r = await window.fask.importHabits(await file.text())
       setNotice(
-        t('습관 {{added}}개를 불러왔습니다. {{skipped}}개는 이미 있거나 맞는 워크스페이스가 없어 건너뛰었습니다.', r)
+        t('습관 {{added}}개를 불러왔습니다. {{skipped}}개는 이미 있거나 맞는 프로젝트가 없어 건너뛰었습니다.', r)
       )
     })
   }
   const habits = list?.habits ?? []
-  const workspaces = list?.workspaces ?? []
+  const projects = list?.projects ?? []
+  const globals = habits.filter((h) => h.status === 'active' && h.scope === 'profile')
+  // Suggested overlaps first, then the other active profile-wide habits; nothing is preselected.
+  const suggested = editing?.id ? (list?.overrideCandidates[editing.id] ?? []) : []
+  const overrideOptions = [
+    ...suggested.flatMap((id) => globals.filter((h) => h.id === id)),
+    ...globals.filter((h) => !suggested.includes(h.id))
+  ]
   return (
     <>
       {editing && (
@@ -1289,24 +1372,41 @@ function HabitSection(): React.JSX.Element {
           <label>
             {t('범위')}
             <select
-              value={editing.scope === 'workspace' ? `ws:${editing.workspaceId}` : 'profile'}
+              value={editing.scope === 'project' ? `pj:${editing.projectOwner}:${editing.projectId}` : 'profile'}
               onChange={(e) => {
                 const v = e.target.value
+                const p = projects.find((x) => `pj:${x.owner}:${x.id}` === v)
                 setEditing(
-                  v.startsWith('ws:')
-                    ? { ...editing, scope: 'workspace', workspaceId: v.slice(3) }
-                    : { ...editing, scope: 'profile', workspaceId: null }
+                  p
+                    ? { ...editing, scope: 'project', projectOwner: p.owner, projectId: p.id }
+                    : { ...editing, scope: 'profile', projectOwner: null, projectId: null, overrides: null }
                 )
               }}
             >
-              <option value="profile">{t('모든 워크스페이스')}</option>
-              {workspaces.map((w) => (
-                <option key={w.id} value={`ws:${w.id}`}>
-                  {w.name}
+              <option value="profile">{t('모든 프로젝트')}</option>
+              {projects.map((p) => (
+                <option key={`${p.owner}:${p.id}`} value={`pj:${p.owner}:${p.id}`}>
+                  {p.name}
                 </option>
               ))}
             </select>
           </label>
+          {editing.scope === 'project' && (
+            <label>
+              {t('대신할 전체 습관')}
+              <select
+                value={editing.overrides ?? ''}
+                onChange={(e) => setEditing({ ...editing, overrides: e.target.value || null })}
+              >
+                <option value="">{t('없음')}</option>
+                {overrideOptions.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.rule}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             disabled={busy || !editing.rule.trim()}
             onClick={() =>
@@ -1337,9 +1437,10 @@ function HabitSection(): React.JSX.Element {
                     <strong>{h.rule}</strong>
                     <small>
                       {h.when || t('모든 답변')} ·{' '}
-                      {h.scope === 'workspace'
-                        ? (workspaces.find((w) => w.id === h.workspaceId)?.name ?? '')
-                        : t('모든 워크스페이스')}{' '}
+                      {h.scope === 'project'
+                        ? (projects.find((p) => p.owner === h.projectOwner && p.id === h.projectId)?.name ??
+                          t('적용 안 됨: 연결 해제된 프로젝트'))
+                        : t('모든 프로젝트')}{' '}
                       · {t('{{n}}번 요청', { n: h.count })}
                     </small>
                   </span>
@@ -1361,7 +1462,15 @@ function HabitSection(): React.JSX.Element {
                       <button
                         disabled={busy}
                         onClick={() =>
-                          setEditing({ id: h.id, rule: h.rule, when: h.when, scope: h.scope, workspaceId: h.workspaceId })
+                          setEditing({
+                            id: h.id,
+                            rule: h.rule,
+                            when: h.when,
+                            scope: h.scope,
+                            projectOwner: h.projectOwner,
+                            projectId: h.projectId,
+                            overrides: h.overrides
+                          })
                         }
                       >
                         {t('편집')}
@@ -1392,7 +1501,9 @@ function HabitSection(): React.JSX.Element {
       <div>
         <button
           disabled={busy || !list}
-          onClick={() => setEditing({ rule: '', when: '', scope: 'profile', workspaceId: null })}
+          onClick={() =>
+            setEditing({ rule: '', when: '', scope: 'profile', projectOwner: null, projectId: null, overrides: null })
+          }
         >
           {t('습관 추가')}
         </button>
@@ -1426,7 +1537,7 @@ function HabitSection(): React.JSX.Element {
           importFile(e.dataTransfer.files[0])
         }}
       >
-        {t('다른 프로필이나 PC에서 저장한 습관 파일(.json)을 여기로 끌어 놓거나 눌러서 고르세요.')}
+        {t('다른 PC에서 저장한 습관 파일(.json)을 여기로 끌어 놓거나 눌러서 고르세요.')}
         <input
           ref={fileInput}
           type="file"

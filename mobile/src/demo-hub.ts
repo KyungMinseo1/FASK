@@ -14,6 +14,7 @@ import type {
   TurnState
 } from '@desktop/preload/personal'
 import type { HubClient } from './hub'
+import { defaultAvatar } from '@desktop/shared/avatar'
 import type { Pairing } from './transport'
 
 export const demoAvailable = (): boolean => import.meta.env.MODE === 'pairing-test'
@@ -231,8 +232,8 @@ function seed(): { data: Snapshot; images: Map<string, string> } {
   return {
     images: new Map([['img-merge', IMAGE]]),
     data: {
-      profiles: [{ id: PROFILE, name: '데모 학생' }],
-      activeProfileId: PROFILE,
+      profile: { id: PROFILE, name: '데모 학생', avatar: defaultAvatar(PROFILE) },
+      device: 'demo-pc',
       workspaces: [
         { id: 'w-sem', profileId: PROFILE, name: '2학기' },
         { id: 'w-self', profileId: PROFILE, name: '개인 공부' }
@@ -333,9 +334,7 @@ export function createDemoHub(): HubClient {
     snapshot: async () => structuredClone(data),
     create: async (kind, name, parentId) => {
       const newId = id(kind)
-      if (kind === 'profile') data.profiles.push({ id: newId, name })
-      else if (kind === 'workspace')
-        data.workspaces.push({ id: newId, profileId: data.activeProfileId, name })
+      if (kind === 'workspace') data.workspaces.push({ id: newId, profileId: data.profile.id, name })
       else if (kind === 'project')
         data.projects.push({ id: newId, workspaceId: parentId ?? data.workspaces[0]?.id ?? '', name, description: '' })
       else {
@@ -360,10 +359,8 @@ export function createDemoHub(): HubClient {
     },
     rename: async (kind, target, name) => {
       const list =
-        kind === 'profile'
-          ? data.profiles
-          : kind === 'workspace'
-            ? data.workspaces
+        kind === 'workspace'
+          ? data.workspaces
             : kind === 'project'
               ? data.projects
               : kind === 'concept'
@@ -388,11 +385,11 @@ export function createDemoHub(): HubClient {
         }
         removeConcepts(ids)
       } else if (kind === 'project') removeProjects(new Set([target]))
-      else if (kind === 'workspace') {
+      else {
         removeProjects(new Set(data.projects.filter((p) => p.workspaceId === target).map((p) => p.id)))
         removeConcepts(new Set(data.concepts.filter((c) => c.workspaceId === target).map((c) => c.id)))
         data.workspaces = data.workspaces.filter((w) => w.id !== target)
-      } else throw new Error('데모에서는 프로필을 삭제할 수 없습니다.')
+      }
       changed()
     },
     moveQuestion: async (qid, projectId) => {
@@ -678,7 +675,7 @@ export function createDemoHub(): HubClient {
     exportArchive: async () => {
       throw new Error('데모에서는 내보낼 수 없습니다.')
     },
-    habits: async () => ({ enabled: false, habits: [], workspaces: [] }),
+    habits: async () => ({ enabled: false, habits: [], projects: [], overrideCandidates: {} }),
     decideHabit: async () => {},
     onStream: (cb) => {
       streams.add(cb)

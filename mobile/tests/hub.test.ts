@@ -11,6 +11,7 @@ import {
   type HubTransport,
   type Pairing
 } from '../src/transport'
+import { defaultAvatar } from '@desktop/shared/avatar'
 
 const fp1 = 'A'.repeat(43),
   fp2 = 'B'.repeat(43)
@@ -23,7 +24,15 @@ const pairing = (fingerprint = fp1): Pairing => ({
 const A = '10.0.0.1',
   B = '10.0.0.2'
 const snapshot = (marker: string): Snapshot =>
-  ({ activeProfileId: marker, questions: [], profiles: [] }) as unknown as Snapshot
+  ({
+    profile: { id: marker, name: marker, avatar: defaultAvatar(marker) },
+    device: 'demo-pc',
+    workspaces: [],
+    projects: [],
+    concepts: [],
+    relations: [],
+    questions: []
+  }) as unknown as Snapshot
 
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
   let resolve!: (v: T) => void, reject!: (e: unknown) => void
@@ -434,7 +443,7 @@ describe('hub client', () => {
     await c2.snapshot()
     old.resolve(ok(snapshot('old')))
     await pending
-    expect((await cache.load(fp2))?.snapshot.activeProfileId).toBe('new')
+    expect((await cache.load(fp2))?.snapshot.profile.id).toBe('new')
     c1.close()
     c2.close()
   })
@@ -444,7 +453,7 @@ describe('hub client', () => {
       return ok(snapshot('b'))
     })
     const { c, statuses } = client(t)
-    expect((await c.snapshot()).activeProfileId).toBe('b')
+    expect((await c.snapshot()).profile.id).toBe('b')
     expect(statuses.at(-1)).toEqual({ state: 'online' })
     c.close()
   })
@@ -467,9 +476,50 @@ describe('hub client', () => {
     const { c, statuses } = client(t, cache)
     await c.snapshot()
     online = false
-    expect((await c.snapshot()).activeProfileId).toBe('cached')
+    expect((await c.snapshot()).profile.id).toBe('cached')
     expect(statuses.at(-1)?.state).toBe('offline')
     expect(statuses.at(-1)?.savedAt).toBeTypeOf('string')
+    c.close()
+  })
+  it('the disk cache never stores another PC workspace', async () => {
+    const io = memoryIo()
+    const cache = createSnapshotCache(io)
+    const saved: Snapshot[] = []
+    const spy: typeof cache = { ...cache, save: (s, o) => (saved.push(s), cache.save(s, o)) }
+    const mixed = {
+      ...snapshot('mix'),
+      workspaces: [
+        { id: 'w-local', profileId: 'mix', name: 'L' },
+        { id: 'w-remote', profileId: 'other', name: 'R', remote: { peerId: 'peer', name: 'PC2', status: 'online' } }
+      ],
+      projects: [
+        { id: 'p-local', workspaceId: 'w-local', name: 'PL', description: '' },
+        { id: 'p-remote', workspaceId: 'w-remote', name: 'PR', description: '' }
+      ],
+      concepts: [{ id: 'c-remote', workspaceId: 'w-remote' }],
+      relations: [{ id: 'r-remote', workspaceId: 'w-remote' }],
+      questions: [
+        { id: 'q-local', projectId: 'p-local' },
+        { id: 'q-remote', projectId: 'p-remote' }
+      ],
+      recentQuestions: { 'p-local': 'q-local', 'p-remote': 'q-remote' }
+    } as unknown as Snapshot
+    let online = true
+    const t = fakeTransport(async () => {
+      if (!online) throw toHubError('NETWORK')
+      return ok(mixed)
+    })
+    const { c } = client(t, spy)
+    expect((await c.snapshot()).workspaces).toHaveLength(2)
+    expect(saved).toHaveLength(1)
+    expect(JSON.stringify(saved[0])).not.toContain('remote')
+    expect(saved[0].workspaces.map((w) => w.id)).toEqual(['w-local'])
+    expect(saved[0].questions.map((q) => q.id)).toEqual(['q-local'])
+    expect(saved[0].recentQuestions).toEqual({ 'p-local': 'q-local' })
+    online = false
+    const offline = await c.snapshot()
+    expect(JSON.stringify(offline)).not.toContain('remote')
+    expect(offline.projects.map((p) => p.id)).toEqual(['p-local'])
     c.close()
   })
   it('plugin error codes are preserved', () => {
@@ -861,7 +911,7 @@ describe('hub client over the relay', () => {
     expect(statuses.at(-1)).toEqual({ state: 'online' })
     await c.snapshot()
     failing = true
-    expect((await c.snapshot()).activeProfileId).toBe('cached')
+    expect((await c.snapshot()).profile.id).toBe('cached')
     expect(statuses.every((s) => s.state === 'online')).toBe(true)
     c.close()
   })
