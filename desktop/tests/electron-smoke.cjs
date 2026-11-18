@@ -229,6 +229,12 @@ app.whenReady().then(async () => {
       'profile card opens the profile page with the usage heatmap'
     )
     await shot('profile-page')
+    await js("[...document.querySelectorAll('.profile-page .settings-nav nav button')].find(b=>b.textContent==='보안').click()")
+    await wait(
+      () => js("document.querySelector('.profile-page .settings-body h2')?.textContent==='보안'"),
+      'profile security category shows the PIN lock'
+    )
+    await shot('profile-security')
     await js("window.fask.profileUpdate({ name: '연구 프로필' })")
     await wait(
       () => js("document.querySelector('.profile-card')?.textContent.includes('연구 프로필')"),

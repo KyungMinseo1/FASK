@@ -905,7 +905,7 @@ function PeerCodeBox({ share }: { share: PeerShare }): React.JSX.Element {
               '연결한 PC는 이 PC에서 공유를 허용한 워크스페이스의 기록 전체를 보고 수정할 수 있습니다. 해제해도 이미 내보내거나 복사한 데이터는 회수할 수 없습니다.'
             )}
           </p>
-          <label className="check">
+          <label className="check tick">
             <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
             {t('이해했습니다')}
           </label>
@@ -1042,7 +1042,7 @@ function PeerSection({ share }: { share: PeerShare }): React.JSX.Element {
               {sharing?.id === g.id && (
                 <div className="peer-share">
                   {ownWorkspaces.map((w) => (
-                    <label key={w.id} className="check">
+                    <label key={w.id} className="check tick">
                       <input
                         type="checkbox"
                         checked={sharing.ids.includes(w.id)}
@@ -1157,7 +1157,10 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
     [qr, setQr] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [relayUrl, setRelayUrl] = useState('')
+    [relayUrl, setRelayUrl] = useState(''),
+    // The QR carries the connection key and the relay address is private: both stay hidden until asked for.
+    [showQr, setShowQr] = useState(false),
+    [editRelay, setEditRelay] = useState(false)
   const t = useT()
   const apply = async (fn: () => Promise<HubStatus>): Promise<void> => {
     setBusy(true)
@@ -1191,15 +1194,20 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
   useEffect(() => setRelayUrl(savedRelayUrl), [savedRelayUrl])
   const pairing = status?.pairing ?? ''
   useEffect(() => {
+    if (!showQr) return
+    const timer = setTimeout(() => setShowQr(false), 120_000)
+    return () => clearTimeout(timer)
+  }, [showQr])
+  useEffect(() => {
     let alive = true
-    if (pairing)
+    if (pairing && showQr)
       void QRCode.toDataURL(pairing, { margin: 1, width: 240 }).then((url) => {
         if (alive) setQr(url)
       })
     return () => {
       alive = false
     }
-  }, [pairing])
+  }, [pairing, showQr])
   return (
     <section className="hub-settings">
       <h3>{t('모바일 연결')}</h3>
@@ -1254,23 +1262,39 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
             />
             {t('중계 서버로 외부 연결 (Tailscale 없이)')}
           </label>
-          <input
-            type="url"
-            value={relayUrl}
-            placeholder="wss://…"
-            aria-label={t('중계 서버 주소')}
-            disabled={busy}
-            onChange={(e) => setRelayUrl(e.target.value)}
-            onBlur={() => {
-              if (relayUrl.trim() !== savedRelayUrl)
-                void apply(() => window.fask.setHubRelay(status.relay.enabled, relayUrl))
-            }}
-          />
+          {editRelay || !savedRelayUrl ? (
+            <input
+              type="url"
+              value={relayUrl}
+              placeholder="wss://…"
+              aria-label={t('중계 서버 주소')}
+              disabled={busy}
+              onChange={(e) => setRelayUrl(e.target.value)}
+              onBlur={() => {
+                setEditRelay(false)
+                if (relayUrl.trim() !== savedRelayUrl)
+                  void apply(() => window.fask.setHubRelay(status.relay.enabled, relayUrl))
+              }}
+              autoFocus={editRelay}
+            />
+          ) : (
+            <button disabled={busy} onClick={() => setEditRelay(true)}>
+              {t('중계 서버 주소 바꾸기')}
+            </button>
+          )}
           {status.relay.state === 'online' && <p>{t('중계 서버 연결됨')}</p>}
           {status.relay.state === 'connecting' && <p>{t('중계 서버에 연결 중…')}</p>}
           {status.relay.state === 'error' && <p className="error">{t(status.relay.error ?? '')}</p>}
           {status.error && <p className="error">{t(status.error)}</p>}
-          {pairing && qr && <img className="hub-qr" src={qr} alt={t('모바일 연결 QR 코드')} />}
+          {pairing &&
+            (showQr ? (
+              <>
+                {qr && <img className="hub-qr" src={qr} alt={t('모바일 연결 QR 코드')} />}
+                <button onClick={() => setShowQr(false)}>{t('QR 코드 숨기기')}</button>
+              </>
+            ) : (
+              <button onClick={() => setShowQr(true)}>{t('모바일 연결 QR 코드 보기')}</button>
+            ))}
           <PeerCodeBox share={share} />
           <button disabled={busy} onClick={() => void apply(() => window.fask.resetHubPairing())}>
             {t('연결 초기화하고 모든 기기 해제')}
