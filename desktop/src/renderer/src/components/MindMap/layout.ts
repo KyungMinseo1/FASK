@@ -36,10 +36,15 @@ export interface NodeTag {
 
 /** Emphasis over the graph (e.g. a selected concept and the concepts related to it). */
 export interface GraphHighlight {
-  /** The emphasized node. */
-  focus: string
+  /** The center of the emphasis (drawn selected). Absent: only `related` is emphasized. */
+  focus?: string
   /** Other emphasized node ids and their tags; every node not listed (nor `focus`) is dimmed. */
   related: Record<string, NodeTag[]>
+}
+
+/** Every node id a highlight keeps lit: its focus (if any) and the related nodes. */
+export function highlightIds(h: GraphHighlight): string[] {
+  return [...(h.focus ? [h.focus] : []), ...Object.keys(h.related)]
 }
 
 export interface MindNodeData extends Record<string, unknown> {

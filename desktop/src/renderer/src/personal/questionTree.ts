@@ -184,3 +184,62 @@ export function questionTree(data: Snapshot, projectId: string, questions: Quest
     ]
   }
 }
+
+/**
+ * Concept tree of a whole workspace, no question leaves; root id `workspace:<id>`. `count` is the
+ * distinct questions of the workspace's projects linking the concept or any concept under it; a
+ * concept linked directly by questions of 2+ projects carries a '{{n}}개 프로젝트' badge. `only`
+ * (concept ids) narrows the concepts shown.
+ */
+export function workspaceTree(data: Snapshot, workspaceId: string, only?: Set<string>): MindNode {
+  const projectIds = new Set(data.projects.filter((p) => p.workspaceId === workspaceId).map((p) => p.id))
+  const concepts = data.concepts.filter((c) => c.workspaceId === workspaceId && (!only || only.has(c.id)))
+  const direct = new Map<string, Set<string>>()
+  const usedBy = new Map<string, Set<string>>()
+  const add = (map: Map<string, Set<string>>, key: string, value: string): void => {
+    const set = map.get(key)
+    if (set) set.add(value)
+    else map.set(key, new Set([value]))
+  }
+  for (const q of data.questions) {
+    if (!projectIds.has(q.projectId)) continue
+    for (const id of q.conceptIds) {
+      add(direct, id, q.id)
+      add(usedBy, id, q.projectId)
+    }
+  }
+  const node = (c: Concept, seen: Set<string>): { node: MindNode; ids: Set<string> } => {
+    const subs = seen.has(c.id)
+      ? []
+      : concepts.filter((s) => s.parentId === c.id).map((s) => node(s, new Set([...seen, c.id])))
+    const ids = new Set(direct.get(c.id))
+    for (const s of subs) for (const id of s.ids) ids.add(id)
+    const n = usedBy.get(c.id)?.size ?? 0
+    return {
+      ids,
+      node: {
+        id: `c:${c.id}`,
+        label: c.name,
+        kind: 'concept',
+        count: ids.size,
+        children: subs.map((s) => s.node),
+        ...(n >= 2 ? { badge: t('{{n}}개 프로젝트', { n }) } : {})
+      }
+    }
+  }
+  return {
+    id: `workspace:${workspaceId}`,
+    label: data.workspaces.find((w) => w.id === workspaceId)?.name || t('워크스페이스'),
+    kind: 'root',
+    children: concepts
+      .filter((c) => !c.parentId || !concepts.some((p) => p.id === c.parentId))
+      .map((c) => node(c, new Set()).node)
+  }
+}
+
+/** Highlight of a project's concepts (projectConcepts) in the workspace graph; the root stays lit. */
+export function projectHighlight(data: Snapshot, workspaceId: string, projectId: string): GraphHighlight {
+  const related: Record<string, NodeTag[]> = { [`workspace:${workspaceId}`]: [] }
+  for (const c of projectConcepts(data, projectId).concepts) related[`c:${c.id}`] = []
+  return { related }
+}

@@ -1232,6 +1232,13 @@ button.danger {
   color: var(--ink-muted);
   margin-left: auto;
 }
+.filter-row label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
 .knowledge-area {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -4482,6 +4489,26 @@ button.memo-saved:disabled {
   border: 0;
   background: transparent;
 }
+.graph-scope {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--ink-muted);
+  font-size: 12.5px;
+}
+.fask-app .graph-scope button {
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
 /* Tidy review: estimate header, scrolling grouped change list, sticky actions. */
 .tidy-dialog {
   width: 560px;
@@ -4736,10 +4763,21 @@ button.memo-saved:disabled {
 }
 .concept-questions small,
 .concept-empty,
+.concept-question-group > small,
+.concept-shared-note,
 .relation-group > small {
   color: var(--ink-muted);
   font-size: 12px;
   font-weight: 400;
+}
+.concept-question-group > small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.concept-shared-note {
+  margin: 0 0 10px;
 }
 .relation-group li {
   display: flex;

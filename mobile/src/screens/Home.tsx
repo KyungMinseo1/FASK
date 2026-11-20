@@ -29,12 +29,27 @@ export default function Home(): React.JSX.Element {
       <main className="mobile-body">
         {data.workspaces.map((w) => {
           const unavailable = !!w.remote && w.remote.status !== 'online'
+          const conceptCount = data.concepts.filter((c) => c.workspaceId === w.id).length
           return (
             <section key={w.id} className="mobile-workspace">
-              <h2>
-                {w.remote && <Icon name="globe" size={16} />}
-                {w.name}
-              </h2>
+              <div className="mobile-workspace-head">
+                <h2>
+                  {w.remote && <Icon name="globe" size={16} />}
+                  {w.name}
+                </h2>
+                {conceptCount > 0 && (
+                  <button
+                    className="mobile-graph-link"
+                    aria-disabled={unavailable || undefined}
+                    onClick={() => {
+                      if (!unavailable) navigate(`/w/${w.id}`)
+                    }}
+                  >
+                    <Icon name="graph" size={16} />
+                    {t('개념 그래프')}
+                  </button>
+                )}
+              </div>
               {w.remote && (
                 <small className="mobile-remote-status">
                   <span>{w.remote.name}</span>

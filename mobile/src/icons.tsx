@@ -43,6 +43,14 @@ const PATHS = {
       <path d="M12 4v11M7.5 8.5L12 4l4.5 4.5" />
       <path d="M5 14v5h14v-5" />
     </>
+  ),
+  graph: (
+    <>
+      <circle cx="6" cy="12" r="2.2" />
+      <circle cx="18" cy="6.5" r="2.2" />
+      <circle cx="18" cy="17.5" r="2.2" />
+      <path d="M8 11l8-3.5M8 13l8 3.5" />
+    </>
   )
 } as const
 

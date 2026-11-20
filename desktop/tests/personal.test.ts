@@ -41,8 +41,12 @@ import {
   RELATION_LABELS,
   linkableConcepts,
   projectConcepts,
-  relationHighlight
+  projectHighlight,
+  relationHighlight,
+  workspaceTree
 } from '../src/renderer/src/personal/questionTree'
+import type { MindNode } from '../src/renderer/src/lib/trees'
+import { t } from '../src/shared/i18n'
 import { egoLayout, pillBorder } from '../src/renderer/src/personal/egoGraph'
 import './knowledge.test'
 import './knowledge-store.test'
@@ -2291,6 +2295,75 @@ test('project graph: linked concepts plus ancestors, shared and fresh manual one
     linkableConcepts(data, 'A').map((c) => c.id),
     ['root', 'mid', 'leaf', 'both', 'fresh', 'other']
   )
+})
+
+test('workspace graph: all workspace concepts, cross-project counts, multi-project badge, project filter', () => {
+  const concept = (id: string, parentId: string | null, manual = false, workspaceId = 'W'): Snapshot['concepts'][number] => ({
+    id,
+    workspaceId,
+    name: id,
+    parentId,
+    manual,
+    aliases: [],
+    definition: '',
+    level: 'concept'
+  })
+  const question = (id: string, projectId: string, conceptIds: string[]): Question =>
+    ({ id, projectId, conceptIds }) as Question
+  const data = {
+    workspaces: [
+      { id: 'W', name: '학기' },
+      { id: 'X', name: '다른' }
+    ],
+    projects: [
+      { id: 'A', workspaceId: 'W', name: 'A', description: '' },
+      { id: 'B', workspaceId: 'W', name: 'B', description: '' },
+      { id: 'C', workspaceId: 'X', name: 'C', description: '' }
+    ],
+    concepts: [
+      concept('root', null),
+      concept('mid', 'root'),
+      concept('leaf', 'mid'),
+      concept('both', null),
+      concept('fresh', null, true),
+      concept('x', null, false, 'X')
+    ],
+    questions: [
+      question('q1', 'A', ['leaf', 'both']),
+      question('q2', 'B', ['both']),
+      question('q3', 'B', ['leaf']),
+      question('q4', 'C', ['x'])
+    ]
+  } as unknown as Snapshot
+  const tree = workspaceTree(data, 'W')
+  assert.equal(tree.id, 'workspace:W')
+  assert.equal(tree.label, '학기')
+  assert.deepEqual(
+    tree.children.map((c) => c.id),
+    ['c:root', 'c:both', 'c:fresh']
+  )
+  const [root, both, fresh] = tree.children
+  // q1 (A) and q3 (B) both reach root through leaf; counted once each.
+  assert.equal(root.count, 2)
+  assert.equal(both.count, 2)
+  assert.equal(fresh.count, 0)
+  const twoProjects = t('{{n}}개 프로젝트', { n: 2 })
+  assert.equal(both.badge, twoProjects)
+  assert.equal(root.children[0].children[0].id, 'c:leaf')
+  assert.equal(root.children[0].children[0].badge, twoProjects)
+  assert.equal(fresh.badge, undefined)
+  const ids = (n: MindNode): string[] => [n.id, ...n.children.flatMap(ids)]
+  const all = ids(tree)
+  assert.ok(!all.some((id) => id.startsWith('q:') || id === 'unfiled' || id === 'c:x'))
+  assert.deepEqual(
+    workspaceTree(data, 'W', new Set(['both'])).children.map((c) => c.id),
+    ['c:both']
+  )
+  const highlight = projectHighlight(data, 'W', 'A')
+  assert.deepEqual(highlight, {
+    related: { 'workspace:W': [], 'c:root': [], 'c:mid': [], 'c:leaf': [], 'c:both': [], 'c:fresh': [] }
+  })
+  assert.ok(!('focus' in highlight))
 })
 
 test('relation highlight: the selected concept and its approved, active relations, direction-tagged', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { App } from '@capacitor/app'
 import type { Concept, Question, Reference } from '@desktop/preload/personal'
@@ -12,6 +12,7 @@ import {
   questionStatus
 } from '@desktop/shared/questions'
 import MindMap from '@desktop/renderer/src/components/MindMap/MindMap'
+import { highlightIds } from '@desktop/renderer/src/components/MindMap/layout'
 import { useApi } from '@desktop/renderer/src/personal/api'
 import {
   canDropGraphNode,
@@ -37,6 +38,7 @@ import {
 import { useT } from '@desktop/shared/i18n/react'
 import { useMobile } from '../context'
 import { mediaActions } from '../media'
+import { useSheetGraph } from '../sheetGraph'
 import { Icon } from '../icons'
 import ExportSheet from './ExportSheet'
 import {
@@ -88,7 +90,6 @@ export default function ProjectScreen(): React.JSX.Element {
     [view, setView] = useState<'list' | 'graph'>('list'),
     [menu, setMenu] = useState<Question | null>(null),
     [conceptId, setConceptId] = useState<string | null>(null),
-    [sheetFull, setSheetFull] = useState(false),
     [exporting, setExporting] = useState(false)
   const questions = useMemo(
     () => data.questions.filter((q) => q.projectId === projectId),
@@ -112,47 +113,10 @@ export default function ProjectScreen(): React.JSX.Element {
   }
   const paged = useMemo(() => pageSlice(filtered, page), [filtered, page])
   const listRef = useRef<HTMLElement>(null)
-  const graphRef = useRef<HTMLDivElement>(null)
-  const sheetRef = useRef<HTMLDivElement>(null)
   const graphSheet = !!conceptId && view === 'graph' && (wide || !questionId)
+  const { graphRef, sheetRef, graphHeight, sheetFull, setSheetFull } = useSheetGraph(graphSheet, conceptId)
   // The selected concept and its related concepts; MindMap frames those that are visible.
-  const focusIds = useMemo(
-    () => (highlight ? [highlight.focus, ...Object.keys(highlight.related)] : undefined),
-    [highlight]
-  )
-  // Graph height while the half sheet is open: from the top of the graph's scroller (where
-  // scrollIntoView puts it) down to the sheet. Measured, since banners above the header move it.
-  const [graphHeight, setGraphHeight] = useState<number | null>(null)
-  useLayoutEffect(() => {
-    const sheet = sheetRef.current
-    const scroller = graphRef.current?.closest<HTMLElement>('.mobile-list-column, .mobile-body')
-    if (!graphSheet || sheetFull || !sheet || !scroller) return
-    const measure = (): void => {
-      // The visible top is the lowest top among clipping ancestors: a scrolled column can sit above
-      // the screen while its scrolling parent starts below the header and banners.
-      let top = -Infinity
-      for (let el = graphRef.current?.parentElement; el; el = el.parentElement)
-        if (getComputedStyle(el).overflowY !== 'visible') top = Math.max(top, el.getBoundingClientRect().top)
-      if (top === -Infinity) top = scroller.getBoundingClientRect().top
-      // getBoundingClientRect is in zoomed pixels; style heights are not.
-      const scale = scroller.offsetHeight ? scroller.getBoundingClientRect().height / scroller.offsetHeight : 1
-      setGraphHeight(Math.max(160, Math.round((sheet.getBoundingClientRect().top - top) / scale) - 8))
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(sheet)
-    observer.observe(scroller)
-    window.addEventListener('resize', measure)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', measure)
-    }
-  }, [graphSheet, sheetFull, conceptId])
-  // The sheet covers the lower half: bring the (shrunken) graph to the top of its scroller.
-  useEffect(() => {
-    if (graphSheet) graphRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [graphSheet, conceptId, graphHeight])
-  useEffect(() => setSheetFull(false), [conceptId])
+  const focusIds = useMemo(() => (highlight ? highlightIds(highlight) : undefined), [highlight])
   if (!project) return <Navigate404 />
   const open = (id: string): void => void navigate(`/p/${projectId}/q/${id}`)
   const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
@@ -221,14 +185,22 @@ export default function ProjectScreen(): React.JSX.Element {
               {graphError}
             </p>
           )}
-          {!demo && (
-            <div className="mobile-graph-actions">
+          <div className="mobile-graph-actions">
+            <span className="mobile-graph-scope">
+              {concepts.length ? t('이 프로젝트 질문 기준') : t('이 프로젝트의 질문에 연결된 개념이 아직 없습니다.')}
+            </span>
+            {data.concepts.some((c) => c.workspaceId === project.workspaceId) && (
+              <button onClick={() => navigate(`/w/${project.workspaceId}?highlight=${projectId}`)}>
+                {t('워크스페이스 전체 그래프')}
+              </button>
+            )}
+            {!demo && (
               <button disabled={locked} onClick={() => setExporting(true)}>
                 <Icon name="export" size={18} />
                 {t('내보내기')}
               </button>
-            </div>
-          )}
+            )}
+          </div>
           <div className="mobile-graph" ref={graphRef}>
             <TidyBar
               workspaceId={project.workspaceId}
