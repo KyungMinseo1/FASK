@@ -25,7 +25,7 @@ import {
   type XYPosition
 } from '@xyflow/react'
 import type { MindNode } from '../../lib/trees'
-import { layoutMindMap, type GraphHighlight, type MindFlowNode } from './layout'
+import { highlightIds, layoutMindMap, type GraphHighlight, type MindFlowNode } from './layout'
 import MindNodeView, { CurveEdge, DIMMED_OPACITY } from './MindNodeView'
 import { useT } from '../../../../shared/i18n/react'
 
@@ -205,7 +205,7 @@ function MindMapInner({
 
   // Highlighted node ids (focus + related); everything else is dimmed.
   const lit = useMemo(
-    () => (highlight ? new Set([highlight.focus, ...Object.keys(highlight.related)]) : null),
+    () => (highlight ? new Set(highlightIds(highlight)) : null),
     [highlight]
   )
   const litKey = lit ? [...lit].join('\n') : ''

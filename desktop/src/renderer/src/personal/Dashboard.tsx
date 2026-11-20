@@ -13,12 +13,14 @@ import {
   questionStatus
 } from '../../../shared/questions'
 import MindMap from '../components/MindMap/MindMap'
+import { highlightIds } from '../components/MindMap/layout'
 import Composer from './Composer'
 import MarkdownAnswer from './MarkdownAnswer'
 import Pager from './Pager'
 import QuestionDetail from './QuestionDetail'
 import ConceptPanel from './ConceptPanel'
 import TidyBar from './TidyBar'
+import WorkspaceGraph from './WorkspaceGraph'
 import Settings, { type SettingsCategory } from './Settings'
 import ProfilePage from './ProfilePage'
 import ProfileAvatar from './ProfileAvatar'
@@ -142,6 +144,32 @@ export default function Dashboard(): React.JSX.Element {
   const projects = data?.projects.filter((p) => p.workspaceId === workspace?.id) ?? []
   const locked = !!workspace?.remote && workspace.remote.status !== 'online'
   const project = projects.find((p) => p.id === projectId) ?? projects[0]
+  // Workspace scope: the project cards or the workspace concept graph (optionally highlighting a project).
+  const workspaceTab = search.get('tab') === 'graph' ? 'graph' : 'projects'
+  const highlightParam = search.get('highlight') || ''
+  const highlightProjectId = projects.some((p) => p.id === highlightParam) ? highlightParam : ''
+  const setWorkspaceTab = (tab: 'projects' | 'graph'): void =>
+    setSearch((prev) => {
+      const next = new URLSearchParams(prev)
+      if (tab === 'graph') next.set('tab', 'graph')
+      else {
+        next.delete('tab')
+        next.delete('highlight')
+      }
+      return next
+    })
+  const setHighlight = (id: string): void =>
+    setSearch(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (id) next.set('highlight', id)
+        else next.delete('highlight')
+        return next
+      },
+      { replace: true }
+    )
+  // A concept panel belongs to the view it was opened in.
+  useEffect(() => setConceptId(''), [scope, workspace?.id, workspaceTab])
   useEffect(() => {
     if (project && scope === 'project') void window.fask.activateProject(project.id).catch(() => {})
   }, [project?.id, scope])
@@ -227,28 +255,29 @@ export default function Dashboard(): React.JSX.Element {
     [data, openConcept]
   )
   // The selected concept and its related concepts; MindMap frames those that are visible.
-  const focusIds = useMemo(
-    () => (highlight ? [highlight.focus, ...Object.keys(highlight.related)] : undefined),
-    [highlight]
-  )
+  const focusIds = useMemo(() => (highlight ? highlightIds(highlight) : undefined), [highlight])
   useEffect(() => {
     void window.fask.focusQuestion(selected?.id ?? null).catch(() => {})
   }, [selected?.id])
+  /** Opens a question, switching to its project first when it lives elsewhere. */
+  const openQuestion = (id: string, fromConcept: string | null = null): void => {
+    const target = data?.questions.find((q) => q.id === id)
+    if (!target) return
+    if (scope !== 'project' || target.projectId !== project?.id) {
+      const owner = data?.projects.find((p) => p.id === target.projectId)
+      if (!owner) return
+      setSearch({ scope: 'project', workspace: owner.workspaceId, project: owner.id })
+    }
+    setCompose(false)
+    setSelectedId(target.id, fromConcept)
+  }
   const openReference = (ref: Reference): void => {
     if (ref.kind === 'concept') {
       setSelectedId('')
       setConceptId(ref.id)
       return
     }
-    const target = data?.questions.find((q) => q.id === ref.id)
-    if (!target) return
-    if (target.projectId !== project?.id) {
-      const owner = data?.projects.find((p) => p.id === target.projectId)
-      if (!owner) return
-      setSearch({ scope: 'project', workspace: owner.workspaceId, project: owner.id })
-    }
-    setCompose(false)
-    setSelectedId(target.id)
+    openQuestion(ref.id)
   }
   const run = async (fn: () => Promise<unknown>): Promise<boolean> => {
     try {
@@ -330,6 +359,48 @@ export default function Dashboard(): React.JSX.Element {
     }
   }, [context])
   if (!data) return <div className="fask-loading">{error || t('나의 질문 공간을 열고 있습니다…')}</div>
+  // Drag handle and concept panel beside the project records or the workspace concept graph.
+  const detailResizer = (
+    <div
+      className="detail-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t('질문 노트 너비 조절')}
+      title={t('드래그해서 너비 조절, 두 번 눌러 기본값')}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        resizingDetail.current = true
+      }}
+      onPointerMove={(e) => {
+        const area = areaRef.current
+        if (resizingDetail.current && area)
+          setDetailWidth(clampDetail(area.getBoundingClientRect().right - e.clientX - 12))
+      }}
+      onPointerUp={() => (resizingDetail.current = false)}
+      onPointerCancel={() => (resizingDetail.current = false)}
+      onDoubleClick={() => setDetailWidth(0)}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        e.preventDefault()
+        const current = areaRef.current?.lastElementChild?.getBoundingClientRect().width ?? 0
+        setDetailWidth(clampDetail(current + (e.key === 'ArrowLeft' ? 32 : -32)))
+      }}
+    />
+  )
+  const conceptPanel = openConcept && (
+    <ConceptPanel
+      key={openConcept.id}
+      data={data}
+      conceptId={openConcept.id}
+      projectId={scope === 'project' && project ? project.id : null}
+      run={run}
+      onOpenQuestion={openQuestion}
+      onOpenConcept={setConceptId}
+      onClose={() => setConceptId('')}
+    />
+  )
   return (
     <div className="fask-app">
       {!sidebarCollapsed && (
@@ -504,7 +575,10 @@ export default function Dashboard(): React.JSX.Element {
           />
         </aside>
       )}
-      <main className={`fask-main${scope === 'project' ? ' project-scope' : ''}`} inert={covered}>
+      <main
+        className={`fask-main${scope === 'project' || (scope === 'workspace' && workspaceTab === 'graph') ? ' project-scope' : ''}`}
+        inert={covered}
+      >
         <nav className="breadcrumb" aria-label={t('상위 경로')}>
           {sidebarCollapsed && (
             <>
@@ -599,7 +673,9 @@ export default function Dashboard(): React.JSX.Element {
               <p>
                 {scope === 'project'
                   ? t('질문하고, 연결하고, 나의 지식으로.')
-                  : t('생각을 이어갈 프로젝트를 선택하세요.')}
+                  : scope === 'workspace' && workspaceTab === 'graph'
+                    ? t('여러 프로젝트에서 만난 개념을 한눈에 봅니다.')
+                    : t('생각을 이어갈 프로젝트를 선택하세요.')}
               </p>
             )}
           </div>
@@ -637,6 +713,50 @@ export default function Dashboard(): React.JSX.Element {
           </div>
         </header>
         {scope !== 'project' ? (
+          <>
+          {scope === 'workspace' && (
+            <div className="view-bar">
+              <div className="segmented">
+                {(
+                  [
+                    ['projects', '프로젝트'],
+                    ['graph', '개념 그래프']
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    className={workspaceTab === id ? 'active' : ''}
+                    onClick={() => setWorkspaceTab(id)}
+                  >
+                    {t(label)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {scope === 'workspace' && workspaceTab === 'graph' && workspace ? (
+            <div
+              ref={areaRef}
+              className={`knowledge-area ${openConcept ? 'has-detail' : ''}`}
+              style={detailWidth ? ({ '--detail-w': `${detailWidth}px` } as React.CSSProperties) : undefined}
+            >
+              <section className="records-panel">
+                <WorkspaceGraph
+                  data={data}
+                  workspace={workspace}
+                  highlightProjectId={highlightProjectId}
+                  onHighlight={setHighlight}
+                  conceptId={conceptId}
+                  onOpenConcept={setConceptId}
+                  locked={locked}
+                  run={run}
+                  onContextMenu={openContext}
+                />
+              </section>
+              {openConcept && detailResizer}
+              {conceptPanel}
+            </div>
+          ) : (
           <section className="space-grid">
             {(scope === 'home' ? data.workspaces : projects).map((item) => (
               <button
@@ -670,6 +790,8 @@ export default function Dashboard(): React.JSX.Element {
               </div>
             )}
           </section>
+          )}
+          </>
         ) : (
           <>
             {!headerCollapsed && (
@@ -840,6 +962,24 @@ export default function Dashboard(): React.JSX.Element {
                         }
                       }}
                     />
+                    <div className="graph-scope">
+                      <span>
+                        {concepts.length
+                          ? t('이 프로젝트 질문 기준')
+                          : t('이 프로젝트의 질문에 연결된 개념이 아직 없습니다.')}
+                      </span>
+                      {workspace && data.concepts.some((c) => c.workspaceId === workspace.id) && (
+                        <button
+                          onClick={() => {
+                            setSearch({ scope: 'workspace', workspace: workspace.id, tab: 'graph', highlight: project.id })
+                            setSelectedId('')
+                            setCompose(false)
+                          }}
+                        >
+                          {t('워크스페이스 전체 그래프')}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : filtered.length ? (
                   <>
@@ -968,35 +1108,7 @@ export default function Dashboard(): React.JSX.Element {
                   </div>
                 )}
               </section>
-              {(selected || openConcept) && !(selected && detailExpanded) && (
-                <div
-                  className="detail-resizer"
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label={t('질문 노트 너비 조절')}
-                  title={t('드래그해서 너비 조절, 두 번 눌러 기본값')}
-                  tabIndex={0}
-                  onPointerDown={(e) => {
-                    e.preventDefault()
-                    e.currentTarget.setPointerCapture(e.pointerId)
-                    resizingDetail.current = true
-                  }}
-                  onPointerMove={(e) => {
-                    const area = areaRef.current
-                    if (resizingDetail.current && area)
-                      setDetailWidth(clampDetail(area.getBoundingClientRect().right - e.clientX - 12))
-                  }}
-                  onPointerUp={() => (resizingDetail.current = false)}
-                  onPointerCancel={() => (resizingDetail.current = false)}
-                  onDoubleClick={() => setDetailWidth(0)}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-                    e.preventDefault()
-                    const current = areaRef.current?.lastElementChild?.getBoundingClientRect().width ?? 0
-                    setDetailWidth(clampDetail(current + (e.key === 'ArrowLeft' ? 32 : -32)))
-                  }}
-                />
-              )}
+              {(selected || openConcept) && !(selected && detailExpanded) && detailResizer}
               {selected && project ? (
                 <QuestionDetail
                   key={selected.id}
@@ -1026,19 +1138,7 @@ export default function Dashboard(): React.JSX.Element {
                   onToggleExpand={() => setDetailExpanded((x) => !x)}
                 />
               ) : (
-                openConcept &&
-                project && (
-                  <ConceptPanel
-                    key={openConcept.id}
-                    data={data}
-                    conceptId={openConcept.id}
-                    projectId={project.id}
-                    run={run}
-                    onOpenQuestion={(id, from) => setSelectedId(id, from)}
-                    onOpenConcept={setConceptId}
-                    onClose={() => setConceptId('')}
-                  />
-                )
+                conceptPanel
               )}
             </div>
           </>
