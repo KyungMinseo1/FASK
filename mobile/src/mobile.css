@@ -78,14 +78,35 @@
   display: grid;
   place-items: center;
 }
+.fask-mobile .mobile-workspace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 8px;
+}
 .fask-mobile .mobile-workspace h2 {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--ink-muted);
-  margin: 24px 0 8px;
+  margin: 0;
+}
+/* Workspace-wide view, kept apart from the project cards below it. */
+.fask-mobile .mobile-graph-link {
+  margin-left: auto;
+  min-height: 36px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.fask-mobile .mobile-graph-link[aria-disabled='true'] {
+  opacity: 0.5;
 }
 .fask-mobile .space-card {
   width: 100%;
@@ -850,8 +871,16 @@
 }
 .fask-mobile .mobile-graph-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 8px;
+}
+.fask-mobile .mobile-graph-scope {
+  margin-right: auto;
+  color: var(--ink-muted);
+  font-size: 13px;
 }
 .fask-mobile .mobile-graph-actions button {
   min-height: 40px;
@@ -984,7 +1013,7 @@
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 12px;
   }
-  .fask-mobile .mobile-workspace > h2,
+  .fask-mobile .mobile-workspace > .mobile-workspace-head,
   .fask-mobile .mobile-workspace > .mobile-remote-status {
     grid-column: 1 / -1;
   }

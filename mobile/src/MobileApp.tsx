@@ -16,6 +16,7 @@ import Home from './screens/Home'
 import NewQuestion from './screens/NewQuestion'
 import ProjectScreen from './screens/ProjectScreen'
 import Share from './screens/Share'
+import WorkspaceGraph from './screens/WorkspaceGraph'
 import { clearPairing, loadPairing, snapshotCache } from './storage'
 import { isDevWeb, transport, type Pairing } from './transport'
 import { t } from '@desktop/shared/i18n'
@@ -275,6 +276,7 @@ function Shell({
           {/* Remount everything if the PC's profile id changes so no stale draft or ID survives. */}
           <Routes key={data.profile.id}>
             <Route path="/" element={<Home />} />
+            <Route path="/w/:workspaceId" element={<WorkspaceGraph />} />
             <Route path="/p/:projectId" element={<ProjectScreen />} />
             <Route path="/p/:projectId/q/:questionId" element={<ProjectScreen />} />
             <Route path="/p/:projectId/new" element={<NewQuestion />} />
