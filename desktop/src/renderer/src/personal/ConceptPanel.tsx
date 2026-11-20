@@ -11,9 +11,9 @@ import { useT } from '../../../shared/i18n/react'
 type Run = (fn: () => Promise<unknown>) => Promise<boolean>
 
 /**
- * A concept opened from the graph: the project's questions linking it, its aliases, definition and
- * level, and its relations: approved ones as an ego graph, then all grouped by type (low-confidence
- * ones wait for approval).
+ * A concept opened from the graph: its linking questions grouped by project (current first;
+ * projectId null = workspace graph), its aliases, definition and level, and its relations: approved
+ * ones as an ego graph, then all grouped by type (low-confidence ones wait for approval).
  * Mount with `key={conceptId}` so the edit draft resets per concept.
  */
 export default function ConceptPanel({
@@ -27,7 +27,7 @@ export default function ConceptPanel({
 }: {
   data: Snapshot
   conceptId: string
-  projectId: string
+  projectId: string | null
   run: Run
   onOpenQuestion: (questionId: string, conceptId: string) => void
   onOpenConcept: (conceptId: string) => void
@@ -42,8 +42,12 @@ export default function ConceptPanel({
   const [saved, setSaved] = useState(false)
   if (!concept) return null
   const linking = data.questions.filter((q) => q.conceptIds.includes(concept.id))
-  const own = linking.filter((q) => q.projectId === projectId)
-  const elsewhere = linking.length - own.length
+  const usedBy = new Set(linking.map((q) => q.projectId))
+  const shared = projectId ? [...usedBy].some((id) => id !== projectId) : usedBy.size >= 2
+  const groups = [
+    ...data.projects.filter((p) => p.id === projectId && usedBy.has(p.id)),
+    ...data.projects.filter((p) => p.id !== projectId && usedBy.has(p.id))
+  ].map((p) => ({ project: p, items: linking.filter((q) => q.projectId === p.id) }))
   const parent = concept.parentId ? data.concepts.find((c) => c.id === concept.parentId) : undefined
   const nameOf = (id: string): string => data.concepts.find((c) => c.id === id)?.name ?? '?'
   const levels = Object.keys(LEVEL_LABELS) as ConceptLevel[]
@@ -102,40 +106,55 @@ export default function ConceptPanel({
       </header>
       <div className="detail-title">
         <h2>{concept.name}</h2>
-        {elsewhere > 0 && <span className="shared-badge">{t('공유')}</span>}
+        {shared && <span className="shared-badge">{t('공유')}</span>}
       </div>
       <p className="detail-meta">
         <span>{t(LEVEL_LABELS[concept.level])}</span>
         {parent && <span>{t('상위: {{name}}', { name: parent.name })}</span>}
-        {elsewhere > 0 && <span>{t('다른 프로젝트 질문 {{n}}개', { n: elsewhere })}</span>}
+        {usedBy.size >= 2 && <span>{t('{{n}}개 프로젝트에서 사용', { n: usedBy.size })}</span>}
       </p>
       <h3>{t('연결된 질문')}</h3>
-      {own.length ? (
-        <ul className="concept-questions">
-          {own.map((q) => (
-            <li key={q.id}>
-              <button onClick={() => onOpenQuestion(q.id, concept.id)}>
-                <span>
-                  {questionHeading(q)}
-                  {q.conceptRoles?.[concept.id] === 'support' && (
-                    <span className="support-badge" title={t('이 질문의 답변이 설명에 참고한 개념')}>
-                      {t('관련')}
-                    </span>
-                  )}
-                </span>
-                <small>
-                  {dateLabel(q.createdAt)}
-                  {(q.conceptTurns?.[concept.id]?.length ?? 0) > 1 &&
-                    ` · ${t('{{n}}개 턴', { n: q.conceptTurns[concept.id].length })}`}
-                </small>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
+      {projectId && !usedBy.has(projectId) && (
         <p className="concept-empty">{t('이 프로젝트에는 연결된 질문이 없습니다.')}</p>
       )}
+      {!projectId && !linking.length && <p className="concept-empty">{t('연결된 질문이 없습니다.')}</p>}
+      {groups.map(({ project, items }) => (
+        <section key={project.id} className="concept-question-group">
+          <small>
+            {project.name}
+            {project.id === projectId && <span className="shared-badge">{t('현재 프로젝트')}</span>}
+          </small>
+          <ul className="concept-questions">
+            {items.map((q) => (
+              <li key={q.id}>
+                <button onClick={() => onOpenQuestion(q.id, concept.id)}>
+                  <span>
+                    {questionHeading(q)}
+                    {q.conceptRoles?.[concept.id] === 'support' && (
+                      <span className="support-badge" title={t('이 질문의 답변이 설명에 참고한 개념')}>
+                        {t('관련')}
+                      </span>
+                    )}
+                  </span>
+                  <small>
+                    {dateLabel(q.createdAt)}
+                    {(q.conceptTurns?.[concept.id]?.length ?? 0) > 1 &&
+                      ` · ${t('{{n}}개 턴', { n: q.conceptTurns[concept.id].length })}`}
+                  </small>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
       <h3>{t('개념 정보')}</h3>
+      {usedBy.size >= 2 && (
+        <p className="concept-shared-note">
+          {t('{{n}}개 프로젝트에서 함께 쓰는 개념입니다. 여기서 고치면 모든 프로젝트에 반영됩니다.', {
+            n: usedBy.size
+          })}
+        </p>
+      )}
       <label>
         {t('동의어 (쉼표로 구분)')}
         <input
