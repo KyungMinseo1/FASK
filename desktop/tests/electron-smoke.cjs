@@ -264,6 +264,9 @@ app.whenReady().then(async () => {
     )
     await pause(400)
     await shot('graph')
+    assert.ok(
+      await js("document.querySelector('.graph-scope')?.textContent.includes('이 프로젝트 질문 기준')")
+    )
     await context(`.react-flow__node[data-id="c:${concept}"]`)
     await renameUi('.item-context-menu button', 'Electron 입력')
     assert.equal(
@@ -271,6 +274,25 @@ app.whenReady().then(async () => {
       'Electron 입력'
     )
     report.checks.push('graph node right click renames concept')
+    await js("document.querySelectorAll('.breadcrumb button')[2].click()")
+    await wait(() => js("!!document.querySelector('.space-grid')"), 'workspace overview opens')
+    await js(
+      "[...document.querySelectorAll('.segmented button')].find(b=>b.textContent==='개념 그래프').click()"
+    )
+    await wait(
+      () =>
+        js(
+          `!!document.querySelector('.react-flow__node[data-id="c:${concept}"]') && !!document.querySelector('.graph-scope')?.textContent.includes('워크스페이스 전체 질문 기준')`
+        ),
+      'workspace concept graph shows the workspace concepts'
+    )
+    await js(`document.querySelector('.react-flow__node[data-id="c:${concept}"]').click()`)
+    await wait(() => js("!!document.querySelector('.concept-panel')"), 'workspace graph opens a concept')
+    report.checks.push('workspace concept graph tab shows workspace concepts and opens a concept')
+    await js(
+      `location.hash='/personal?scope=project&workspace=${project.workspaceId}&project=${project.id}'`
+    )
+    await wait(() => js("!!document.querySelector('.view-bar .segmented button')?.textContent.includes('날짜순')"), 'project reopens')
 
     await js(
       "[...document.querySelectorAll('button')].find(b=>b.textContent.includes('설정과 AI 연결')).click()"
