@@ -4,6 +4,19 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-21
+
+## ✨ FASK v1.3.1: see your whole workspace at a glance
+
+Concept graphs now reach across projects: switch from one project to the whole workspace, on the desktop and on your phone, and see where each concept comes from.
+
+### ✨ Added
+- **Workspace concept graph**: a project's concept graph can switch to the whole workspace's graph, on desktop and in the mobile app (opened from Home when the workspace has concepts). It shows every concept in the workspace with how many questions across projects link to it, and a project filter highlights one project's concepts.
+- The mobile workspace graph shows concept details, supports graph editing and opens in a resizable sheet, using the same graph components as the desktop.
+
+### 🔧 Changed
+- A concept's linked questions are grouped by project, and concepts from shared projects carry a badge so it is clear what comes from shared workspaces.
+
 ## [1.3.0] - 2026-11-19
 
 ## 🚀 FASK v1.3.0 "One of Me" is here!
