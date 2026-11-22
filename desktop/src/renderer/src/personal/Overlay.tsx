@@ -412,6 +412,7 @@ export default function Overlay(): React.JSX.Element {
     peek,
     edge,
     picker,
+    captureSettingsOpen,
     hitRegionRevision,
     maximized,
     refs
