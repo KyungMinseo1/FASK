@@ -51,8 +51,6 @@ export function generatePairCode(): string {
   return Array.from(raw, (b) => PAIR_ALPHABET[b & 31]).join('')
 }
 
-export const formatPairCode = (code: string): string => `${code.slice(0, 4)}-${code.slice(4)}`
-
 export function normalizePairCode(input: string): { rendezvous: string; secret: string } {
   const code = String(input ?? '')
     .toUpperCase()

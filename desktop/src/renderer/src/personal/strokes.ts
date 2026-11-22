@@ -20,8 +20,6 @@ export const PEN_COLORS = [
 ] as const
 export const STROKE_WIDTH = 4
 export const ERASER_RADIUS = 12
-const CAPTURE_MAX_WIDTH = 1600
-const CAPTURE_QUALITY = 0.85
 
 function drawStroke(ctx: CanvasRenderingContext2D, { points }: Stroke): void {
   if (points.length === 0) return
@@ -66,34 +64,4 @@ export function redraw(
 export function eraseAt(strokes: Stroke[], p: Point): Stroke[] {
   const r2 = ERASER_RADIUS * ERASER_RADIUS
   return strokes.filter((s) => !s.points.some((q) => (q.x - p.x) ** 2 + (q.y - p.y) ** 2 <= r2))
-}
-
-/**
- * Screenshot + stroke canvas → JPEG data URL. The stroke canvas is stretched to the screenshot's size
- * so coordinates line up even if the capture resolution differs from the canvas backing size.
- */
-export async function composeCapture(
-  screenshot: string,
-  strokeCanvas: HTMLCanvasElement
-): Promise<string> {
-  const img = new Image()
-  img.src = screenshot
-  await img.decode()
-  const full = document.createElement('canvas')
-  full.width = img.naturalWidth
-  full.height = img.naturalHeight
-  const fctx = full.getContext('2d')!
-  fctx.drawImage(img, 0, 0)
-  fctx.drawImage(strokeCanvas, 0, 0, full.width, full.height)
-
-  let out = full
-  if (full.width > CAPTURE_MAX_WIDTH) {
-    out = document.createElement('canvas')
-    out.width = CAPTURE_MAX_WIDTH
-    out.height = Math.round((full.height * CAPTURE_MAX_WIDTH) / full.width)
-    const octx = out.getContext('2d')!
-    octx.imageSmoothingQuality = 'high'
-    octx.drawImage(full, 0, 0, out.width, out.height)
-  }
-  return out.toDataURL('image/jpeg', CAPTURE_QUALITY)
 }
