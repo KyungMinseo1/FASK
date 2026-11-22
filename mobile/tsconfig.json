@@ -14,7 +14,6 @@
     "types": ["vite/client"],
     "paths": {
       "@desktop/*": ["../desktop/src/*"],
-      "@dicebear/styles/*.json": ["node_modules/@dicebear/styles/dist/*.min.json"],
       "*": ["node_modules/@types/*", "node_modules/*"]
     }
   },
