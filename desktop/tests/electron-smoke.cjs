@@ -21,9 +21,10 @@ app.setPath('userData', mkdtempSync(join(tmpdir(), 'fask-smoke-ui-')))
 let server
 let failNextQuestion = false
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
-// seed (+failed follow-up), 간단한 질문, image+file question (+two overlay follow-ups: the overlay
-// opens on the most recent question), 중복 방지 질문 (+느린 답변), 캡처 기록.
-const QUESTION_COUNT = 5
+// seed (+failed follow-up), 간단한 질문, two pen-annotation questions (true/false), image+file
+// question (+two overlay follow-ups: the overlay opens on the most recent question), 중복 방지 질문
+// (+느린 답변), 캡처 기록.
+const QUESTION_COUNT = 7
 async function wait(fn, label) {
   for (let i = 0; i < 80; i++) {
     if (await fn()) {
@@ -51,10 +52,12 @@ app.whenReady().then(async () => {
       req.on('end', () => {
         const input = JSON.parse(body),
           last = input.messages.at(-1)
-        // Title requests run in parallel with answers, so they never consume failNextQuestion.
-        if (input.messages[0]?.content.includes('대화 제목 생성')) {
+        // Title and recall-keyword requests run beside answers, so they never consume failNextQuestion.
+        const system = input.messages[0]?.content ?? ''
+        if (system.includes('대화 제목 생성') || system.includes('과거 기록에서 찾을 검색어')) {
+          const content = system.includes('대화 제목 생성') ? '"테스트 제목"' : 'Electron'
           res.setHeader('Content-Type', 'text/event-stream')
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '"테스트 제목"' } }] })}\n\n`)
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
           res.end('data: [DONE]\n\n')
           return
         }
@@ -129,6 +132,8 @@ app.whenReady().then(async () => {
         }
       ],
       conceptIds: [concept],
+      conceptTurns: {},
+      extractedTurns: 1,
       suggestions: [],
       memo: '확인한 결정: 로컬 저장을 사용한다.',
       important: true
@@ -654,7 +659,9 @@ app.whenReady().then(async () => {
       await wait(() => ov("!document.querySelector('.overlay-project-picker')"), 'background click closes project popover')
       await wait(() => ov("!document.querySelector('.overlay-toolbar.peek')"), 'toolbar collapses with the popover')
       outside.destroy()
-      await ov("document.querySelector('.question-trigger').click()")
+      await ov(
+        "[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes('질문')).click()"
+      )
       await wait(() => ov("!!document.querySelector('.overlay-panel')"), 'panel reopens after popover checks')
       cursor = { x: bounds.x + 5, y: bounds.y + 5 }
       await pause(80)
@@ -799,7 +806,8 @@ app.whenReady().then(async () => {
         type: 'mouseMove',
         x: point.x + dx,
         y: point.y + dy,
-        button: 'left'
+        button: 'left',
+        modifiers: ['leftButtonDown']
       })
       overlay.webContents.sendInputEvent({
         type: 'mouseUp',
@@ -1013,7 +1021,7 @@ app.whenReady().then(async () => {
       'single running turn, cancel by turnId, live revision'
     )
     await js(
-      `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', projectId: project.id, raw: '캡처 기록', image, model: 'test-fast', saveOnly: true })})`
+      `window.fask.ask(${JSON.stringify({ requestId: 'saved-image', projectId: project.id, raw: '캡처 기록', image: image.value, model: 'test-fast', saveOnly: true })})`
     )
     const backupPath = join(dataDir, 'backup.json')
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: backupPath })
@@ -1041,7 +1049,12 @@ app.whenReady().then(async () => {
     report.checks.push('backup restores questions and capture into the same profile')
     {
       const original = new Set(backup.snapshot.questions.flatMap((q) => q.turns.map((t) => t.id)))
-      assert.ok(restored.questions.every((q) => q.turns.every((t) => !original.has(t.id))))
+      const copyProjects = new Set(
+        restored.projects.filter((p) => p.workspaceId === copy.id).map((p) => p.id)
+      )
+      const copied = restored.questions.filter((q) => copyProjects.has(q.projectId))
+      assert.equal(copied.length, QUESTION_COUNT)
+      assert.ok(copied.every((q) => q.turns.every((t) => !original.has(t.id))))
       report.checks.push('restore remaps turn ids')
     }
     await js(`window.fask.remove('workspace', ${JSON.stringify(copy.id)})`)
