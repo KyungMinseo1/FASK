@@ -10,6 +10,16 @@ export interface TextAttachment {
   name: string
   text: string
 }
+/** Image and text files attached in a composer but not sent yet. */
+export interface ComposerFiles {
+  image: string
+  documents: TextAttachment[]
+}
+/** A project's unsent composer files and the main-process revision of that value (0: never set). */
+export interface ComposerFilesState {
+  files: ComposerFiles | null
+  revision: number
+}
 export interface ShortcutInfo {
   accelerator: string | null
   fallback: boolean
@@ -725,6 +735,20 @@ export interface PersonalApi extends KnowledgeApi {
   onEscape(cb: () => void): () => void
   onOutsideClick(cb: () => void): () => void
   showDashboard(): Promise<void>
+  /** Unsent composer files of a project, held in main-process memory until the app quits. */
+  composerFiles(profileId: string, projectId: string): Promise<ComposerFilesState>
+  /**
+   * Replaces them (null forgets) and tells the other windows. With `expect`, applies only while the saved
+   * files still equal it (null: none saved). `revision` is the value's revision after the call.
+   */
+  setComposerFiles(
+    profileId: string,
+    projectId: string,
+    files: ComposerFiles | null,
+    expect?: ComposerFiles | null
+  ): Promise<{ applied: boolean; revision: number }>
+  /** Another window changed a project's unsent composer files. */
+  onComposerFiles(cb: (profileId: string, projectId: string, state: ComposerFilesState) => void): () => void
   hubStatus(): Promise<HubStatus>
   setHub(enabled: boolean): Promise<HubStatus>
   setHubAddresses(addresses: string[]): Promise<HubStatus>
