@@ -27,7 +27,7 @@ export default function NewQuestion(): React.JSX.Element {
           profileId={data.profile.id}
           settings={data.settings}
           mediaActions={mediaActions()}
-          persistDraft={false}
+          draft="memory"
           // Refresh first so the detail screen already has the new question when it mounts.
           onSaved={(id) =>
             void refresh().then(() => navigate(`/p/${projectId}/q/${id}`, { replace: true }))

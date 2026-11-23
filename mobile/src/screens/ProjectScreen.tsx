@@ -861,7 +861,7 @@ function Detail({
         questionId={question.id}
         recentQuestion={running}
         mediaActions={mediaActions()}
-        persistDraft={false}
+        draft="memory"
         onCompleted={() => void refresh()}
       />
     </section>

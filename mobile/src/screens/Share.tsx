@@ -52,7 +52,7 @@ export default function Share(): React.JSX.Element {
             initialRaw={share?.raw}
             initialFiles={share?.files}
             mediaActions={mediaActions()}
-            persistDraft={false}
+            draft="none"
             onSaved={(id) => void refresh().then(() => navigate(`/p/${projectId}/q/${id}`))}
           />
         ) : (

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CaptureRegionSaved, CaptureSetupRequired, PersonalApi, StreamEvent } from './personal'
+import type { CaptureRegionSaved, CaptureSetupRequired, ComposerFilesState, PersonalApi, StreamEvent } from './personal'
 
 let pendingCaptureSetup: CaptureSetupRequired | null = null
 const captureSetupSubscribers = new Set<(issue: CaptureSetupRequired) => void>()
@@ -117,6 +117,9 @@ const fask: PersonalApi = {
   },
   openOverlay: (id, questionId) => ipcRenderer.invoke('personal:open-overlay', id, questionId),
   showDashboard: () => ipcRenderer.invoke('personal:dashboard'),
+  composerFiles: (profileId, projectId) => ipcRenderer.invoke('personal:composer-files', profileId, projectId),
+  setComposerFiles: (profileId, projectId, files, expect) =>
+    ipcRenderer.invoke('personal:set-composer-files', profileId, projectId, files, expect),
   captureQuestion: (strokes) => ipcRenderer.invoke('personal:capture', strokes),
   peerCodeBegin: () => ipcRenderer.invoke('personal:peer-code-begin'),
   peerCodeStatus: () => ipcRenderer.invoke('personal:peer-code-status'),
@@ -144,6 +147,18 @@ const fask: PersonalApi = {
     ipcRenderer.on('personal:stream', listener)
     return () => {
       ipcRenderer.removeListener('personal:stream', listener)
+    }
+  },
+  onComposerFiles: (cb) => {
+    const listener = (
+      _: Electron.IpcRendererEvent,
+      profileId: string,
+      projectId: string,
+      state: ComposerFilesState
+    ): void => cb(profileId, projectId, state)
+    ipcRenderer.on('personal:composer-files-changed', listener)
+    return () => {
+      ipcRenderer.removeListener('personal:composer-files-changed', listener)
     }
   },
   onChanged: (cb) => {

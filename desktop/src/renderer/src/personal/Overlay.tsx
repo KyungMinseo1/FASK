@@ -4,6 +4,7 @@ import { captureSetupMessage } from '../../../shared/capture'
 import { useSearchParams } from 'react-router'
 import { eraseAt, PEN_COLORS, redraw, type Stroke } from './strokes'
 import Composer from './Composer'
+import { whenDraftsSaved } from './composer-draft'
 import QuestionDetail from './QuestionDetail'
 import ReferencePanel, { REF_H, REF_W } from './ReferencePanel'
 import Settings from './Settings'
@@ -190,7 +191,10 @@ export default function Overlay(): React.JSX.Element {
       openRef(ref.id)
       return
     }
-    window.fask.showDashboard().catch((e) => setNotice(errorText(e)))
+    // The dashboard destroys this window; let queued file saves land first.
+    void whenDraftsSaved()
+      .then(() => window.fask.showDashboard())
+      .catch((e) => setNotice(errorText(e)))
   }
   /** Makes `q` the panel's conversation in place; the overlay window and its ink stay. */
   const continueConversation = (q: Question): void => {
@@ -678,7 +682,7 @@ export default function Overlay(): React.JSX.Element {
             <Icon name="ask" size={18} />
             <small>{t('질문')}</small>
           </button>
-          <button onClick={() => void window.fask.showDashboard()}>
+          <button onClick={() => void whenDraftsSaved().then(() => window.fask.showDashboard())}>
             <Icon name="dashboard" size={18} />
             <small>{t('대시보드')}</small>
           </button>

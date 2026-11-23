@@ -438,7 +438,7 @@ export default function OverlayPanel({
               settings={data.settings}
               questionId={questionId}
               recentQuestion={question}
-              persistDraft={false}
+              draft="memory"
               hasInk={overlay.hasInk}
               onCapture={onCapture}
               onSaved={() => void refresh()}

@@ -69,6 +69,7 @@ import type {
   AskInput,
   AskResult,
   CaptureSetupRequired,
+  ComposerFiles,
   Concept,
   ExportOptions,
   HubAddress,
@@ -86,15 +87,30 @@ import type {
   RouteResult,
   Snapshot,
   StreamEvent,
+  TextAttachment,
   TidyStatus,
   Turn,
   TurnAuthor,
   TurnState,
   Workspace
 } from '../preload/personal'
+import { noFiles, sameFiles } from '../shared/composer-files'
 
 // Build-time default relay (release builds set MAIN_VITE_FASK_RELAY_URL); Settings can override it.
 const DEFAULT_RELAY_URL = normalizeRelayUrl(import.meta.env.MAIN_VITE_FASK_RELAY_URL ?? '') ?? ''
+/** Text attachments within the ask limits: at most 5, names ≤255, ≤50,000 chars each, ≤100,000 total. */
+const validDocuments = (documents: unknown): documents is TextAttachment[] =>
+  Array.isArray(documents) &&
+  documents.length <= 5 &&
+  documents.every(
+    (d) =>
+      !!d &&
+      typeof d.name === 'string' &&
+      typeof d.text === 'string' &&
+      d.name.length <= 255 &&
+      d.text.length <= 50000
+  ) &&
+  documents.reduce((sum: number, d: TextAttachment) => sum + d.text.length, 0) <= 100000
 const HUB_METHODS: ReadonlySet<string> = new Set([
   'snapshot',
   'create',
@@ -177,6 +193,10 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
   const backfillTimer = setTimeout(() => display.backfill(), 5000)
   // Deliberately in memory: reopening an overlay restores the conversation, restarting resets it.
   const recentQuestions = new Map<string, string>()
+  // Unsent composer files by `${profileId}:${projectId}`; in memory like recentQuestions, so a restart drops them.
+  // Revisions come from one counter that only grows, so a window can drop anything older than what it shows.
+  const composerFiles = new Map<string, { projectId: string; files: ComposerFiles | null; revision: number }>()
+  let composerRevision = 0
   const controllers = new Map<
     string,
     { controller: AbortController; profile: string; questionId: string; turnId: string }
@@ -476,6 +496,60 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     captureIssues.delete(event.sender)
     return issue
   })
+  const draftKey = (profileId: unknown, projectId: unknown): string => {
+    if (
+      typeof profileId !== 'string' ||
+      typeof projectId !== 'string' ||
+      !profileId ||
+      !projectId ||
+      profileId.length > 200 ||
+      projectId.length > 200
+    )
+      throw new Error(BAD_REQUEST)
+    return `${profileId}:${projectId}`
+  }
+  const checkFiles = (value: unknown): ComposerFiles | null => {
+    if (value === null) return null
+    const f = value as Partial<ComposerFiles> | undefined
+    if (
+      !f ||
+      typeof f.image !== 'string' ||
+      (f.image !== '' && !/^data:image\/(png|jpeg);base64,/.test(f.image)) ||
+      !validDocuments(f.documents)
+    )
+      throw new Error(BAD_REQUEST)
+    const files = { image: f.image, documents: f.documents }
+    return noFiles(files) ? null : files
+  }
+  ipcMain.handle('personal:composer-files', (event, profileId: unknown, projectId: unknown) => {
+    requireLocalWindow(event)
+    if (lock.locked) throw new Error(PROFILE_LOCKED)
+    const entry = composerFiles.get(draftKey(profileId, projectId))
+    return { files: entry?.files ?? null, revision: entry?.revision ?? 0 }
+  })
+  ipcMain.handle(
+    'personal:set-composer-files',
+    (event, profileId: unknown, projectId: unknown, files: unknown, expect: unknown) => {
+      requireLocalWindow(event)
+      if (lock.locked) throw new Error(PROFILE_LOCKED)
+      const key = draftKey(profileId, projectId)
+      const next = checkFiles(files)
+      const entry = composerFiles.get(key)
+      if (expect !== undefined && !sameFiles(entry?.files ?? null, checkFiles(expect)))
+        return { applied: false, revision: entry?.revision ?? 0 }
+      const revision = ++composerRevision
+      // Kept with `files: null` when cleared so revisions keep growing per key.
+      composerFiles.set(key, { projectId: projectId as string, files: next, revision })
+      // The sender already shows this value; every other window follows it.
+      for (const win of BrowserWindow.getAllWindows())
+        if (win.webContents !== event.sender)
+          win.webContents.send('personal:composer-files-changed', profileId, projectId, {
+            files: next,
+            revision
+          })
+      return { applied: true, revision }
+    }
+  )
   const handle = (name: string, fn: Handler): void => {
     handlers.set(name, fn)
     ipcMain.handle(`personal:${name}`, (event, ...args) => {
@@ -1103,20 +1177,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       throw new Error('질문이나 첨부를 추가해 주세요.')
     if (input.raw.length > 50000) throw new Error('질문은 50,000자 이내로 입력해 주세요.')
     const documents = input.documents ?? []
-    if (
-      !Array.isArray(documents) ||
-      documents.length > 5 ||
-      documents.some(
-        (d) =>
-          !d ||
-          typeof d.name !== 'string' ||
-          typeof d.text !== 'string' ||
-          d.name.length > 255 ||
-          d.text.length > 50000
-      ) ||
-      documents.reduce((sum, d) => sum + d.text.length, 0) > 100000
-    )
-      throw new Error('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.')
+    if (!validDocuments(documents)) throw new Error('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.')
     if (input.model !== undefined && (typeof input.model !== 'string' || input.model.length > 200))
       throw new Error('모델 이름이 잘못되었습니다.')
     const effort = input.reasoningEffort
@@ -2193,6 +2254,7 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
     const projects = new Set(projectIds),
       questions = new Set(questionIds)
     for (const p of projects) recentQuestions.delete(p)
+    for (const [key, entry] of composerFiles) if (projects.has(entry.projectId)) composerFiles.delete(key)
     if (projects.has(lastProjectId)) lastProjectId = ''
     for (const [turnId, sent] of forwarded)
       if (questions.has(sent.questionId)) {
