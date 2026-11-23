@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AskInput,
+  ComposerFiles,
   LocalSettings,
   ReasoningEffort,
   Reference,
@@ -25,6 +26,8 @@ import ReferenceChips from './ReferenceChips'
 import { Icon, type IconName } from './ToolbarIcons'
 import { useApi } from './api'
 import { useT } from '../../../shared/i18n/react'
+import { sameFiles } from '../../../shared/composer-files'
+import { composerDraft, type DraftContent, type DraftMode } from './composer-draft'
 
 // personal.ts `ask` throws these before recordAsk stores anything; every other failure is
 // treated as "result unknown" (the hub wraps handler errors as HTTP 400 either way).
@@ -68,8 +71,8 @@ interface Props {
   initialFiles?: File[]
   /** Extra pickers such as camera or gallery; when given, attaching opens a menu of them plus files. */
   mediaActions?: { label: string; icon: IconName; pick: () => Promise<File[]> }[]
-  /** When false the draft is never read from or written to localStorage. */
-  persistDraft?: boolean
+  /** Where the unsent draft (text, image, files) lives; see DraftMode. Default `persist` (desktop). */
+  draft?: DraftMode
   /** Enter sends and Shift+Enter breaks the line; when false, Ctrl/Cmd+Enter sends (soft keyboards). */
   submitOnEnter?: boolean
   /** Opens a "참고한 지식" chip of the shown answer; chips are hidden when omitted. */
@@ -92,18 +95,18 @@ export default function Composer({
   initialFiles,
   mediaActions,
   submitOnEnter = true,
-  persistDraft = true,
+  draft = 'persist',
   onReference
 }: Props): React.JSX.Element {
   const t = useT()
   const api = useApi()
-  const draftKey = `fask:draft:${profileId}:${projectId}`
+  const saved = useMemo(() => composerDraft(draft, profileId, projectId), [draft, profileId, projectId])
+  // Files known on mount (memory mode); persist mode reads them asynchronously after mount.
+  const [mountFiles] = useState(() => saved.filesNow())
   const recentTurn = recentQuestion ? lastTurn(recentQuestion) : undefined
   const lastModelKey = `fask:last-model:${profileId}`
   const effortKey = `fask:reasoning-effort:${profileId}`
-  const [raw, setRaw] = useState(
-      () => initialRaw ?? (persistDraft ? localStorage.getItem(draftKey) : null) ?? ''
-    ),
+  const [raw, setRaw] = useState(() => initialRaw ?? saved.raw() ?? ''),
     [refined, setRefined] = useState(''),
     // Continuing keeps the conversation's own model; a new question reuses the last pick. A model
     // missing from the configured list (removed since) is skipped rather than sent.
@@ -125,7 +128,7 @@ export default function Composer({
   const [pinned, setPinned] = useState(false)
   const manual = settings.routing === 'manual'
   const choosing = manual || pinned
-  const [image, setImage] = useState(''),
+  const [image, setImage] = useState(mountFiles?.image ?? ''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [actualModel, setActualModel] = useState(''),
@@ -144,11 +147,47 @@ export default function Composer({
   }
   const [running, setRunning] = useState(recentTurn?.status === 'running')
   const captureKey = `fask:capture:${profileId}`
+  // An attached image wins over the screen capture, as in attach().
   const [includeCapture, setIncludeCapture] = useState(
-    () => hasInk || localStorage.getItem(captureKey) === 'true'
+    () => !mountFiles?.image && (hasInk || localStorage.getItem(captureKey) === 'true')
   )
   const [capturing, setCapturing] = useState(false)
-  const [documents, setDocuments] = useState<TextAttachment[]>([])
+  const [documents, setDocuments] = useState<TextAttachment[]>(mountFiles?.documents ?? [])
+  // Latest values this Composer shows or has just asked React to show. Written before each state update
+  // below, so handlers and subscriptions never compare against a render that is behind.
+  const current = useRef({ raw, image, documents })
+  /** Shows a question text; a changed text drops the refine review. */
+  const showRaw = (text: string): void => {
+    if (text === current.current.raw) return
+    current.current = { ...current.current, raw: text }
+    setRaw(text)
+    setRefined('')
+  }
+  /** Shows attachments; an attached image wins over the screen capture, as in attach(). */
+  const showFiles = (files: ComposerFiles | null): void => {
+    const next = { image: files?.image ?? '', documents: files?.documents ?? [] }
+    if (sameFiles({ image: current.current.image, documents: current.current.documents }, next)) return
+    current.current = { ...current.current, ...next }
+    setImage(next.image)
+    setDocuments(next.documents)
+    setRefined('')
+    if (next.image) setIncludeCapture(false)
+  }
+  /** The user's own change: shown and queued for saving in one step. */
+  const putFiles = (files: ComposerFiles): void => {
+    showFiles(files)
+    saved.setFiles(files)
+  }
+  /** Catches up with the shared draft (mount, end of a send); `none` keeps what is shown. */
+  const adopt = (): void => {
+    if (draft === 'none') return
+    showRaw(saved.raw() ?? '')
+    const files = saved.filesNow()
+    if (files === undefined) saved.refresh()
+    else showFiles(files)
+  }
+  // What the last send showed; the draft store clears it on acceptance and restores it on failure.
+  const sentDraft = useRef<DraftContent | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const canRefine = !!raw.trim() || !!image || documents.length > 0
   const hasInput = canRefine || (!!onCapture && includeCapture)
@@ -185,15 +224,14 @@ export default function Composer({
       const parsed = await Promise.all(files.map(readAttachment))
       if (parsed.filter((f) => f.image).length > 1)
         throw new Error(t('이미지는 한 번에 한 장씩 첨부해 주세요.'))
-      const textFiles = [...documents, ...parsed.flatMap((f) => (f.document ? [f.document] : []))]
+      const textFiles = [
+        ...current.current.documents,
+        ...parsed.flatMap((f) => (f.document ? [f.document] : []))
+      ]
       if (textFiles.length > 5 || textFiles.reduce((sum, d) => sum + d.text.length, 0) > 100000)
         throw new Error(t('텍스트 첨부는 최대 5개, 전체 100,000자까지 지원합니다.'))
-      setDocuments(textFiles)
       const picture = parsed.find((f) => f.image)?.image
-      if (picture) {
-        setImage(picture)
-        setIncludeCapture(false)
-      }
+      putFiles({ image: picture ?? current.current.image, documents: textFiles })
       setRefined('')
     } catch (e) {
       setError(errorText(e))
@@ -245,6 +283,27 @@ export default function Composer({
     if (!value) pending.current = null
     setUnresolvedState(value)
   }
+  // A send owns the input from the click until its turn finishes; it keeps showing what was sent.
+  const frozen = running || unresolved
+  const frozenRef = useRef(frozen)
+  frozenRef.current = frozen
+  useEffect(() => {
+    const off = saved.subscribe((change) => {
+      if (frozenRef.current) return // adopt() catches up when the send ends
+      if ('raw' in change) showRaw(change.raw)
+      else showFiles(change.files)
+    })
+    if (!frozenRef.current) adopt()
+    return off
+    // Handlers read refs; `saved` changes only with the draft's identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved])
+  const wasFrozen = useRef(frozen)
+  useEffect(() => {
+    if (wasFrozen.current && !frozen) adopt()
+    wasFrozen.current = frozen
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frozen])
   // Late HTTP results of an older send/replay never overwrite newer state.
   const operation = useRef(0)
   // Each turn is announced once; callbacks are read fresh because subscriptions mount once.
@@ -262,15 +321,13 @@ export default function Composer({
   const identify = (questionId: string, turnId: string): void => {
     if (!turnId || identified.current === turnId) return
     identified.current = turnId
+    if (sentDraft.current) saved.clearIfSent(sentDraft.current)
     notify(() => callbacks.current.onTurnIdentified?.({ questionId, turnId }))
   }
   const locked = busy || running || unresolved
   useEffect(() => {
     notify(() => callbacks.current.onInteractionState?.({ busy, running, unresolved }))
   }, [busy, running, unresolved])
-  useEffect(() => {
-    if (persistDraft) localStorage.setItem(draftKey, raw)
-  }, [draftKey, raw, persistDraft])
   const initialAttached = useRef(false)
   useEffect(() => {
     if (initialAttached.current || !initialFiles?.length) return
@@ -289,15 +346,16 @@ export default function Composer({
     setActualModel(r.finished.actualModel)
     if (r.finished.status === 'completed') {
       setError('')
-      setRaw('')
+      showRaw('')
       setRefined('')
-      setImage('')
-      setDocuments([])
+      showFiles(null)
       setPinned(false)
       const qid = question.current
       notify(() => callbacks.current.onCompleted?.(qid, { turnId, status: 'completed' }))
-    } else if (r.finished.status !== 'saved')
-      setError(r.finished.error || t('요청이 실패했습니다.'))
+    } else {
+      if (sentDraft.current) saved.restoreIfEmpty(sentDraft.current)
+      if (r.finished.status !== 'saved') setError(r.finished.error || t('요청이 실패했습니다.'))
+    }
   }
   const resync = async (): Promise<void> => {
     if (syncing.current) {
@@ -432,6 +490,7 @@ export default function Composer({
   }, [])
   const send = async (): Promise<void> => {
     if (!hasInput || locked) return
+    const now = current.current
     if (settings.refine && !refined && canRefine) {
       await refine()
       return
@@ -442,22 +501,23 @@ export default function Composer({
     const base: Omit<AskInput, 'requestId'> = {
       projectId,
       ...(questionId ? { questionId } : {}),
-      raw,
+      raw: now.raw,
       refined,
       // Auto sends the shown model too; the asking PC routes again when its auto routing is on.
       model: choosing ? model : autoModel,
       ...(pinned && !manual ? { pinModel: true } : {}),
-      documents: [...documents],
+      documents: [...now.documents],
       useMemory,
       ...(effort ? { reasoningEffort: effort } : {})
     }
+    sentDraft.current = { raw: now.raw, image: now.image, documents: [...now.documents] }
     setBusy(true)
     setError('')
     setActualModel('')
     setLive({ turnId: '', answer: '', revision: 0 })
     turn.current = ''
     setRunning(true)
-    let outgoingImage = image || undefined
+    let outgoingImage = now.image || undefined
     let annotated = false
     if (includeCapture && onCapture) {
       setCapturing(true)
@@ -600,8 +660,8 @@ export default function Composer({
         value={raw}
         disabled={locked}
         onChange={(e) => {
-          setRaw(e.target.value)
-          setRefined('')
+          showRaw(e.target.value)
+          saved.setRaw(e.target.value)
         }}
         onKeyDown={(e) => {
           // Confirming Korean IME input fires Enter too; never send on it.
@@ -617,10 +677,7 @@ export default function Composer({
           <img src={image} alt={t('전송할 캡처')} />
           <button
             disabled={locked}
-            onClick={() => {
-              setImage('')
-              setRefined('')
-            }}
+            onClick={() => putFiles({ image: '', documents: current.current.documents })}
           >
             {t('이미지 제거')}
           </button>
@@ -635,10 +692,12 @@ export default function Composer({
               <button
                 aria-label={t('{{name}} 제거', { name: d.name })}
                 disabled={locked}
-                onClick={() => {
-                  setDocuments((ds) => ds.filter((_, i) => i !== index))
-                  setRefined('')
-                }}
+                onClick={() =>
+                  putFiles({
+                    image: current.current.image,
+                    documents: current.current.documents.filter((_, i) => i !== index)
+                  })
+                }
               >
                 <Icon name="close" size={12} />
               </button>
@@ -740,7 +799,8 @@ export default function Composer({
               onChange={(e) => {
                 setIncludeCapture(e.target.checked)
                 localStorage.setItem(captureKey, String(e.target.checked))
-                if (e.target.checked) setImage('')
+                if (e.target.checked && current.current.image)
+                  putFiles({ image: '', documents: current.current.documents })
               }}
             />
             {t('화면 캡처 포함')}

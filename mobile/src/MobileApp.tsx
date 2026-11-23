@@ -6,6 +6,7 @@ import { CapacitorShareTarget } from '@capgo/capacitor-share-target'
 import { ApiContext } from '@desktop/renderer/src/personal/api'
 import { NotificationsProvider } from '@desktop/renderer/src/personal/notifications'
 import { dateLabel, useSnapshot } from '@desktop/renderer/src/personal/common'
+import { clearMemoryDrafts } from '@desktop/renderer/src/personal/composer-draft'
 import { MobileContext, type PendingShare } from './context'
 import { createHubClient, type HubClient, type HubConn } from './hub'
 import { createDemoHub, DEMO_PAIRING } from './demo-hub'
@@ -47,6 +48,7 @@ export default function MobileApp(): React.JSX.Element {
         setDemo(false)
         setNotice(message)
         navigate('/', { replace: true })
+        clearMemoryDrafts()
         return
       }
       // The service holds its own copy of the token; end it before the pairing disappears.
@@ -59,6 +61,7 @@ export default function MobileApp(): React.JSX.Element {
       setPairing(null)
       setNotice(message)
       navigate('/pair', { replace: true })
+      clearMemoryDrafts()
     },
     [navigate]
   )

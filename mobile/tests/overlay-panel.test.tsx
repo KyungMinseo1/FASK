@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Question, Reference, Snapshot, Turn } from '@desktop/preload/personal'
 import { ApiContext } from '@desktop/renderer/src/personal/api'
+import { clearMemoryDrafts } from '@desktop/renderer/src/personal/composer-draft'
 import OverlayPanel from '../src/overlay/OverlayPanel'
 import type { Bootstrap } from '../src/overlay/bridge'
 import { defaultAvatar } from '@desktop/shared/avatar'
@@ -126,7 +127,10 @@ const continueShown = async () => {
   await flush()
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  clearMemoryDrafts()
+})
 
 describe('OverlayPanel referenced questions', () => {
   it('opens a referenced question read-only over the still-mounted conversation and goes back', async () => {

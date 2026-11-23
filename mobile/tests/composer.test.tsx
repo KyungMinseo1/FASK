@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AskInput, KnowledgeApi, StreamEvent, TurnState } from '@desktop/preload/personal'
 import { ApiContext } from '@desktop/renderer/src/personal/api'
 import Composer from '@desktop/renderer/src/personal/Composer'
+import { clearMemoryDrafts } from '@desktop/renderer/src/personal/composer-draft'
 
 // Mirrors personal.ts: requestId replays return the same turn only for identical content.
 const hashOf = (i: AskInput): string =>
@@ -64,7 +65,7 @@ const settings = { model: 'm', models: ['m'], routing: 'manual', refine: false, 
 function mount(hub: ReturnType<typeof fakeHub>, props: Partial<React.ComponentProps<typeof Composer>> = {}) {
   const view = (p: typeof props) => (
     <ApiContext.Provider value={hub.api}>
-      <Composer projectId="p" profileId="u" settings={settings} persistDraft={false} {...p} />
+      <Composer projectId="p" profileId="u" settings={settings} draft="none" {...p} />
     </ApiContext.Provider>
   )
   const r = render(view(props))
@@ -331,5 +332,129 @@ describe('Composer reasoning effort', () => {
     cleanup()
     mount(fakeHub())
     expect(effort().value).toBe('high')
+  })
+})
+
+describe('Composer draft', () => {
+  afterEach(clearMemoryDrafts)
+  const fileInput = (index = 0) => screen.getAllByLabelText('파일 및 이미지 선택')[index]
+  const attachText = async (index = 0) => {
+    fireEvent.change(fileInput(index), {
+      target: { files: [new File(['본문'], 'a.txt', { type: 'text/plain' })] }
+    })
+    await flush()
+  }
+  const question = (index = 0) => screen.getAllByLabelText('질문')[index] as HTMLTextAreaElement
+  const mountTwo = (hub: ReturnType<typeof fakeHub>) =>
+    render(
+      <ApiContext.Provider value={hub.api}>
+        <Composer projectId="p" profileId="u" settings={settings} draft="memory" />
+        <Composer projectId="p" profileId="u" settings={settings} draft="memory" />
+      </ApiContext.Provider>
+    )
+  const finish = async (hub: ReturnType<typeof fakeHub>, state: TurnState) => {
+    hub.states.set('t1', state)
+    const run = [...hub.runs.entries()].find(([, r]) => r.turnId === 't1')!
+    await act(async () => hub.emit({ requestId: run[0], questionId: run[1].questionId, turnId: 't1', revision: 2, done: true }))
+    await flush()
+  }
+
+  it('keeps the text and files across a remount', async () => {
+    mount(fakeHub(), { draft: 'memory' })
+    type('남길 질문')
+    await attachText()
+    expect(screen.getByText('a.txt')).toBeTruthy()
+    cleanup()
+    mount(fakeHub(), { draft: 'memory' })
+    expect(question().value).toBe('남길 질문')
+    expect(screen.getByText('a.txt')).toBeTruthy()
+  })
+
+  it('does not bring back a sent draft on reopening', async () => {
+    const hub = fakeHub()
+    mount(hub, { draft: 'memory' })
+    type('보낸 질문')
+    await attachText()
+    await send()
+    await flush()
+    expect(hub.asks[0].documents?.[0].name).toBe('a.txt')
+    cleanup()
+    mount(fakeHub(), { draft: 'memory' })
+    expect(question().value).toBe('')
+    expect(screen.queryByText('a.txt')).toBeNull()
+  })
+
+  it('puts the draft back when the sent turn fails', async () => {
+    const hub = fakeHub()
+    mount(hub, { draft: 'memory' })
+    type('실패할 질문')
+    await send()
+    await flush()
+    await finish(hub, { answer: '', revision: 1, status: 'failed', error: '실패', actualModel: '' })
+    cleanup()
+    mount(fakeHub(), { draft: 'memory' })
+    expect(question().value).toBe('실패할 질문')
+  })
+
+  it('keeps two composers of one draft in step, and a send clears the other one', async () => {
+    const hub = fakeHub()
+    mountTwo(hub)
+    fireEvent.change(question(0), { target: { value: '함께 쓰는 질문' } })
+    expect(question(1).value).toBe('함께 쓰는 질문')
+    await attachText(0)
+    expect(screen.getAllByText('a.txt')).toHaveLength(2)
+    await act(async () => fireEvent.click(screen.getAllByText('질문하기')[0]))
+    await flush()
+    // The sender keeps showing what it sent until its turn finishes.
+    expect(question(1).value).toBe('')
+    expect(screen.getAllByText('a.txt')).toHaveLength(1)
+    await complete(hub, 't1', '답')
+    expect(question(0).value).toBe('')
+  })
+
+  it('shows the sender a draft written elsewhere once its send ends', async () => {
+    const hub = fakeHub()
+    mountTwo(hub)
+    fireEvent.change(question(0), { target: { value: 'A질문' } })
+    await act(async () => fireEvent.click(screen.getAllByText('질문하기')[0]))
+    await flush()
+    fireEvent.change(question(1), { target: { value: 'B초안' } })
+    expect(question(0).value).toBe('A질문')
+    await complete(hub, 't1', '답')
+    expect(question(0).value).toBe('B초안')
+    expect(question(1).value).toBe('B초안')
+  })
+
+  it('lands on the newest draft when the send ends together with an outside change', async () => {
+    const hub = fakeHub()
+    mountTwo(hub)
+    fireEvent.change(question(0), { target: { value: 'A질문' } })
+    await act(async () => fireEvent.click(screen.getAllByText('질문하기')[0]))
+    await flush()
+    await act(async () => {
+      hub.states.set('t1', { answer: '답', revision: 2, status: 'completed', error: '', actualModel: 'm' })
+      const run = [...hub.runs.entries()].find(([, r]) => r.turnId === 't1')!
+      hub.emit({ requestId: run[0], questionId: run[1].questionId, turnId: 't1', revision: 2, done: true })
+      fireEvent.change(question(1), { target: { value: '겹친 초안' } })
+    })
+    await flush()
+    expect(question(0).value).toBe('겹친 초안')
+    expect(question(1).value).toBe('겹친 초안')
+    fireEvent.change(question(1), { target: { value: '그다음 초안' } })
+    await flush()
+    expect(question(0).value).toBe('그다음 초안')
+  })
+
+  it('does not overwrite a draft written elsewhere when the send fails', async () => {
+    const hub = fakeHub()
+    mountTwo(hub)
+    fireEvent.change(question(0), { target: { value: 'A질문' } })
+    await act(async () => fireEvent.click(screen.getAllByText('질문하기')[0]))
+    await flush()
+    fireEvent.change(question(1), { target: { value: 'B초안' } })
+    await finish(hub, { answer: '', revision: 1, status: 'failed', error: '실패', actualModel: '' })
+    expect(question(0).value).toBe('B초안')
+    expect(question(1).value).toBe('B초안')
+    expect(screen.getByText('실패')).toBeTruthy()
   })
 })
