@@ -837,6 +837,14 @@ app.whenReady().then(async () => {
         ),
       'main conversation is streaming'
     )
+    // The "답변 작성 중" label shows before acceptance; wait until the hub took the question.
+    await wait(
+      () =>
+        ov(
+          "!Object.keys(localStorage).some(k=>k.startsWith('fask:draft:')&&localStorage.getItem(k)==='느린 질문')"
+        ),
+      'the accepted question leaves the saved draft'
+    )
     await ov("document.querySelector('.overlay-ref-panel .reply-button').click()")
     await wait(
       () =>
@@ -854,6 +862,10 @@ app.whenReady().then(async () => {
           "window.fask.snapshot().then(s=>s.questions.find(q=>q.id==='qb').turns.some(t=>t.raw==='느린 질문'&&t.status==='completed'))"
         ),
       'the answer that was streaming still completes'
+    )
+    await wait(
+      () => ov(`document.querySelector('${main} .composer > textarea')?.value === ''`),
+      'a sent question does not come back after the conversation switch'
     )
 
     // A reference from another project continues there (a reopened overlay, ink no longer needed).
@@ -883,6 +895,71 @@ app.whenReady().then(async () => {
       'continuing a reference from another project switches the project in place'
     )
     assert.equal(personal.capture.overlay, overlay)
+
+    // Unsent files survive the dashboard (which destroys the overlay) and the pen closing the panel.
+    const toolbar = (label) =>
+      ov(
+        `[...document.querySelectorAll('.overlay-toolbar button')].find(b=>b.textContent.includes(${JSON.stringify(label)})).click()`
+      )
+    const overlayChip = () =>
+      ov(`!!document.querySelector('${main} .document-chips')?.textContent.includes('note.txt')`)
+    await ov(
+      `(()=>{const dt=new DataTransfer();dt.items.add(new File(['첨부 본문'],'note.txt',{type:'text/plain'}));document.querySelector('${main} .composer > textarea').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}))})()`
+    )
+    await wait(overlayChip, 'a pasted file shows as a chip')
+    await toolbar('대시보드')
+    await wait(() => !personal.capture.overlay, 'the dashboard closes the overlay after the save')
+    assert.equal((await js(`window.fask.openOverlay(${JSON.stringify(other)})`)).ok, true)
+    overlay = personal.capture.overlay
+    await wait(() => ov("!!document.querySelector('.overlay-toolbar')"), 'the overlay reopens')
+    // The 질문 button toggles; open the panel only when the reopened overlay starts without it.
+    if (!(await ov(`!!document.querySelector('${main}')`))) await toolbar('질문')
+    await wait(overlayChip, 'the file survives going to the dashboard right after attaching')
+    await toolbar('펜')
+    await wait(() => ov(`!document.querySelector('${main}')`), 'pen closes the question panel')
+    await toolbar('질문')
+    await wait(overlayChip, 'the file survives closing the panel with the pen')
+
+    // The hidden dashboard's composer on the same project follows the overlay live.
+    await js(
+      "[...document.querySelectorAll('.sidebar-heading + nav button')].find(b=>b.textContent.includes('다른 프로젝트')).click()"
+    )
+    await js("[...document.querySelectorAll('.view-bar button')].find(b=>b.textContent.includes('새 질문')).click()")
+    await wait(
+      () => js("!!document.querySelector('.compose-slot .composer > textarea')"),
+      'the dashboard opens a composer on the same project'
+    )
+    await wait(
+      () => js("!!document.querySelector('.compose-slot .document-chips')?.textContent.includes('note.txt')"),
+      'the dashboard composer shows the unsent file'
+    )
+    await ov(`setValue('${main} .composer > textarea','동기화 질문')`)
+    await wait(
+      () => js("document.querySelector('.compose-slot .composer > textarea').value==='동기화 질문'"),
+      'typing in the overlay shows in the dashboard composer'
+    )
+    await ov(
+      `(()=>{const c=document.querySelector('${main} [aria-label="화면 캡처 포함"]');if(c&&c.checked)c.click()})()`
+    )
+    await ov(`document.querySelector('${main} .composer-actions .primary').click()`)
+    await wait(
+      () =>
+        js(
+          "document.querySelector('.compose-slot .composer > textarea').value==='' && !document.querySelector('.compose-slot .document-chips')"
+        ),
+      'a question sent from the overlay clears the dashboard composer'
+    )
+    await wait(
+      () =>
+        js(
+          "window.fask.snapshot().then(s=>s.questions.some(q=>q.turns.some(t=>t.raw==='동기화 질문'&&t.status==='completed')))"
+        ),
+      'the synced question is answered'
+    )
+    await wait(
+      () => ov(`document.querySelector('${main} .composer > textarea').value===''`),
+      'the overlay composer is empty after the answer'
+    )
 
     report.success = true
     checkpoint('done')
