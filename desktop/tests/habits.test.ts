@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -15,12 +16,12 @@ import {
   habitFile,
   habitPrompt,
   importHabitFile,
-  isHabitFeedback,
   listHabits,
   normalizeWhen,
   recallHabits,
   saveHabit,
-  toLines
+  toLines,
+  type HabitRef
 } from '../src/main/habits'
 import { parseHabits, type ExtractedHabit } from '../src/main/knowledge-response'
 import { validateBackup } from '../src/main/personal-backup'
@@ -109,29 +110,50 @@ async function extractWith(store: PersonalStore, questionId: string, reply: stri
   return calls
 }
 
-/** Runs habit detection of one question now with a fake model; returns the calls it received. */
-async function detectWith(
+type Reply = string | ((input: Record<string, unknown>) => string)
+
+/** A habit detector with a fake model; `calls` collects what the model received. */
+function makeDetector(
   store: PersonalStore,
-  questionId: string,
-  reply: string,
+  reply: Reply,
   remote?: { question: Question; owner: string }
-): Promise<Call[]> {
+): { detector: HabitDetector; calls: Call[] } {
   const calls: Call[] = []
   const detector = new HabitDetector({
     store,
     chat: async (instruction, input) => {
-      calls.push({ instruction, input: JSON.parse(input) })
-      return reply
+      const parsed = JSON.parse(input) as Record<string, unknown>
+      calls.push({ instruction, input: parsed })
+      return typeof reply === 'string' ? reply : reply(parsed)
     },
     remoteQuestion: (id) => (remote && remote.question.id === id ? remote : undefined),
     changed: () => {}
   })
-  detector.schedule(questionId, !!remote, 60_000)
-  detector.runNow(questionId)
+  return { detector, calls }
+}
+
+/**
+ * Runs habit detection now with a fake model: the local batch, or one remote question; returns the
+ * calls it received.
+ */
+async function detectWith(store: PersonalStore, reply: Reply, remote?: { question: Question; owner: string }): Promise<Call[]> {
+  const { detector, calls } = makeDetector(store, reply, remote)
+  if (remote) {
+    detector.schedule(remote.question.id, 60_000)
+    detector.runNow(remote.question.id)
+  } else detector.scanLocal()
   await detector.idle()
   detector.close()
   return calls
 }
+
+/** Refs of a call that sent `turns` of one question as turn numbers 0..n-1. */
+const refsOf = (questionId: string, turns: Turn[], project: { owner: string; id: string }): Map<number, HabitRef> =>
+  new Map(turns.map((t, i) => [i, { questionId, turnId: t.id, project }]))
+
+type Sent = { turn: number; conversation: number; question: string; previousAnswer?: string }
+const sentOf = (call: Call): Sent[] => call.input.feedback as Sent[]
+const habitIdsOf = (call: Call): string[] => (call.input.habits as { id: string }[]).map((h) => h.id)
 
 const item = (patch: Partial<ExtractedHabit>): ExtractedHabit => ({
   rule: '표로 정리',
@@ -172,34 +194,18 @@ function habit(store: PersonalStore, patch: Partial<Habit>): Habit {
   return h
 }
 
-const NOT_FEEDBACK = [
-  '왜 이렇게 되는 거야?',
-  '이 코드 복사해서 실행하면 오류가 나',
-  '행렬식은 어떻게 구해?',
-  '다시 말해 고유값이 뭐야?',
-  '수식 (3)의 의미는?',
-  '항상 0보다 큰 이유는?',
-  'copy constructor가 뭐야?'
-]
-const FEEDBACK = [
-  '복사하기 힘들어, 수식은 코드블록으로 줘',
-  '앞으로 항상 표로 정리해줘',
-  '말고 짧게 다시',
-  'from now on, always answer in a table'
-]
-
-test('habit gate: a format word plus an explicit or corrective word', () => {
-  for (const text of NOT_FEEDBACK) assert.equal(isHabitFeedback(text), false, text)
-  for (const text of FEEDBACK) assert.equal(isHabitFeedback(text), true, text)
-})
-
-test('habits: an ordinary follow-up never reaches the model for habits', async () => {
+test('habits: every own request reaches the model', async () => {
   const { dir, store, put } = setup(false)
   try {
     put('q1', [hTurn('t0', '고유값이 뭐야?', LONG), hTurn('t1', '왜 이렇게 되는 거야?', LONG)])
-    const calls = await detectWith(store, 'q1', '{}')
-    assert.equal(calls.length, 0)
+    const calls = await detectWith(store, '{}')
+    assert.equal(calls.length, 1)
+    assert.deepEqual(
+      sentOf(calls[0]).map((f) => f.turn),
+      [0, 1]
+    )
     assert.equal(store.record<Question>('question', 'q1').habitTurns, 2)
+    assert.equal(store.list<Habit>('habit').length, 0)
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
@@ -212,14 +218,17 @@ test('habits: explicit feedback turns a habit on unconfirmed', async () => {
     put('q1', [hTurn('t0', '고유값이 뭐야?', LONG), hTurn('t1', '앞으로 항상 표로 정리해줘', '| a | b |')])
     const calls = await detectWith(
       store,
-      'q1',
       '{"habits":[{"rule":"표로 정리","when":"","scope":"profile","overrides":null,"scopeClear":true,"explicit":true,"same":null,"replaces":null,"turns":[1]}]}'
     )
     assert.equal(calls.length, 1)
     assert.equal(calls[0].instruction, prompt('ko', 'habits'))
-    const feedback = calls[0].input.feedback as { turn: number; previousAnswer?: string }[]
-    assert.equal(feedback[0].turn, 1)
-    assert.equal(feedback[0].previousAnswer, LONG)
+    const feedback = sentOf(calls[0])
+    assert.deepEqual(
+      feedback.map((f) => f.turn),
+      [0, 1]
+    )
+    assert.equal(feedback[1].previousAnswer, LONG)
+    assert.equal(feedback[1].conversation, 0)
     const [h] = store.list<Habit>('habit')
     assert.equal(h.status, 'active')
     assert.equal(h.origin, 'explicit')
@@ -234,18 +243,17 @@ test('habits: explicit feedback turns a habit on unconfirmed', async () => {
   }
 })
 
-test('habits: explicit is trusted only when the user wrote an explicit word', async () => {
+test('habits: a typo in the lasting request still turns the habit on (the model judges explicit)', async () => {
   const { dir, store, put } = setup(false)
   try {
-    put('q1', [hTurn('t0', '고유값이 뭐야?', LONG), hTurn('t1', '말고 표로 다시 보여줘', '| a |')])
+    put('q1', [hTurn('t0', '아프로 표로 정리해줘', LONG)])
     await detectWith(
       store,
-      'q1',
-      '{"habits":[{"rule":"표로 정리","when":"","scope":"profile","overrides":null,"scopeClear":true,"explicit":true,"same":null,"replaces":null,"turns":[1]}]}'
+      '{"habits":[{"rule":"표로 정리","when":"","scope":"profile","overrides":null,"scopeClear":true,"explicit":true,"same":null,"replaces":null,"turns":[0]}]}'
     )
     const [h] = store.list<Habit>('habit')
-    assert.equal(h.status, 'proposed')
-    assert.equal(h.origin, 'detected')
+    assert.equal(h.status, 'active')
+    assert.equal(h.origin, 'explicit')
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
@@ -262,14 +270,13 @@ test('habit split: the host learns only from turns no linked PC asked', async ()
     ])
     const calls = await detectWith(
       store,
-      'q1',
       '{"habits":[{"rule":"표로 정리","when":"","scope":"profile","overrides":null,"scopeClear":true,"explicit":false,"same":null,"replaces":null,"turns":[1]}]}'
     )
     assert.equal(calls.length, 1)
     assert.equal(calls[0].instruction, prompt('ko', 'habits'))
     assert.deepEqual(
-      (calls[0].input.feedback as { turn: number }[]).map((f) => f.turn),
-      [1]
+      sentOf(calls[0]).map((f) => f.turn),
+      [0, 1]
     )
     assert.equal(store.record<Question>('question', 'q1').habitTurns, 3)
     assert.equal(store.list<Habit>('habit').length, 1)
@@ -289,13 +296,12 @@ test("habit split: a linked PC learns from its own turns in another PC's questio
     ])
     const calls = await detectWith(
       store,
-      'qr',
       '{"habits":[{"rule":"표로 정리","when":"","scope":"project","overrides":null,"scopeClear":true,"explicit":true,"same":null,"replaces":null,"turns":[0]}]}',
       { question: remote, owner: 'host-a' }
     )
     assert.equal(calls.length, 1)
     assert.deepEqual(
-      (calls[0].input.feedback as { turn: number }[]).map((f) => f.turn),
+      sentOf(calls[0]).map((f) => f.turn),
       [0]
     )
     assert.equal(store.habitMark('qr'), 2)
@@ -337,40 +343,234 @@ test('habit split: concept extraction sends only the extraction instruction', as
   }
 })
 
-test('habits: repeated feedback counts but never turns a habit on by itself', () => {
+test('habits: a candidate turns on in its 3rd conversation; a rejected one stays off', () => {
   const { dir, store, project } = setup(false)
   try {
-    const turns = [hTurn('t0', 'q', 'a'), hTurn('t1', '말고 표로 다시', 'b')]
-    const ctx = { questionId: 'q1', project: { owner: store.active, id: project.id }, turns }
-    applyDetected(store, store.active, [item({})], ctx)
-    const [proposed] = store.list<Habit>('habit')
-    for (let i = 0; i < 3; i++) applyDetected(store, store.active, [item({ rule: '다른 표현', same: proposed.id })], ctx)
-    const after = store.record<Habit>('habit', proposed.id)
-    assert.equal(after.count, 4)
-    assert.equal(after.status, 'proposed')
-    assert.equal(after.rule, '표로 정리', 'the remembered wording stays')
-    decideHabit(store, store.active, proposed.id, 'rejected')
-    applyDetected(store, store.active, [item({ same: proposed.id })], ctx)
-    const rejected = store.record<Habit>('habit', proposed.id)
-    assert.equal(rejected.count, 5)
+    const here = { owner: store.active, id: project.id }
+    const conv = (id: string): Map<number, HabitRef> =>
+      refsOf(id, [hTurn(`${id}-0`, 'q', 'a'), hTurn(`${id}-1`, '표로 정리해줘', 'b')], here)
+    applyDetected(store, store.active, [item({})], conv('q1'))
+    const [c] = store.list<Habit>('habit')
+    assert.equal(c.count, 1)
+    assert.equal(c.status, 'proposed')
+    applyDetected(store, store.active, [item({ rule: '다른 표현', same: c.id, turns: [0] })], conv('q1'))
+    const sameConversation = store.record<Habit>('habit', c.id)
+    assert.equal(sameConversation.count, 1, 'another request of the same conversation adds no count')
+    assert.deepEqual(sameConversation.sources, [{ questionId: 'q1', turnIds: ['q1-1', 'q1-0'] }])
+    applyDetected(store, store.active, [item({ same: c.id, turns: [0] })], conv('q1'))
+    assert.deepEqual(store.record<Habit>('habit', c.id), sameConversation, 'a re-checked request writes nothing')
+    applyDetected(store, store.active, [item({ same: c.id })], conv('q2'))
+    assert.equal(store.record<Habit>('habit', c.id).count, 2)
+    assert.equal(store.record<Habit>('habit', c.id).status, 'proposed')
+    applyDetected(store, store.active, [item({ same: c.id })], conv('q3'))
+    const on = store.record<Habit>('habit', c.id)
+    assert.equal(on.count, 3)
+    assert.equal(on.status, 'active')
+    assert.equal(on.origin, 'detected')
+    assert.equal(on.reviewedAt, null)
+    assert.equal(on.rule, '표로 정리', 'the remembered wording stays')
+    const off = habit(store, { rule: '짧게 답하기', status: 'rejected', origin: 'detected', count: 1 })
+    for (const id of ['r1', 'r2', 'r3']) applyDetected(store, store.active, [item({ same: off.id })], conv(id))
+    const rejected = store.record<Habit>('habit', off.id)
+    assert.equal(rejected.count, 4)
     assert.equal(rejected.status, 'rejected')
-    assert.equal(store.list<Habit>('habit').length, 1)
+    assert.equal(store.list<Habit>('habit').length, 2)
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('habits: new proposals stop at the cap; explicit requests still add', () => {
+test('habits: a full candidate pool drops the one seen in the fewest conversations, oldest first', () => {
   const { dir, store, project } = setup(false)
   try {
-    for (let i = 0; i < 5; i++) habit(store, { rule: `제안 ${i}`, status: 'proposed', origin: 'detected', reviewedAt: null })
-    const turns = [hTurn('t0', 'q', 'a'), hTurn('t1', '앞으로 항상 짧게 답해줘', 'b')]
-    const ctx = { questionId: 'q1', project: { owner: store.active, id: project.id }, turns }
-    applyDetected(store, store.active, [item({ rule: '새 제안' })], ctx)
-    assert.equal(store.list<Habit>('habit').length, 5)
-    applyDetected(store, store.active, [item({ rule: '짧게 답하기', explicit: true })], ctx)
-    assert.equal(store.list<Habit>('habit').length, 6)
+    const at = (i: number): string => new Date(Date.now() - 100_000 + i * 1000).toISOString()
+    const candidate = { status: 'proposed' as const, origin: 'detected' as const, reviewedAt: null }
+    const kept = habit(store, { ...candidate, rule: '두 번 본 후보', count: 2, updatedAt: at(0) })
+    const ones = Array.from({ length: 29 }, (_, i) =>
+      habit(store, { ...candidate, rule: `후보 ${i}`, count: 1, updatedAt: at(i + 1) })
+    )
+    const turns = [hTurn('t0', 'q', 'a'), hTurn('t1', '짧게 답해줘', 'b')]
+    applyDetected(store, store.active, [item({ rule: '새 후보' })], refsOf('q1', turns, { owner: store.active, id: project.id }))
+    const proposed = store.list<Habit>('habit').filter((h) => h.status === 'proposed')
+    assert.equal(proposed.length, 30)
+    const ids = proposed.map((h) => h.id)
+    assert.ok(ids.includes(kept.id))
+    assert.ok(!ids.includes(ones[0].id))
+    assert.ok(ids.includes(ones[1].id))
+    assert.ok(proposed.some((h) => h.rule === '새 후보'))
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('habit batch: 8 pending requests across questions run at once, fewer wait', async () => {
+  const { dir, store, put } = setup(false)
+  store.saveSettings({ ...store.settings(), extractDelaySec: 60 })
+  const { detector, calls } = makeDetector(store, '{}')
+  try {
+    const turns = (q: string, n: number): Turn[] => Array.from({ length: n }, (_, i) => hTurn(`${q}-${i}`, `요청 ${q} ${i}`, LONG))
+    put('q1', turns('q1', 3))
+    put('q2', turns('q2', 2))
+    put('q3', turns('q3', 2))
+    detector.completed()
+    await detector.idle()
+    assert.equal(calls.length, 0)
+    put('q3', turns('q3', 3))
+    detector.completed()
+    await detector.idle()
+    assert.equal(calls.length, 1)
+    const sent = sentOf(calls[0])
+    assert.equal(sent.length, 8)
+    assert.deepEqual([...new Set(sent.map((f) => f.conversation))].sort(), [0, 1, 2])
+    for (const [id, n] of [
+      ['q1', 3],
+      ['q2', 2],
+      ['q3', 3]
+    ] as const)
+      assert.equal(store.record<Question>('question', id).habitTurns, n, id)
+  } finally {
+    detector.close()
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('habit batch: a lone explicit request turns on after the quiet delay', async () => {
+  const { dir, store, put } = setup(false)
+  const { detector, calls } = makeDetector(
+    store,
+    '{"habits":[{"rule":"영어 번역은 굵은 글씨 없이 쓴다","when":"번역, 영어, translation","scope":"profile","overrides":null,"scopeClear":true,"explicit":true,"same":null,"replaces":null,"turns":[0]}]}'
+  )
+  try {
+    put('q1', [hTurn('t0', '앞으로 영어 번역은 굵은 글씨 없이 작성해줘', LONG)])
+    detector.completed()
+    // extractDelaySec is 0: the batch timer was queued first with the same delay, so it fires before this one.
+    await sleep(0)
+    await detector.idle()
+    assert.equal(calls.length, 1)
+    const [h] = store.list<Habit>('habit')
+    assert.equal(h.status, 'active')
+    assert.equal(h.origin, 'explicit')
+  } finally {
+    detector.close()
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('habit batch: startup flushes the backlog 8 requests per call', async () => {
+  const { dir, store, put } = setup(false)
+  try {
+    put(
+      'q1',
+      Array.from({ length: 10 }, (_, i) => hTurn(`t${i}`, `요청 ${i}`, LONG))
+    )
+    const calls = await detectWith(store, '{}')
+    assert.deepEqual(
+      calls.map((c) => sentOf(c).length),
+      [8, 2]
+    )
+    assert.equal(store.record<Question>('question', 'q1').habitTurns, 10)
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("habit batch: a call holds one project's requests and sees only that project's habits", async () => {
+  const { dir, store, project, put } = setup(false)
+  try {
+    const B = store.create('project', 'B 프로젝트', store.create('workspace', 'B 워크스페이스'))
+    put('qa', [hTurn('a0', 'A 요청 0', LONG), hTurn('a1', 'A 요청 1', LONG)])
+    store.put('question', store.active, question('qb', B, [hTurn('b0', 'B 요청 0', LONG), hTurn('b1', 'B 요청 1', LONG)]))
+    const me = store.active
+    const hA = habit(store, { rule: 'A 규칙', scope: 'project', projectOwner: me, projectId: project.id })
+    const hB = habit(store, { rule: 'B 규칙', scope: 'project', projectOwner: me, projectId: B })
+    const hG = habit(store, { rule: '전체 규칙' })
+    const calls = await detectWith(store, (input) =>
+      (input.habits as { id: string }[]).some((h) => h.id === hB.id)
+        ? '{"habits":[{"rule":"여기서는 표로","when":"","scope":"project","overrides":null,"scopeClear":true,"explicit":true,"same":null,"replaces":null,"turns":[1]}]}'
+        : '{}'
+    )
+    assert.equal(calls.length, 2)
+    for (const call of calls) {
+      const prefixes = new Set(sentOf(call).map((f) => f.question[0]))
+      assert.equal(prefixes.size, 1, 'one project per call')
+      const ids = habitIdsOf(call)
+      assert.ok(ids.includes(hG.id))
+      assert.deepEqual(
+        ids.filter((id) => id === hA.id || id === hB.id),
+        prefixes.has('A') ? [hA.id] : [hB.id]
+      )
+    }
+    const created = store.list<Habit>('habit').find((h) => h.rule === '여기서는 표로')
+    assert.ok(created)
+    assert.equal(created.projectOwner, me)
+    assert.equal(created.projectId, B)
+    assert.deepEqual(created.sources, [{ questionId: 'qb', turnIds: ['b1'] }])
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('habit batch: one call counts a wish from two conversations as two', async () => {
+  const { dir, store, put } = setup(false)
+  try {
+    put('q1', [hTurn('t0', 'latex로 바꿔줘', LONG)])
+    put('q2', [hTurn('u0', '이 풀이 latex 변환 부탁해', LONG)])
+    const calls = await detectWith(
+      store,
+      '{"habits":[{"rule":"수식은 LaTeX 원문으로","when":"수식, LaTeX, math","scope":"profile","overrides":null,"scopeClear":true,"explicit":false,"same":null,"replaces":null,"turns":[0,1]}]}'
+    )
+    assert.equal(calls.length, 1)
+    const [h] = store.list<Habit>('habit')
+    assert.equal(h.count, 2)
+    assert.equal(h.status, 'proposed')
+    assert.deepEqual(h.sources.map((s) => s.questionId).sort(), ['q1', 'q2'])
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('habit batch: every active, every candidate and the rejected habits are sent', async () => {
+  const { dir, store, put } = setup(false)
+  try {
+    const ids = [
+      ...Array.from({ length: 40 }, (_, i) => habit(store, { rule: `사용 ${i}` }).id),
+      ...Array.from(
+        { length: 30 },
+        (_, i) => habit(store, { rule: `후보 ${i}`, status: 'proposed', origin: 'detected', reviewedAt: null }).id
+      ),
+      ...Array.from({ length: 5 }, (_, i) => habit(store, { rule: `꺼짐 ${i}`, status: 'rejected' }).id)
+    ]
+    put('q1', [hTurn('t0', '요청', LONG)])
+    const calls = await detectWith(store, '{}')
+    assert.equal(calls.length, 1)
+    assert.deepEqual(habitIdsOf(calls[0]).sort(), ids.sort())
+  } finally {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('habit batch: a long request keeps its head and its tail', async () => {
+  const { dir, store, put } = setup(false)
+  try {
+    const long = `${'가'.repeat(592)}굵은 글씨 없이`
+    const exact = '나'.repeat(500)
+    put('q1', [hTurn('t0', long, LONG), hTurn('t1', exact, LONG)])
+    const calls = await detectWith(store, '{}')
+    const [first, second] = sentOf(calls[0])
+    assert.equal(long.length, 600)
+    assert.equal(first.question.length, 503)
+    assert.ok(first.question.startsWith(long.slice(0, 250)))
+    assert.ok(first.question.includes(' … '))
+    assert.ok(first.question.endsWith('굵은 글씨 없이'))
+    assert.equal(second.question, exact)
   } finally {
     store.close()
     rmSync(dir, { recursive: true, force: true })
@@ -439,7 +639,7 @@ test('habit scope: a project habit wins over a profile habit only through overri
       store,
       store.active,
       [item({ rule: '이 프로젝트는 표로 정리', scope: 'project', overrides: G.id, scopeClear: true, explicit: true })],
-      { questionId: 'q1', project: { owner: 'host-a', id: P }, turns }
+      refsOf('q1', turns, { owner: 'host-a', id: P })
     )
     const ph = store.list<Habit>('habit').find((h) => h.scope === 'project')
     assert.ok(ph)
@@ -494,7 +694,7 @@ test('habit scope: a shared category alone never fills overrides', () => {
       store,
       store.active,
       [item({ rule: '예시를 자세하게 들어준다', scope: 'project', explicit: true })],
-      { questionId: 'q1', project: { owner: 'host-b', id: 'pb' }, turns }
+      refsOf('q1', turns, { owner: 'host-b', id: 'pb' })
     )
     const detected = store.list<Habit>('habit').find((h) => h.projectOwner === 'host-b')
     assert.ok(detected)
@@ -525,7 +725,7 @@ test('habit scope: an unclear-scope conflict waits as a proposal and changes not
       store,
       store.active,
       [item({ rule: '자세하게 설명한다', scopeClear: false, explicit: true, replaces: H.id })],
-      { questionId: 'q1', project: { owner: store.active, id: project.id }, turns }
+      refsOf('q1', turns, { owner: store.active, id: project.id })
     )
     const fresh = store.list<Habit>('habit').find((h) => h.rule === '자세하게 설명한다')
     assert.ok(fresh, 'added despite the proposal cap')
@@ -700,6 +900,29 @@ test('migration 6 starts habit detection after the existing turns, once', () => 
     store.close()
     store = new PersonalStore(dir)
     assert.equal(store.record<Question>('question', 'q1').habitTurns, 1, 'runs once')
+    store.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('migration 8 re-checks every question for habits, once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fask-habit-'))
+  try {
+    let store = new PersonalStore(dir)
+    const project = store.list<Project>('project')[0]
+    const turns = [hTurn('t0', 'a', 'b'), hTurn('t1', 'a', 'b'), hTurn('t2', 'a', 'b')]
+    store.put('question', store.active, { ...question('q1', project.id, turns), habitTurns: 3 })
+    store.setHabitMark('x', 2)
+    store.db.exec('DELETE FROM schema_migrations WHERE version=8')
+    store.close()
+    store = new PersonalStore(dir)
+    assert.equal(store.record<Question>('question', 'q1').habitTurns, 0)
+    assert.equal(store.habitMark('x'), 0)
+    store.put('question', store.active, { ...store.record<Question>('question', 'q1'), habitTurns: 2 })
+    store.close()
+    store = new PersonalStore(dir)
+    assert.equal(store.record<Question>('question', 'q1').habitTurns, 2, 'runs once')
     store.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

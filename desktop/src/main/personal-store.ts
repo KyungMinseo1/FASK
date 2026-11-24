@@ -219,6 +219,7 @@ export class PersonalStore {
     this.migrateHierarchyRelations()
     this.migrateHabitWatermark()
     this.migrateUsageAndHabitScope()
+    this.migrateHabitBackfill()
     if (!this.list<Profile>('profile', '*').length) {
       const id = this.put('profile', '*', { id: randomUUID(), name: '기본 프로필' })
       this.pref('active', id)
@@ -451,6 +452,22 @@ export class PersonalStore {
         "UPDATE records SET data=json_set(json_remove(data,'$.workspaceId'),'$.scope',CASE WHEN json_extract(data,'$.scope')='workspace' THEN 'profile' ELSE json_extract(data,'$.scope') END,'$.projectOwner',NULL,'$.projectId',NULL,'$.overrides',NULL) WHERE kind='habit'"
       )
       this.db.exec('INSERT INTO schema_migrations VALUES(7); COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      this.db.close()
+      throw e
+    }
+  }
+  /**
+   * Schema 8: habit candidates are judged by the model without a keyword gate; every question's
+   * requests are re-checked once, in batches.
+   */
+  private migrateHabitBackfill(): void {
+    if (this.db.prepare('SELECT version FROM schema_migrations WHERE version=8').get()) return
+    this.db.exec('BEGIN')
+    try {
+      this.db.exec("UPDATE records SET data=json_set(data,'$.habitTurns',0) WHERE kind='question'; DELETE FROM habit_marks;")
+      this.db.exec('INSERT INTO schema_migrations VALUES(8); COMMIT')
     } catch (e) {
       this.db.exec('ROLLBACK')
       this.db.close()

@@ -212,7 +212,7 @@ export function createPreviewClient(boot: Bootstrap): HubClient {
     exportArchive: async () => {
       throw new Error(t('데모에서는 내보낼 수 없습니다.'))
     },
-    habits: async () => ({ enabled: false, habits: [], projects: [], overrideCandidates: {} }),
+    habits: async () => ({ enabled: false, habits: [], projects: [], overrideCandidates: {}, promoteAt: 3 }),
     decideHabit: async () => {},
     onStream: (cb) => {
       streams.add(cb)

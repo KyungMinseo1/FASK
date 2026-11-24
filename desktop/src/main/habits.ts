@@ -5,36 +5,29 @@ import { normalizeName } from './knowledge-search'
 import type { PersonalStore } from './personal-store'
 
 /**
- * Answer habits: format rules learned from the user's feedback ("앞으로 표로", "말고 짧게 다시")
+ * Answer habits: format rules learned from the user's requests ("표로 정리해줘", "latex로 변환해줘")
  * and applied to later answers. Detection is its own model call on the asking profile's PC
- * (habit-detect.ts) over that profile's turns only; only a habit the user asked for explicitly
- * ("앞으로", "항상"…, checked locally in the user's own words) turns on by itself, everything else
- * waits as a proposal for the user's decision. `count` never activates. A habit applies to every
- * project (scope 'profile') or to one project (scope 'project', identified by the owning PC's
- * profile id and the project id); a project habit wins over a profile habit only through its
+ * (habit-detect.ts) over that profile's requests only; the model judges every request, with no
+ * local keyword gate. A format wish first becomes a candidate (status 'proposed') that is never
+ * applied; it turns on by itself once it was seen in HABIT_PROMOTE_COUNT distinct conversations,
+ * or at once when the model judged the user asked for it to last (`explicit`). A habit applies to
+ * every project (scope 'profile') or to one project (scope 'project', identified by the owning
+ * PC's profile id and the project id); a project habit wins over a profile habit only through its
  * explicit `overrides`.
  */
 
-/** Format words; a turn needs one of these to be sent to the model as feedback. */
-export const HABIT_FORMAT =
-  /표로|표 형식|비교표|코드 ?블록|latex|수식|공식|짧게|길게|간단히|자세히|목록|요약|형식|말투|반말|존댓말|줄바꿈|번호|한국어로|영어로|table|code ?block|shorter|longer|concise|bullet|format|tone|in english|in korean/i
-/** Words asking for a lasting change; the only local evidence that may turn a habit on. */
-export const HABIT_EXPLICIT = /앞으로|항상|매번|기억해|늘 |from now on|always|every time|remember/i
-/** Complaint or correction words. */
-export const HABIT_CORRECTION = /다시|말고|대신|불편|힘들|안 ?돼|왜 이렇게|복사|instead|again|don'?t|hard to|copy/i
-/** A turn worth asking the model about: a format word plus an explicit or corrective word. */
-export function isHabitFeedback(text: string): boolean {
-  return HABIT_FORMAT.test(text) && (HABIT_EXPLICIT.test(text) || HABIT_CORRECTION.test(text))
-}
-
-/** Feedback turns sent per extraction run (the latest ones). */
-export const HABIT_FEEDBACK_MAX = 5
-/** Opening of the answer the feedback was about. */
-export const HABIT_PREVIOUS_CHARS = 2000
-/** Known habits sent with feedback so the model can name the same or a replaced one. */
-export const HABIT_SENT_MAX = 30
-/** Undecided proposals; a new non-explicit habit beyond this is dropped. */
-export const HABIT_PROPOSED_MAX = 5
+/** Requests per habit model call; also the pending count that triggers a local batch. */
+export const HABIT_FEEDBACK_MAX = 8
+/** Opening of the answer the request followed (its head shows the answer's format). */
+export const HABIT_PREVIOUS_CHARS = 600
+/** Longest request sent; a longer one keeps its head and tail (a format wish often ends it). */
+export const HABIT_REQUEST_CHARS = 500
+/** Newest rejected habits sent so a turned-off habit is recognized instead of re-proposed. */
+export const HABIT_REJECTED_SENT_MAX = 100
+/** Candidates kept; beyond this the one seen in the fewest conversations (oldest first) goes. */
+export const HABIT_CANDIDATE_MAX = 30
+/** Distinct conversations that turn a candidate on. */
+export const HABIT_PROMOTE_COUNT = 3
 /** Every-answer rules that rank first when the prompt budget is short. */
 export const HABIT_ALWAYS_MAX = 5
 /** Budget of the habit lines in the answer system prompt. */
@@ -78,32 +71,44 @@ export function whenMatches(h: Habit, text: string): number {
   return h.when.split(', ').filter((k) => haystack.includes(normalizeName(k))).length
 }
 
-/**
- * Feedback turns among [from, end): finished turns of `own` passing the gate, the latest
- * HABIT_FEEDBACK_MAX.
- */
+/** A request within HABIT_REQUEST_CHARS; a longer one keeps its first and last halves. */
+export function clipRequest(text: string): string {
+  if (text.length <= HABIT_REQUEST_CHARS) return text
+  return `${text.slice(0, HABIT_REQUEST_CHARS / 2)} … ${text.slice(-HABIT_REQUEST_CHARS / 2)}`
+}
+
+/** A request sent to the habit model; `index` is its turn index in the question. */
+export interface FeedbackTurn {
+  index: number
+  turnId: string
+  createdAt: string
+  question: string
+  previousAnswer?: string
+}
+
+/** Every finished turn of `own` among [from, end), oldest first. */
 export function feedbackTurns(
   q: Question,
   from: number,
   end: number,
   own: (t: Question['turns'][number]) => boolean = () => true
-): { turn: number; question: string; previousAnswer?: string }[] {
-  const out: { turn: number; question: string; previousAnswer?: string }[] = []
+): FeedbackTurn[] {
+  const out: FeedbackTurn[] = []
   for (let i = from; i < end; i++) {
     const t = q.turns[i]
     if (!t || (t.status !== 'completed' && t.status !== 'saved') || !own(t)) continue
-    const text = (t.refined || t.raw).trim()
-    if (!isHabitFeedback(text)) continue
     const previous = q.turns[i - 1]
     out.push({
-      turn: i,
-      question: text.slice(0, 1000),
+      index: i,
+      turnId: t.id,
+      createdAt: t.createdAt,
+      question: clipRequest((t.refined || t.raw).trim()),
       ...(previous?.status === 'completed' && previous.answer
         ? { previousAnswer: previous.answer.slice(0, HABIT_PREVIOUS_CHARS) }
         : {})
     })
   }
-  return out.slice(-HABIT_FEEDBACK_MAX)
+  return out
 }
 
 const live = (store: PersonalStore, profile: string): Habit[] =>
@@ -120,9 +125,23 @@ function findLive(store: PersonalStore, profile: string, id: string): Habit {
   return h
 }
 
-/** Habits sent with feedback: the latest-updated HABIT_SENT_MAX that are not superseded. */
-export function habitContext(store: PersonalStore, profile: string): Habit[] {
-  return live(store, profile).sort(newestFirst).slice(0, HABIT_SENT_MAX)
+/**
+ * Habits sent with requests of `project`: the profile habits and that project's habits; every
+ * active one, then every candidate, then the HABIT_REJECTED_SENT_MAX newest rejected ones, each
+ * group newest first. Another project's habits are never sent, so no answer can point at them.
+ */
+export function habitContext(store: PersonalStore, profile: string, project: { owner: string; id: string }): Habit[] {
+  const inScope = live(store, profile)
+    .filter(
+      (h) =>
+        h.scope === 'profile' || (h.scope === 'project' && h.projectOwner === project.owner && h.projectId === project.id)
+    )
+    .sort(newestFirst)
+  return [
+    ...inScope.filter((h) => h.status === 'active'),
+    ...inScope.filter((h) => h.status === 'proposed'),
+    ...inScope.filter((h) => h.status === 'rejected').slice(0, HABIT_REJECTED_SENT_MAX)
+  ]
 }
 
 /** Adds a source (merging turns of the same question, moved last) and keeps the latest SOURCES_MAX. */
@@ -141,49 +160,74 @@ export function activate(store: PersonalStore, profile: string, h: Habit): void 
   if (old && !old.invalidatedAt) store.put('habit', profile, { ...old, invalidatedAt: now, updatedAt: now })
 }
 
+/** Where a request sent to the habit model came from; keyed by the `turn` number it was sent as. */
+export interface HabitRef {
+  questionId: string
+  turnId: string
+  project: { owner: string; id: string }
+}
+
 /**
- * Writes the habits the model found in feedback. A known habit (by `same`, else by meaning) gains
- * the source and a count but keeps its status, except a proposal the user explicitly asked for,
- * which turns on. A new one is active when explicit, else a proposal unless HABIT_PROPOSED_MAX
- * proposals are already waiting. `explicit` holds only when a cited turn has an explicit word.
- * A conflict whose scope the user left unclear (`scopeClear` false) is only proposed, whatever
- * `explicit` says, and changes no existing habit until the user turns it on. `overrides` is kept
- * only as the model gave it (a live profile habit); it is never filled in locally.
+ * Writes the habits the model found in requests; `refs` maps each sent `turn` number to its
+ * request, and every ref of one call shares one project. A known habit (by `same`, else by
+ * meaning) gains the new sources and one count per conversation not seen before; a request it
+ * already holds writes nothing, so a re-check is idempotent. A candidate turns on, still
+ * unconfirmed (reviewedAt null), once it was seen in HABIT_PROMOTE_COUNT conversations or when
+ * the model judged the request `explicit`; active and rejected habits keep their status. A new
+ * habit is a candidate unless that already holds; at HABIT_CANDIDATE_MAX candidates the one seen
+ * in the fewest conversations (oldest first) is dropped for it. A conflict whose scope the user
+ * left unclear (`scopeClear` false) stays a candidate and changes no existing habit until the user
+ * turns it on. `overrides` is kept only as the model gave it (a live profile habit); it is never
+ * filled in locally.
  */
 export function applyDetected(
   store: PersonalStore,
   profile: string,
   items: ExtractedHabit[],
-  ctx: { questionId: string; project: { owner: string; id: string }; turns: Question['turns'] }
+  refs: ReadonlyMap<number, HabitRef>
 ): void {
   for (const item of items) {
+    const cited = item.turns.flatMap((n) => refs.get(n) ?? [])
+    if (!cited.length) continue
     const now = new Date().toISOString()
-    const source: HabitSource = {
-      questionId: ctx.questionId,
-      turnIds: [...new Set(item.turns.flatMap((i) => ctx.turns[i]?.id ?? []))]
-    }
+    const byQuestion = new Map<string, Set<string>>()
+    for (const r of cited) byQuestion.set(r.questionId, (byQuestion.get(r.questionId) ?? new Set()).add(r.turnId))
+    const sources: HabitSource[] = [...byQuestion].map(([questionId, turnIds]) => ({ questionId, turnIds: [...turnIds] }))
     const unclear = item.scopeClear === false
-    const explicit =
-      item.explicit &&
-      item.turns.some((i) => {
-        const t = ctx.turns[i]
-        return !!t && HABIT_EXPLICIT.test(t.refined || t.raw)
-      })
-    const projectOwner = item.scope === 'project' ? ctx.project.owner : null
-    const projectId = item.scope === 'project' ? ctx.project.id : null
+    const explicit = item.explicit
+    const projectOwner = item.scope === 'project' ? cited[0].project.owner : null
+    const projectId = item.scope === 'project' ? cited[0].project.id : null
     const habits = live(store, profile)
     const key = habitKey(item.rule, item.scope, projectOwner, projectId)
     const known =
       (item.same ? habits.find((h) => h.id === item.same) : undefined) ?? habits.find((h) => keyOf(h) === key)
     if (known) {
-      const next: Habit = { ...known, sources: withSource(known.sources, source), count: known.count + 1, updatedAt: now }
-      // The user's own lasting request turns a waiting proposal on, still unconfirmed (reviewedAt null).
-      if (known.status === 'proposed' && explicit && !unclear) activate(store, profile, { ...next, origin: 'explicit' })
+      const seenTurns = new Set(known.sources.flatMap((s) => s.turnIds))
+      const seenQuestions = new Set(known.sources.map((s) => s.questionId))
+      if (cited.every((r) => seenTurns.has(r.turnId))) continue
+      const freshQuestions = sources.filter((s) => !seenQuestions.has(s.questionId)).length
+      const next: Habit = {
+        ...known,
+        sources: sources.reduce(withSource, known.sources),
+        count: known.count + freshQuestions,
+        updatedAt: now
+      }
+      if (known.status === 'proposed' && !unclear && (explicit || next.count >= HABIT_PROMOTE_COUNT))
+        activate(store, profile, { ...next, origin: explicit ? 'explicit' : 'detected' })
       else store.put('habit', profile, next)
       continue
     }
-    const on = explicit && !unclear
-    if (!on && !unclear && habits.filter((h) => h.status === 'proposed').length >= HABIT_PROPOSED_MAX) continue
+    const count = sources.length
+    const on = !unclear && (explicit || count >= HABIT_PROMOTE_COUNT)
+    if (!on) {
+      const candidates = habits.filter((h) => h.status === 'proposed')
+      if (candidates.length >= HABIT_CANDIDATE_MAX) {
+        const victim = candidates.reduce((a, b) =>
+          b.count < a.count || (b.count === a.count && b.updatedAt < a.updatedAt) ? b : a
+        )
+        store.removeHabit(victim.id, profile)
+      }
+    }
     const overrides =
       !unclear && item.scope === 'project' && habits.some((h) => h.id === item.overrides && h.scope === 'profile')
         ? item.overrides
@@ -197,9 +241,9 @@ export function applyDetected(
       projectId,
       overrides,
       status: on ? 'active' : 'proposed',
-      origin: on ? 'explicit' : 'detected',
-      sources: [source],
-      count: 1,
+      origin: on && explicit ? 'explicit' : 'detected',
+      sources: sources.slice(-SOURCES_MAX),
+      count,
       replaces: item.replaces,
       reviewedAt: null,
       createdAt: now,
@@ -261,7 +305,13 @@ export function listHabits(
     const ids = overrideCandidates(h, habits)
     if (ids.length) candidates[h.id] = ids
   }
-  return { enabled: store.settings(profile).answerHabits, habits, projects, overrideCandidates: candidates }
+  return {
+    enabled: store.settings(profile).answerHabits,
+    habits,
+    projects,
+    overrideCandidates: candidates,
+    promoteAt: HABIT_PROMOTE_COUNT
+  }
 }
 
 export function decideHabit(store: PersonalStore, profile: string, id: string, decision: 'active' | 'rejected'): void {

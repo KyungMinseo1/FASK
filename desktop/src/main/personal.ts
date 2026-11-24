@@ -1483,9 +1483,8 @@ export function registerPersonal(root: string, main: () => BrowserWindow | null)
       }
       if (state.status === 'completed') {
         extractor.completed(profile, questionId)
-        // A linked PC checks its own habit feedback on its own device.
-        if (origin.kind === 'local' && store.settings().answerHabits)
-          habitDetector.schedule(questionId, false, store.settings().extractDelaySec * 1000)
+        // A linked PC checks its own habit requests on its own device.
+        if (origin.kind === 'local' && store.settings().answerHabits) habitDetector.completed()
       }
       if (
         settings.retention === 'minimal' &&
