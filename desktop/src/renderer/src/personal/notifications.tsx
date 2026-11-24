@@ -552,23 +552,8 @@ export function NotificationsProvider({
             .finally(() => pollRef.current())
       const next: NotifyItem[] = []
       for (const h of list.habits) {
-        if (h.status === 'proposed') {
-          const text = h.when
-            ? '이 답변 방식을 기억할까요? "{{rule}}" ({{when}}, {{n}}번 요청)'
-            : '이 답변 방식을 기억할까요? "{{rule}}" ({{n}}번 요청)'
-          const vars = { rule: h.rule, when: h.when, n: h.count }
-          next.push({
-            id: `habit:${h.id}`,
-            icon: 'refine',
-            text,
-            vars,
-            actions: [
-              { label: '기억', primary: true, run: decide(text, vars, h, 'active', '기억함') },
-              { label: '무시', run: decide(text, vars, h, 'rejected', '무시함') }
-            ]
-          })
-        } else if (h.status === 'active' && h.origin === 'explicit' && h.reviewedAt === null) {
-          // The model turned it on from an explicit request; confirm or undo.
+        if (h.status === 'active' && (h.origin === 'explicit' || h.origin === 'detected') && h.reviewedAt === null) {
+          // It turned on by itself (an explicit request or repeats); confirm or undo.
           const text = '앞으로 이렇게 답합니다: "{{rule}}"'
           const vars = { rule: h.rule }
           next.push({

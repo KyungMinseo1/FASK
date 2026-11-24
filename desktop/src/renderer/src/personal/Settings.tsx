@@ -513,7 +513,7 @@ export default function Settings({
         </label>
         <small>
           {t(
-            '형식에 대한 피드백은 개념 추출과 같은 시점(추출 대기 시간 뒤 또는 질문을 떠날 때)에 확인하며, 새 방식은 알림에서 승인한 뒤에 적용됩니다. "앞으로", "항상"처럼 직접 요청한 방식은 바로 적용되고 알림에서 끌 수 있습니다.'
+            '요청은 8개가 모이거나 추출 대기 시간 동안 새 답변이 없을 때 모아서 확인합니다. 형식에 대한 요청은 먼저 후보가 되고, 서로 다른 대화 3개에서 나오면 자동으로 적용되며 알림에서 끌 수 있습니다. "앞으로", "항상"처럼 직접 요청한 방식은 바로 적용됩니다.'
           )}
         </small>
         <HabitSection />
@@ -1312,7 +1312,7 @@ function MobileHubSection({ share }: { share: PeerShare }): React.JSX.Element {
 }
 
 const HABIT_GROUPS: { status: Habit['status']; title: string }[] = [
-  { status: 'proposed', title: '제안' },
+  { status: 'proposed', title: '후보' },
   { status: 'active', title: '사용 중' },
   { status: 'rejected', title: '꺼짐' }
 ]
@@ -1454,6 +1454,14 @@ function HabitSection(): React.JSX.Element {
         return (
           <div key={status}>
             <h4>{t(title)}</h4>
+            {status === 'proposed' && (
+              <p>
+                {t(
+                  '같은 요청이 서로 다른 대화 {{n}}개에서 나오면 자동으로 사용합니다. 후보는 그 전까지 답변에 적용되지 않습니다.',
+                  { n: list?.promoteAt ?? 3 }
+                )}
+              </p>
+            )}
             <ul className="peer-list">
               {group.map((h) => (
                 <li key={h.id}>
@@ -1465,13 +1473,16 @@ function HabitSection(): React.JSX.Element {
                         ? (projects.find((p) => p.owner === h.projectOwner && p.id === h.projectId)?.name ??
                           t('적용 안 됨: 연결 해제된 프로젝트'))
                         : t('모든 프로젝트')}{' '}
-                      · {t('{{n}}번 요청', { n: h.count })}
+                      ·{' '}
+                      {status === 'proposed'
+                        ? t('{{n}}/{{max}}개 대화에서 요청', { n: h.count, max: list?.promoteAt ?? 3 })
+                        : t('{{n}}개 대화에서 요청', { n: h.count })}
                     </small>
                   </span>
                   {status === 'proposed' && (
                     <>
                       <button disabled={busy} onClick={() => void act(() => window.fask.decideHabit(h.id, 'active'))}>
-                        {t('기억')}
+                        {t('승격')}
                       </button>
                       <button disabled={busy} onClick={() => void act(() => window.fask.decideHabit(h.id, 'rejected'))}>
                         {t('무시')}
