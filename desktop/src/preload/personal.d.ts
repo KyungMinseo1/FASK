@@ -343,6 +343,7 @@ export interface Question {
   memo: string
   important: boolean
 }
+/** 'proposed' is a candidate: counted, shown, never applied until it turns on. */
 export type HabitStatus = 'proposed' | 'active' | 'rejected'
 export interface HabitSource {
   questionId: string
@@ -365,7 +366,7 @@ export interface Habit {
   origin: 'detected' | 'explicit' | 'manual' | 'imported'
   /** Latest 10 evidence turns, newest last. */
   sources: HabitSource[]
-  /** Times the feedback was seen; display and ordering only, never activates by itself. */
+  /** Distinct conversations the request was seen in; a candidate ('proposed') turns on at HABIT_PROMOTE_COUNT. */
   count: number
   /** Id of the habit this one supersedes once it becomes active. */
   replaces: string | null
@@ -384,6 +385,8 @@ export interface HabitList {
   projects: { owner: string; id: string; name: string }[]
   /** Project habit id -> active profile habits it may conflict with; ordering hint only. */
   overrideCandidates: Record<string, string[]>
+  /** Conversations at which a candidate turns on by itself. */
+  promoteAt: number
 }
 export interface HabitInput {
   id?: string
