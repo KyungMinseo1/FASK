@@ -1,8 +1,33 @@
 # Changelog
 
-All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run version:bump -- X.Y.Z` moves them into that version's section (replacing `{{version}}` with the version), and pushing the tag puts the section at the top of the GitHub Release notes, followed by download links and the auto-generated PR list. Open a section with a launch headline `## 🚀 FASK v{{version}} "Codename" is here!`, a one- or two-sentence pitch of the release, then `### ✨ Added`, `### 🔧 Changed`, `### 🐛 Fixed` as needed. Add a `> [!WARNING]` block only when users must act.
+All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run version:bump -- X.Y.Z` moves them into that version's section (replacing `{{version}}` with the version), and pushing the tag puts the section at the top of the GitHub Release notes, followed by download links and the auto-generated PR list. Open a section with a launch headline `## 🚀 FASK v{{version}} "Codename" is here!`, a one- or two-sentence pitch of the release, then `### ✨ Added`, `### 🔧 Changed`, `### 🐛 Fixed` as needed. Add a `> [!WARNING]` block only when users must act. Write entries in English without Korean; refer to UI text by its English translation in `desktop/src/shared/i18n/en/*.json`.
 
 ## [Unreleased]
+
+## [1.3.2] - 2026-11-25
+
+## 🚀 FASK v1.3.2 "Habit Forming" is here!
+
+FASK now notices how you like answers formatted and starts doing it on its own, and the text and files you were about to send stay put when you switch screens or a send fails.
+
+### ✨ Added
+- **Answer habit candidates**: a formatting wish you mention (for example asking for LaTeX, a table, or a shorter explanation) first becomes a candidate and is not applied yet. Settings → Answer habits shows them in a new **Candidates** group with progress ("Requested in n/3 conversations") and **Promote** / **Ignore** buttons.
+- **Automatic promotion**: a candidate turns on by itself once you have asked for it in 3 different conversations, or right away when you ask directly ("from now on", "always"). The bell then shows "Answers will now follow: …" with **OK** / **Turn off**, so you can still confirm or turn it off.
+
+### 🔧 Changed
+- **Every request is judged by the model**: the local keyword filter that blocked many real format requests is gone; typos are judged by meaning. Long requests are sent as their first and last 250 characters, so an instruction at the end is kept.
+- Habit detection now runs in batches across questions: as soon as 8 unchecked requests are pending, or once no new answer has arrived during the extraction delay; leftovers run at startup. Each batch stays within one project, so one project's habits never leak into another.
+- Up to 30 candidates are kept (the least-requested, oldest one is dropped first), and habits you turned off are matched instead of coming back as new candidates.
+- The separate candidate approval notification is removed; the bell only shows habits that turned on by themselves.
+- **Past requests are re-checked once**: on first start after the update, all earlier requests are scanned again under the new rules (8 per call, one call at a time, using your configured model).
+
+### 🐛 Fixed
+- **Desktop drafts keep their attachments**: images and files attached in the overlay composer are no longer lost when the panel closes (pen, eraser, collapse, outside click) or after a trip to the dashboard. Unsent attachments are kept until the app restarts.
+- **Mobile drafts survive leaving the screen**: text and attachments in the new-question and question-detail composers and the overlay stay while the app runs; they are cleared when you unpair or leave the demo.
+- Text you already sent no longer comes back in the composer when the panel was closed or you continued the conversation while the answer was still streaming.
+- A failed send puts your text and files back into the composer (only when you haven't written a new draft meanwhile).
+- The dashboard's new-question composer stays in sync with the overlay's draft instead of showing stale content.
+- Concept error messages now say "workspace" instead of the old terminology.
 
 ## [1.3.1] - 2026-11-21
 
