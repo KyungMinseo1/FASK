@@ -4,7 +4,9 @@ All notable changes to FASK. Add new entries under `## [Unreleased]`; `npm run v
 
 ## [Unreleased]
 
-## 🚀 FASK v{{version}} "Habit Forming" is here!
+## [1.3.2] - 2026-11-25
+
+## 🚀 FASK v1.3.2 "Habit Forming" is here!
 
 FASK now notices how you like answers formatted and starts doing it on its own, and the text and files you were about to send stay put when you switch screens or a send fails.
 
